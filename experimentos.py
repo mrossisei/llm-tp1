@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (24 configs x 3 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (39 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -62,6 +62,44 @@ EXPERIMENTOS = {
     'feat_h1':          (['--n-head', '1'], 'tabular'),
     'feat_h2':          (['--n-head', '2'], 'tabular'),
     'text_d64':         (['--formulation', 'text', '--d-model', '64'], 'texto'),
+}
+
+# ---- segunda tanda (16/08, disenada a partir del analisis de la primera tanda GPU:
+# ver analisis.md). Las tabulares usan el protocolo paciencia 20 / tope 300 epocas,
+# que gano o empato en 21/24 configs de la primera tanda (base de comparacion: los
+# grupos pac20_* que corrio Matias). La familia texto queda en paciencia 8: con 20
+# empeora en test (la seleccion por val sobreajusta, ver analisis.md).
+PAC = ['--patience', '20', '--epochs', '300']
+EXPERIMENTOS |= {
+    # grilla "campeon": combinar los ganadores individuales de las ablaciones
+    # (1 cabeza grande, d_model 64, 4 bloques)
+    'camp_d64h1':       (['--d-model', '64', '--n-head', '1', *PAC], 'tabular'),
+    'camp_d64l4':       (['--d-model', '64', '--n-layer', '4', *PAC], 'tabular'),
+    'camp_h1l4':        (['--n-head', '1', '--n-layer', '4', *PAC], 'tabular'),
+    'camp_d64h1l4':     (['--d-model', '64', '--n-head', '1', '--n-layer', '4', *PAC], 'tabular'),
+    # causal hecho bien: el feat_causal original degeneraba (CLS en posicion 0 solo
+    # se ve a si mismo -> p constante, ROC 0.500 medido); con el CLS al final el
+    # experimento "¿importa la bidireccionalidad?" por fin se puede responder
+    'feat_causal_last': (['--causal', '--cls-position', 'last', *PAC], 'tabular'),
+    # encodings de categoricas (el "modular/columnar" del companero = hashing con
+    # modulo; embedding por columna es lo que ya haciamos)
+    'feat_target':      (['--cat-encoding', 'target', *PAC], 'tabular'),
+    'feat_freq':        (['--cat-encoding', 'freq', *PAC], 'tabular'),
+    'feat_hash8':       (['--cat-encoding', 'hashing', '--hash-buckets', '8', *PAC], 'tabular'),
+    'mlp_onehot':       (['--arch', 'mlp', '--cat-encoding', 'onehot', *PAC], 'tabular'),
+    # features descartados en el EDA, de vuelta (volumen, package, n_ingredients):
+    # verificacion empirica de la redundancia que el EDA declaro
+    'feat_extras':      (['--extra-features', 'all', *PAC], 'tabular'),
+    # multi-task con cart como label auxiliar (junior_proposals.md #2)
+    'feat_cartaux01':   (['--cart-aux', '0.1', *PAC], 'tabular'),
+    'feat_cartaux03':   (['--cart-aux', '0.3', *PAC], 'tabular'),
+    'feat_cartaux05':   (['--cart-aux', '0.5', *PAC], 'tabular'),
+    # listwise enriquecido con la torre de texto (junior_proposals.md #1); paciencia
+    # 20 porque listwise fue el mas beneficiado por mas paciencia (+0.041)
+    'listwise_texto':   (['--arch', 'listwise', '--listwise-texto', *PAC], 'texto'),
+    # texto corto: la senal vive en el sufijo del titulo (<= 81 chars); 96 chars
+    # cubren el titulo entero y la atencion pasa de 257^2 a 97^2 (~7x mas barata)
+    'text_len96':       (['--formulation', 'text', '--max-text-len', '96'], 'texto'),
 }
 
 
@@ -167,7 +205,7 @@ def main():
     parser.add_argument('--resumen', action='store_true', help='tabla comparativa de resultados/')
     parser.add_argument('--only', default='', help='correr solo estos (separados por coma)')
     parser.add_argument('--familia', choices=['tabular', 'texto'], help='correr solo una familia')
-    parser.add_argument('--seeds', type=int, default=3)
+    parser.add_argument('--seeds', type=int, default=6)
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--no-pesos', action='store_true', help='no guardar checkpoints en pesos/')
     parser.add_argument('--epochs', type=int, help='override de epocas (para pruebas rapidas)')

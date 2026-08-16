@@ -38,7 +38,8 @@ from sklearn.metrics import (
     confusion_matrix, log_loss, matthews_corrcoef, precision_recall_curve, roc_auc_score,
 )
 
-from .data import CAT_FEATURES, MAX_TEXT_LEN, NUM_FEATURES, prepare, prepare_listwise
+from .data import (CAT_FEATURES, EXTRA_FEATURES, MAX_TEXT_LEN, NUM_FEATURES, TARGET,
+                   prepare, prepare_listwise)
 from .model import BTRTransformer, ListwiseTransformer, MLPBaseline, TextTowerModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -106,8 +107,11 @@ def evaluate(model, split, max_rows=None):
             lg, _ = model(a[s:s + EVAL_BATCH], b[s:s + EVAL_BATCH], c[s:s + EVAL_BATCH])
             logits.append(lg)
         logits = torch.cat(logits)
-        if a.dim() == 3:  # listwise: c es la mascara de productos reales
-            logits, y = logits[c], y[c]
+        if a.dim() == 3:  # listwise: c es la mascara (o x_text, de la que se deriva)
+            mask = c if c.dtype == torch.bool else (c != 0).any(-1)
+            logits, y = logits[mask], y[mask]
+        elif y.dim() == 2:  # multi-task (--cart-aux): metricas SIEMPRE sobre bought
+            y = y[:, 0]
         loss = torch.nn.functional.binary_cross_entropy_with_logits(
             logits, y, pos_weight=model.pos_weight
         ).item()
@@ -164,13 +168,24 @@ def resolve_device(arg):
 
 def run_name(args, seed):
     base = args.formulation if args.arch == 'transformer' else args.arch
+    if args.arch == 'listwise' and args.listwise_texto:
+        base = 'listwisetexto'
     parts = [base, f"d{args.d_model}", f"h{args.n_head}", f"l{args.n_layer}", args.numeric_mode]
+    if args.cat_encoding != 'embedding':
+        parts.append(f"cat{args.cat_encoding}"
+                     + (str(args.hash_buckets) if args.cat_encoding == 'hashing' else ''))
     if args.strip_status:
         parts.append('stripstatus')
     if args.drop_features:
         parts.append('sin-' + args.drop_features.replace(',', '-').replace('_', ''))
+    if args.extra_features:
+        parts.append('extra-' + args.extra_features.replace(',', '-').replace('_', ''))
     if args.pooling != 'cls':
         parts.append(args.pooling)
+    if args.cls_position != 'first':
+        parts.append('clslast')
+    if args.cart_aux:
+        parts.append(f"cartaux{args.cart_aux:g}")
     for flag in ('positional', 'causal', 'pos_weight'):
         if getattr(args, flag):
             parts.append(flag.replace('_', ''))
@@ -190,11 +205,13 @@ def unique_path(path):
     raise RuntimeError(f'demasiadas corridas con el nombre {path.stem}')
 
 
-def drop_feature_columns(splits, drop, listwise=False):
+def drop_feature_columns(splits, drop, listwise=False, cat_features=None, num_features=None):
     """Saca features por nombre (p. ej. listing_status) recortando columnas de los tensores."""
-    keep_cat = [i for i, f in enumerate(CAT_FEATURES) if f not in drop]
-    keep_num = [i for i, f in enumerate(NUM_FEATURES) if f not in drop]
-    unknown = drop - set(CAT_FEATURES) - set(NUM_FEATURES)
+    cat_features = cat_features or CAT_FEATURES
+    num_features = num_features or NUM_FEATURES
+    keep_cat = [i for i, f in enumerate(cat_features) if f not in drop]
+    keep_num = [i for i, f in enumerate(num_features) if f not in drop]
+    unknown = drop - set(cat_features) - set(num_features)
     if unknown:
         raise SystemExit(f'--drop-features desconocidos: {sorted(unknown)}')
     dim = 2 if listwise else 1  # en listwise los features son la 3ra dimension
@@ -204,29 +221,73 @@ def drop_feature_columns(splits, drop, listwise=False):
     return splits, keep_cat, keep_num
 
 
-def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight, max_products=None):
+def build_cat_tables(args, prep, train_df, keep_cat):
+    """Lookups por feature categorica para --cat-encoding target/freq/hashing.
+
+    Ajustados SOLO con train, alineados a los indices de prep.vocabs (0 = UNK):
+      target:  nivel -> media suavizada de bought: (sum + m*global) / (n + m), m=50
+               (el suavizado amortigua niveles chicos y la auto-inclusion del target)
+      freq:    nivel -> frecuencia relativa del nivel en train
+      hashing: nivel -> md5(feature|valor) % B  (el "modulo" clasico del hashing trick)
+    """
+    if args.cat_encoding in ('embedding', 'onehot'):
+        return None
+    import hashlib
+    m, global_mean = 50.0, float(train_df[TARGET].mean())
+    tablas = []
+    cats = prep.cats
+    for i in keep_cat:
+        f = cats[i]
+        vocab = prep.vocabs[f]
+        if args.cat_encoding == 'hashing':
+            t = torch.zeros(len(vocab) + 1, dtype=torch.long)
+            for valor, idx in vocab.items():
+                h = int(hashlib.md5(f'{f}|{valor}'.encode()).hexdigest(), 16)
+                t[idx] = h % args.hash_buckets
+        else:
+            grp = train_df.groupby(f)[TARGET].agg(['sum', 'count'])
+            t = torch.full((len(vocab) + 1,),
+                           global_mean if args.cat_encoding == 'target' else 0.0)
+            for valor, idx in vocab.items():
+                n = float(grp.loc[valor, 'count'])
+                if args.cat_encoding == 'target':
+                    t[idx] = (float(grp.loc[valor, 'sum']) + m * global_mean) / (n + m)
+                else:
+                    t[idx] = n / len(train_df)
+        tablas.append(t)
+    return tablas
+
+
+def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
+                max_products=None, cat_tables=None):
     """Configura y construye la arquitectura pedida; devuelve (modelo, config para el ckpt)."""
     common = dict(d_model=args.d_model, dropout=args.dropout,
                   numeric_mode=args.numeric_mode, pos_weight=pos_weight)
+    encod = dict(cat_encoding=args.cat_encoding, hash_buckets=args.hash_buckets)
     if args.arch == 'transformer':
         config = dict(formulation=args.formulation, cat_cardinalities=cardinalities,
                       n_numeric=n_numeric, char_vocab_size=prep.char_vocab_size,
                       max_text_len=prep.max_text_len, n_head=args.n_head,
                       n_layer=args.n_layer, causal=args.causal, pooling=args.pooling,
-                      use_positional=args.positional, **common)
-        model = BTRTransformer(**config, bin_edges=bin_edges)
+                      use_positional=args.positional, cls_position=args.cls_position,
+                      cart_lambda=args.cart_aux, **encod, **common)
+        model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
-        config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric, **common)
-        model = MLPBaseline(**config, bin_edges=bin_edges)
+        config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
+                      cart_lambda=args.cart_aux, **encod, **common)
+        model = MLPBaseline(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'tower':
         config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
                       char_vocab_size=prep.char_vocab_size, max_text_len=prep.max_text_len,
-                      n_head=args.n_head, n_layer=args.n_layer, causal=args.causal, **common)
-        model = TextTowerModel(**config, bin_edges=bin_edges)
+                      n_head=args.n_head, n_layer=args.n_layer, causal=args.causal,
+                      cart_lambda=args.cart_aux, **encod, **common)
+        model = TextTowerModel(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'listwise':
         config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
                       max_products=max_products, n_head=args.n_head,
-                      n_layer=args.n_layer, **common)
+                      n_layer=args.n_layer, use_text=args.listwise_texto, **common)
+        if args.listwise_texto:
+            config.update(char_vocab_size=prep.char_vocab_size, max_text_len=prep.max_text_len)
         model = ListwiseTransformer(**config, bin_edges=bin_edges)
     else:
         raise SystemExit(f'arquitectura desconocida: {args.arch}')
@@ -237,15 +298,35 @@ def run(csv_path, seed, args, device):
     """Una corrida completa: prepara datos, entrena, guarda resultados/pesos."""
     torch.manual_seed(seed)
     listwise = args.arch == 'listwise'
+    if args.cat_encoding == 'onehot' and args.arch != 'mlp':
+        raise SystemExit('cat-encoding onehot es solo para --arch mlp: para el transformer, '
+                         'one-hot + proyeccion lineal aprende la misma matriz que el '
+                         'embedding (propuesta 6.1) — no hay experimento que correr')
+    if args.cat_encoding != 'embedding' and listwise:
+        raise SystemExit('cat-encoding alternativo no implementado para listwise')
+    extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
+    if extras == ('all',):
+        extras = tuple(sorted(EXTRA_FEATURES))
     if listwise:
-        prep, max_products, splits = prepare_listwise(csv_path, seed=seed)
+        if args.cart_aux:
+            raise SystemExit('--cart-aux no implementado para listwise')
+        if extras:
+            raise SystemExit('--extra-features no implementado para listwise')
+        prep, max_products, splits = prepare_listwise(
+            csv_path, seed=seed, with_text=args.listwise_texto,
+            max_text_len=args.max_text_len, strip_status=args.strip_status)
+        train_df = None
     else:
+        if args.listwise_texto:
+            raise SystemExit('--listwise-texto requiere --arch listwise')
         prep, train_df, splits = prepare(csv_path, seed=seed, max_text_len=args.max_text_len,
-                                         strip_status=args.strip_status)
+                                         strip_status=args.strip_status,
+                                         extra_features=extras, include_cart=args.cart_aux > 0)
         max_products = None
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
-    splits, keep_cat, keep_num = drop_feature_columns(splits, drop, listwise)
+    splits, keep_cat, keep_num = drop_feature_columns(splits, drop, listwise,
+                                                      prep.cats, prep.nums)
     splits = {k: tuple(t.to(device) for t in v) for k, v in splits.items()}
 
     bin_edges = None
@@ -256,12 +337,17 @@ def run(csv_path, seed, args, device):
     pos_weight = None
     if args.pos_weight:
         _, _, m_or_t, y_train = splits['train']
-        y_flat = y_train[m_or_t] if listwise else y_train
+        if listwise:
+            mask = m_or_t if m_or_t.dtype == torch.bool else (m_or_t != 0).any(-1)
+            y_flat = y_train[mask]
+        else:
+            y_flat = y_train[:, 0] if y_train.dim() == 2 else y_train
         pos_weight = ((1 - y_flat.mean()) / y_flat.mean()).item()  # negativos/positivos
 
     cardinalities = [c for i, c in enumerate(prep.cat_cardinalities) if i in keep_cat]
+    cat_tables = None if listwise else build_cat_tables(args, prep, train_df, keep_cat)
     model, model_config = build_model(args, prep, cardinalities, len(keep_num),
-                                      bin_edges, pos_weight, max_products)
+                                      bin_edges, pos_weight, max_products, cat_tables)
     model = model.to(device)
     n_params = sum(p.numel() for p in model.parameters())
     name = run_name(args, seed)
@@ -300,10 +386,11 @@ def run(csv_path, seed, args, device):
                 'arch': args.arch,
                 'model_config': model_config,
                 'bin_edges': bin_edges,
+                'cat_tables': cat_tables,
                 'state_dict': {k: v.cpu() for k, v in model.state_dict().items()},
                 'preprocessor': prep,
-                'cat_features': [CAT_FEATURES[i] for i in keep_cat],
-                'num_features': [NUM_FEATURES[i] for i in keep_num],
+                'cat_features': [prep.cats[i] for i in keep_cat],
+                'num_features': [prep.nums[i] for i in keep_num],
             }, ckpt)
             print(f"pesos      -> {ckpt.relative_to(REPO_ROOT)}")
 
@@ -326,6 +413,20 @@ def build_parser():
                         help='texto sin sufijo/oracion de estado (variante "producto nuevo")')
     parser.add_argument('--drop-features', default='',
                         help='features a excluir, separados por coma (ej: listing_status)')
+    parser.add_argument('--extra-features', default='',
+                        help=f'features descartados a reintroducir, separados por coma '
+                             f'(o "all"): {sorted(EXTRA_FEATURES)}')
+    parser.add_argument('--cat-encoding', default='embedding',
+                        choices=['embedding', 'onehot', 'target', 'freq', 'hashing'],
+                        help='encoding de las categoricas (onehot: solo --arch mlp)')
+    parser.add_argument('--hash-buckets', type=int, default=8,
+                        help='buckets del hashing trick (--cat-encoding hashing)')
+    parser.add_argument('--cls-position', default='first', choices=['first', 'last'],
+                        help='last: CLS al final (necesario para que --causal tenga sentido)')
+    parser.add_argument('--cart-aux', type=float, default=0.0, metavar='LAMBDA',
+                        help='multi-task: peso de la BCE auxiliar sobre cart (0 = apagado)')
+    parser.add_argument('--listwise-texto', action='store_true',
+                        help='listwise: enriquecer el token de producto con la torre de texto')
     parser.add_argument('--d-model', type=int, default=32)
     parser.add_argument('--n-head', type=int, default=4)
     parser.add_argument('--n-layer', type=int, default=2)

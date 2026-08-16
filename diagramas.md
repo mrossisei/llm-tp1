@@ -44,7 +44,8 @@ flowchart TD
 ```
 
 Responde: **¿la atención entre features aporta?** (interacciones tipo price_rel × categoría).
-Primer resultado (seed 42): PR-AUC test **0.766**.
+Resultado: PR-AUC test **0.794 ± 0.033** (6 seeds); con paciencia 20 y una sola cabeza, **0.816**
+(`pac20_feat_h1`, el campeón actual — ver `analisis.md`).
 
 ## Baseline MLP — mismos embeddings, sin atención
 
@@ -61,7 +62,7 @@ flowchart TD
 ```
 
 Es el **control** del experimento: si el transformer no le gana, la atención no se justifica.
-Primer resultado: 0.715 < 0.766 pese a tener 4,5× más parámetros.
+Resultado: 0.746 < 0.794 pese a tener 4,5× más parámetros (apareado por seed: +0.048, gana 5/6).
 
 ## C. Transformer de texto — cada carácter es un token (la demo, adaptada)
 
@@ -143,8 +144,9 @@ flowchart TD
     Q --> COL --> SEQ --> BLK --> HEAD --> OUT
 ```
 
-La única formulación que ve la página completa y puede capturar competencia. Primer resultado:
-0.664 — consistente con el EDA (§2.5: la competencia acá es débil).
+La única formulación que ve la página completa y puede capturar competencia. Resultado: 0.698 ± 0.044
+(0.740 con paciencia 20, el grupo más beneficiado por entrenar más). La 2ª tanda prueba
+`listwise_texto` (Junior #1): ¿pierde por la idea o por no ver el texto?
 
 ## Eje transversal: dos familias (no son arquitecturas nuevas)
 
@@ -161,15 +163,16 @@ En la suite: `feat_intrinseco`, `text_intrinseco`, `hybrid_intrinseco`.
 
 ## Las seis, lado a lado
 
-| arquitectura | un token es… | secuencia | la atención cruza | parámetros | PR-AUC test (seed 42) | comando |
+| arquitectura | un token es… | secuencia | la atención cruza | parámetros | PR-AUC test (6 seeds) | comando |
 |---|---|---|---|---|---|---|
-| A · tabular | un feature | 14 | features ↔ features | 28.289 | 0.766 | `--formulation features` |
-| MLP (control) | — (sin atención) | 416 flat | — | 126.209 | 0.715 | `--arch mlp` |
-| C · texto | un carácter | 257 | chars ↔ chars | 35.713 | esperando la 3070 | `--formulation text` |
-| A+C · híbrido | feature o carácter | 270 | texto ↔ tabular | 39.073 | esperando la 3070 | `--formulation hybrid` |
-| C2 · torre | un carácter (en la torre) | 257 + 13 | solo chars ↔ chars | 96.225 | esperando la 3070 | `--arch tower` |
-| B · listwise | un producto entero | 8 | producto ↔ producto | 41.601 | 0.664 | `--arch listwise` |
+| A · tabular | un feature | 14 | features ↔ features | 28.289 | 0.794 ± 0.033 | `--formulation features` |
+| MLP (control) | — (sin atención) | 416 flat | — | 126.209 | 0.746 ± 0.036 | `--arch mlp` |
+| C · texto | un carácter | 257 | chars ↔ chars | 35.713 | 0.652 ± 0.039 | `--formulation text` |
+| A+C · híbrido | feature o carácter | 270 | texto ↔ tabular | 39.073 | 0.705 ± 0.062 | `--formulation hybrid` |
+| C2 · torre | un carácter (en la torre) | 257 + 13 | solo chars ↔ chars | 96.225 | 0.775 ± 0.022 | `--arch tower` |
+| B · listwise | un producto entero | 8 | producto ↔ producto | 41.601 | 0.698 ± 0.044 | `--arch listwise` |
 
 Referencias sin red: GBM 0.762, regresión logística 0.660 (mismo split, `eda/verificaciones.py`).
-El transformer tabular ya supera al GBM y al MLP con 4,5× sus parámetros: primera evidencia de
-que la atención aporta. Las tres de texto son la parte cara y corren en la suite de la 3070.
+El transformer tabular supera al GBM y al MLP; el campeón (`pac20_feat_h1`, paciencia 20 + 1
+cabeza) llega a **0.816 ± 0.026**. Ninguna variante con texto supera al tabular puro — el
+hallazgo textual es el contraste híbrido-recupera / torre-no. Lectura completa: `analisis.md`.

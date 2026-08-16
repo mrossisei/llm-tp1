@@ -169,10 +169,40 @@ graficar cualquiera después.
 repo (suite en `experimentos.py`, corridas en `resultados/`) y `panel.py` lo embebe al generar.
 Ciclo: elegir en el panel → correr el comando → `python panel.py` → republicar el artifact.
 
+## 16/08 — Primera tanda GPU: análisis, reparación de métricas y segunda tanda
+
+**Qué pasó.** Matias corrió en la 3070 las 24 configs con el protocolo original Y una variante
+`pac20_` (paciencia 20, tope 300), seeds 42–47: 288 corridas. Las corrió con el código previo a
+`compute_metrics`, así que sus JSONs traían 3 métricas; se recuperaron las 16 finales SIN
+reentrenar recargando cada checkpoint (`eda/recalcula_metricas.py`, ~10 min — validado: el
+PR-AUC recalculado coincide exactamente con el original).
+
+**Análisis completo en `analisis.md`.** Lo grande: campeón `pac20_feat_h1` **0.816 ± 0.026**
+(supera al GBM 0.762 con claridad); atención +0.048 sobre MLP apareado (5/6 seeds); paciencia 20
+ayuda en tabular (21/24) y daña texto puro; 1 cabeza grande > 4 chicas; CLS > mean (6/6);
+pos_weight y bins dañan; **hybrid recupera desde los chars la señal del regex (sin_regex ≈
+full), tower no** (−0.04: cuello de botella del embedding único); familia intrínseca clava el
+techo (~0.16); y `feat_causal` estaba **degenerado por diseño** — con máscara causal el CLS en
+posición 0 solo se ve a sí mismo (verificado: p constante 0.2214, ROC 0.500 exacto). Calibración
+(propuesta #3 de Junior): ECE ~0.01, T≈1 → no hace falta corregir; el BTR agregado sobreestima
+~+0.9 puntos.
+
+**Implementado a partir de esto** (todo smoke-testeado, checkpoints viejos siguen cargando):
+`--cls-position last` (causal bien hecho); `--cat-encoding target/freq/hashing/onehot` (el
+"modular/columnar" del compañero = hashing con módulo; one-hot solo para MLP porque en el
+transformer ≡ embedding); `--extra-features` (volumen desde dimensions, package parseado,
+nº de ingredientes — pedido de Fer); `--cart-aux λ` (multi-task de Junior #2, cart como label
+auxiliar, nunca input); `--listwise-texto` (Junior #1, la torre de chars dentro del token de
+producto); `eda/calibracion.py` (Junior #3) y `eda/graficos_resumen.py` (+matplotlib en
+requirements). **15 configs nuevas en la suite** (grilla campeón, causal_last, 4 encodings,
+extras, 3 λ de cart, listwise_texto, text_len96); protocolo nuevo: 6 seeds, tabulares con
+paciencia 20. El panel y el zoo quedaron actualizados con los resultados y los ejes nuevos.
+
 ## Pendientes
 
-- [ ] Correr la suite completa en la RTX 3070 (`experimentos.py`) y analizar `--resumen`.
-- [ ] Tras la suite: `python panel.py` para re-embeber resultados y pedir republicar el artifact.
+- [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
+- [ ] Correr la SEGUNDA tanda en la 3070 (mismas dos líneas; corre solo lo nuevo) y analizarla.
+- [ ] Tras cada tanda: `python panel.py` para re-embeber resultados y pedir republicar el artifact.
 - [ ] Notebook prolijo del EDA (Ej. 1) a partir de `eda/verificaciones.py`, con gráficos.
 - [ ] Mapas de atención del modelo final (¿el CLS mira al listing_status? ¿price_rel × tier?).
 - [ ] Consultar a la cátedra las preguntas de `propuesta.md §11`.

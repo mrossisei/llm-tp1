@@ -50,10 +50,11 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ### La suite de experimentos (correr en la máquina con GPU)
 
 Todas las arquitecturas y ablaciones del TP están codificadas en `experimentos.py`
-(24 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**:
+(39 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**
+(resume automático: solo corre lo que falte):
 
 ```bash
-.venv/bin/python experimentos.py                     # corre TODA la suite (24 configs × 3 seeds) en la GPU
+.venv/bin/python experimentos.py                     # corre TODA la suite (configs × 6 seeds) en la GPU
 .venv/bin/python experimentos.py --resumen           # tabla comparativa: media ± desvío por config
 ```
 
@@ -87,11 +88,11 @@ x_cat, x_num, x_text, _ = prep.transform(df_nuevo)  # mismas transformaciones qu
 probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 ```
 
-Referencia rápida (test, mismo split por query seed 42; reproducir con
-`.venv/bin/python eda/verificaciones.py`): regresión logística PR-AUC 0.660 · GBM 0.762 ·
-transformer tabular 0.766 (y 3 seeds: 0.815 ± 0.037) · MLP baseline 0.715 · listwise 0.664 ·
-sin información de estado el techo se desploma (GBM: PR-AUC 0.162 — ver §2.3.1 de la propuesta) ·
-`text`/`hybrid`/`tower`: pendientes de entrenar en GPU.
+Referencia rápida (PR-AUC test, 6 seeds — análisis completo en [`analisis.md`](analisis.md)):
+**campeón `pac20_feat_h1` 0.816 ± 0.026** · transformer tabular base 0.794 · GBM 0.762 ·
+tower 0.775 · MLP 0.746 · listwise 0.740 (pac20) · hybrid 0.735 (pac20) · logística 0.660 ·
+text 0.652 · sin información de estado el techo se desploma a ~0.16 (familia intrínseca ≈ GBM
+sin estado 0.162, §2.3.1). Baselines reproducibles con `eda/verificaciones.py`.
 
 ## El laboratorio interactivo (`panel.html`)
 

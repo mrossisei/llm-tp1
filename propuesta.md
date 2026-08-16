@@ -478,6 +478,11 @@ motivado por 2.4), `filter_price_min`, `filter_price_max`, `net_weight_oz`, `nut
 
 ## 7. Protocolo experimental
 
+> Este protocolo ya se ejecutó (288 corridas en GPU, 16/08). Los resultados, su lectura y las
+> decisiones que fijaron están en [`analisis.md`](analisis.md); acá queda el diseño original.
+> Nota empírica: la hipótesis de bins (§6.2) quedó refutada (bins −0.023 vs lineal) y la
+> ablación causal original era degenerada (ver `analisis.md` §2.7).
+
 ### 7.1 Partición
 
 **GroupShuffleSplit por `query_id`**: 70% train / 15% val / 15% test. Motivo: filas de la misma

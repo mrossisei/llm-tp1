@@ -25,7 +25,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from btr.data import CAT_FEATURES, NUM_FEATURES, Preprocessor, load_dataset, split_by_query
+from btr.data import (CAT_FEATURES, EXTRA_FEATURES, NUM_FEATURES, Preprocessor,
+                      load_dataset, split_by_query)
 from btr.train import build_parser
 from experimentos import EXPERIMENTOS
 
@@ -45,7 +46,9 @@ def canon(c):
     """
     arch = c['arch']
     form = c.get('formulation', 'features') if arch == 'transformer' else '-'
-    has_text = (arch == 'transformer' and form in ('text', 'hybrid')) or arch == 'tower'
+    lwtext = ('1' if c.get('listwise_texto') else '0') if arch == 'listwise' else '-'
+    has_text = ((arch == 'transformer' and form in ('text', 'hybrid')) or arch == 'tower'
+                or lwtext == '1')
     has_tab = not (arch == 'transformer' and form == 'text')
     if has_tab:
         drop = c.get('drop_features', '') or ''
@@ -54,17 +57,30 @@ def canon(c):
         drops = ','.join(sorted(set(drop)))
     else:
         drops = '-'
+    if has_tab and arch != 'listwise':
+        extra = c.get('extra_features', '') or ''
+        if isinstance(extra, str):
+            extra = [f.strip() for f in extra.split(',') if f.strip()]
+        if extra == ['all']:
+            extra = sorted(EXTRA_FEATURES)
+        extras = ','.join(sorted(set(extra)))
+    else:
+        extras = '-'
     strip = ('1' if c.get('strip_status') else '0') if has_text else '-'
     maxlen = str(int(c.get('max_text_len', 256))) if has_text else '-'
     nmode = '-' if not has_tab else ('linear' if arch == 'listwise' else c.get('numeric_mode', 'linear'))
     nbins = str(int(c.get('n_bins', 16))) if nmode == 'bins' else '-'
+    catenc = '-' if (not has_tab or arch == 'listwise') else c.get('cat_encoding', 'embedding')
+    buckets = str(int(c.get('hash_buckets', 8))) if catenc == 'hashing' else '-'
     pool = c.get('pooling', 'cls') if arch == 'transformer' else '-'
+    clspos = c.get('cls_position', 'first') if arch == 'transformer' else '-'
     if arch == 'transformer':
         posit = '1' if (form in ('text', 'hybrid') or c.get('positional')) else '0'
     else:
         posit = '-'
     caus = ('1' if c.get('causal') else '0') if arch in ('transformer', 'tower') else '-'
     posw = '1' if c.get('pos_weight') else '0'
+    cart = '-' if arch == 'listwise' else ffloat(c.get('cart_aux', 0) or 0)
     nh = '-' if arch == 'mlp' else str(int(c.get('n_head', 4)))
     nl = '-' if arch == 'mlp' else str(int(c.get('n_layer', 2)))
     return '|'.join([
@@ -72,22 +88,30 @@ def canon(c):
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
         str(int(c.get('epochs', 60))), str(int(c.get('batch_size', 256))),
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
+        catenc, buckets, clspos, cart, extras, lwtext,
     ])
 
 
 CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_len',
               'numeric_mode', 'n_bins', 'd_model', 'n_head', 'n_layer', 'dropout',
               'pooling', 'positional', 'causal', 'pos_weight', 'epochs', 'batch_size',
-              'lr', 'patience']
+              'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
+              'cart_aux', 'extra_features', 'listwise_texto']
+
+CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
+                'cart_aux': 0.0, 'listwise_texto': False}
 
 
 def cfg_dict(c):
-    """Config reducida a los campos que definen el modelo, con drop como lista."""
-    out = {k: c.get(k) for k in CFG_FIELDS}
-    drop = out.get('drop_features') or ''
-    if isinstance(drop, str):
-        drop = [f.strip() for f in drop.split(',') if f.strip()]
-    out['drop_features'] = sorted(set(drop))
+    """Config reducida a los campos que definen el modelo, con drop/extra como listas."""
+    out = {k: c.get(k, CFG_DEFAULTS.get(k)) for k in CFG_FIELDS}
+    for campo in ('drop_features', 'extra_features'):
+        v = out.get(campo) or ''
+        if isinstance(v, str):
+            v = [f.strip() for f in v.split(',') if f.strip()]
+        if campo == 'extra_features' and v == ['all']:
+            v = sorted(EXTRA_FEATURES)
+        out[campo] = sorted(set(v))
     return out
 
 
@@ -130,6 +154,9 @@ def cargar_datos():
                                     'nombre': data['nombre']})
         hist = {'train': {}, 'val': {}}
         for h in data['historial']:
+            if 'train' not in h:  # schema viejo (1ra tanda GPU): claves planas train_loss etc.
+                h = {'train': {k[6:]: v for k, v in h.items() if k.startswith('train_')},
+                     'val': {k[4:]: v for k, v in h.items() if k.startswith('val_')}}
             for split in ('train', 'val'):
                 for m, v in h[split].items():
                     hist[split].setdefault(m, []).append(round(v, 5))
@@ -311,9 +338,18 @@ def controles(features):
                   f'<option value="linear">lineal</option><option value="bins">bins</option>'
                   f'</select></label>')
 
+    extras = ''
+    for f, tipo in sorted(EXTRA_FEATURES.items()):
+        extras += (f'<label class="feat" data-x="{f}"><input type="checkbox" name="extraf" '
+                   f'value="{f}">{f}<span class="card-n">{tipo}</span></label>')
+
     return f'''
 <section class="card"><h2><span class="n">1</span>Arquitectura</h2>
   <fieldset class="optgrid" id="arch-grid">{archs}</fieldset>
+  <div class="rowc" id="lwtext-wrap" style="display:none">
+    <label class="inl"><input type="checkbox" id="listwise_texto"> enriquecer el token de
+    producto con la torre de texto (--listwise-texto, propuesta #1 de Junior)</label>
+  </div>
   <p class="hint" id="arch-hint"></p>
 </section>
 
@@ -323,22 +359,30 @@ def controles(features):
     <button class="preset" id="pre-intrinseco">preset: intrínseco (producto nuevo)</button>
   </div>
   <fieldset class="featgrid" id="feat-grid">{feats}</fieldset>
+  <div class="eyebrow" style="margin:12px 0 6px">DESCARTADOS EN EL EDA — REINTRODUCIBLES (--extra-features)</div>
+  <fieldset class="featgrid" id="extra-grid">{extras}</fieldset>
   <div class="rowc">
     <label class="inl" id="strip-wrap"><input type="checkbox" id="strip">
       --strip-status: borrar del TEXTO el sufijo del título y la última oración</label>
   </div>
   <p class="hint">El preset <b>intrínseco</b> = sacar <code>listing_status</code> + strip del texto:
   simula el producto nuevo sin historial (techo GBM: 0.762 → 0.162). Destildar features acá
-  se traduce a <code>--drop-features</code>.</p>
+  se traduce a <code>--drop-features</code>. Los <b>extra</b> (volumen desde dimensions, package
+  parseado, nº de ingredientes) vienen de columnas que el EDA declaró redundantes —
+  <code>feat_extras</code> lo verifica empíricamente.</p>
 </section>
 
 <section class="card"><h2><span class="n">3</span>Encodings</h2>
   <div class="rowc">
     <label class="inl">categóricas <select id="catenc">
-      <option value="embedding">embedding aprendido por columna (actual)</option>
-      <option value="onehot">one-hot directo al MLP (pedir)</option>
-      <option value="target">target encoding por nivel (pedir)</option>
+      <option value="embedding">embedding aprendido por columna (default)</option>
+      <option value="onehot">one-hot crudo (solo MLP)</option>
+      <option value="target">target encoding suavizado</option>
+      <option value="freq">frequency encoding</option>
+      <option value="hashing">hashing trick (el "modular")</option>
     </select></label>
+    <label class="inl" id="buckets-wrap" style="display:none">buckets
+      <input type="number" id="hash_buckets" value="8" min="2" max="64"></label>
     <label class="inl">numéricas <select id="numenc">
       <option value="linear">lineal: x·w+b por feature</option>
       <option value="bins">bins por cuantiles</option>
@@ -347,12 +391,15 @@ def controles(features):
     <label class="inl" id="nbins-wrap">n_bins <input type="number" id="n_bins" value="16" min="2" max="64"></label>
   </div>
   <div class="rowc" id="numpf-wrap" style="display:none">{numpf}</div>
-  <p class="hint">Lo que el código hace hoy para categóricas es exactamente <b>column embeddings</b>
-  (una tabla por columna — seguramente el "columnar" que te dijeron). <b>one-hot + capa lineal
-  aprende la misma matriz</b> (propuesta §6.1), por eso no existe como opción aparte del
-  transformer; sí tiene sentido como entrada cruda a un MLP, para medir qué aporta embeber.
-  <b>Target encoding</b> (nivel → BTR promedio en train) es fuerte pero con riesgo de leakage:
-  se ajusta por fold. <b>Bins</b> captura la U invertida del precio sin depender del FFN.</p>
+  <p class="hint">Los cinco encodings de categóricas están <b>implementados</b>
+  (<code>--cat-encoding</code>, suite <code>feat_target</code>/<code>feat_freq</code>/<code>feat_hash8</code>/<code>mlp_onehot</code>).
+  El default es <b>column embeddings</b> (una tabla por columna — el "columnar/modular" que te
+  mencionaron es esta familia: hashing usa el módulo). <b>one-hot + capa lineal aprende la misma
+  matriz que el embedding</b> (§6.1): por eso one-hot solo existe como entrada cruda al MLP.
+  <b>Target</b> = nivel → BTR promedio suavizado de train (m=50; ajustado SOLO con train);
+  <b>freq</b> = frecuencia del nivel; <b>hashing</b> = nivel → hash % B con colisiones a propósito
+  (útil con miles de niveles; acá mide cuánto duele). <b>Bins</b> captura la U del precio sin
+  depender del FFN — la 1ª tanda dice que el FFN alcanza (bins −0.023).</p>
 </section>
 
 <section class="card"><h2><span class="n">4</span>Capacidad del modelo</h2>
@@ -369,11 +416,18 @@ def controles(features):
     <label class="inl" id="pool-wrap">pooling <span class="seg" id="pool-seg">
       <button type="button" data-v="cls" class="on">[CLS]</button>
       <button type="button" data-v="mean">promedio</button></span></label>
+    <label class="inl" id="clspos-wrap">CLS <span class="seg" id="clspos-seg">
+      <button type="button" data-v="first" class="on">al inicio</button>
+      <button type="button" data-v="last">al final</button></span></label>
     <label class="inl" id="pos-wrap"><input type="checkbox" id="positional"> positional encoding</label>
     <label class="inl" id="caus-wrap"><input type="checkbox" id="causal"> máscara causal (ablación)</label>
     <label class="inl"><input type="checkbox" id="pos_weight"> pos_weight en la BCE (87/13)</label>
   </div>
   <p class="hint" id="cap-hint"></p>
+  <p class="hint">Medido en la 1ª tanda: <b>causal con CLS al inicio degenera</b> (el CLS solo se
+  ve a sí mismo → p constante, ROC 0.500 exacto). Para que la ablación causal tenga sentido, CLS
+  <b>al final</b> (<code>feat_causal_last</code>). También medido: CLS &gt; promedio (6/6 seeds) y
+  pos_weight daña el test PR (−0.059).</p>
 </section>
 
 <section class="card"><h2><span class="n">5</span>Validación y entrenamiento</h2>
@@ -386,16 +440,19 @@ def controles(features):
       <span class="t">split por producto</span><span class="d">verificado: da igual (§7.1) (pedir)</span></label>
   </fieldset>
   <div class="rowc">
-    <label class="inl">seeds <input type="number" id="seeds" value="3" min="1" max="10"></label>
+    <label class="inl">seeds <input type="number" id="seeds" value="6" min="1" max="10"></label>
     <label class="inl" id="k-wrap" style="display:none">k <input type="number" id="kfold" value="5" min="3" max="10"></label>
     <label class="inl">épocas <input type="number" id="epochs" value="60" min="1"></label>
     <label class="inl">batch <input type="number" id="batch_size" value="256" min="16" step="16"></label>
     <label class="inl">lr <input type="number" id="lr" value="0.001" min="0" step="0.0005"></label>
     <label class="inl">patience <input type="number" id="patience" value="8" min="1"></label>
+    <label class="inl" id="cart-wrap">λ cart (multi-task) <input type="number" id="cart_aux" value="0" min="0" max="1" step="0.1"></label>
   </div>
   <p class="hint">La decisión de parar y de elegir configs se toma SIEMPRE con la validación
-  (PR-AUC); test solo se reporta. Con 2.012 queries el holdout × 3 seeds ya da desvíos chicos;
-  GroupKFold es el paso siguiente si queremos intervalos más finos.</p>
+  (PR-AUC); test solo se reporta. El protocolo vigente tras la 1ª tanda: <b>6 seeds</b>, y para
+  tabulares <b>patience 20 / tope 300</b> (ganó en 21/24; en texto puro empeora el test).
+  <b>λ cart</b> &gt; 0 agrega la BCE auxiliar sobre <code>cart</code> como segunda tarea
+  (nunca como input — propuesta #2 de Junior; suite <code>feat_cartaux01/03/05</code>).</p>
 </section>
 
 <section class="card"><h2><span class="n">6</span>Métricas — se calculan SIEMPRE todas</h2>
@@ -417,6 +474,7 @@ def pagina(features, suite, grupos, defaults):
         'gen': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'zoo': ZOO,
         'features': features,
+        'extra_features': EXTRA_FEATURES,
         'suite': suite,
         'results': grupos,
         'defaults': defaults,
@@ -493,35 +551,52 @@ const ALL_FEATS = DATA.features.cat.map(f=>f.name).concat(DATA.features.num.map(
 // ---- estado (mismos nombres que argparse en btr/train.py) ----
 const S = Object.assign({}, DATA.defaults);
 S.drop_features = (S.drop_features||[]).slice();
+S.extra_features = (S.extra_features||[]).slice();
 const X = {catenc:'embedding', numenc_mixto:false, numpf:{}, val:'holdout', kfold:5, seeds:3, mq:false};
 DATA.features.num.forEach(f => X.numpf[f.name] = 'linear');
 
-const hasText = s => (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid')) || s.arch==='tower';
+const hasText = s => (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid'))
+  || s.arch==='tower' || (s.arch==='listwise' && s.listwise_texto);
 const hasTab  = s => !(s.arch==='transformer' && s.formulation==='text');
 
 // ---- clave canonica: ESPEJO EXACTO de canon() en panel.py ----
 function canonKey(c){
   const arch = c.arch;
   const form = arch==='transformer' ? (c.formulation||'features') : '-';
-  const htext = (arch==='transformer' && (form==='text'||form==='hybrid')) || arch==='tower';
+  const lwtext = arch==='listwise' ? (c.listwise_texto ? '1':'0') : '-';
+  const htext = (arch==='transformer' && (form==='text'||form==='hybrid')) || arch==='tower'
+    || lwtext==='1';
   const htab = !(arch==='transformer' && form==='text');
-  let drop = c.drop_features||[];
-  if (typeof drop === 'string') drop = drop.split(',').map(s=>s.trim()).filter(Boolean);
-  const drops = htab ? Array.from(new Set(drop)).sort().join(',') : '-';
+  const lista = v => {
+    if (typeof v === 'string') v = v.split(',').map(s=>s.trim()).filter(Boolean);
+    return v||[];
+  };
+  const drops = htab ? Array.from(new Set(lista(c.drop_features))).sort().join(',') : '-';
+  let extras = '-';
+  if (htab && arch!=='listwise'){
+    let e = lista(c.extra_features);
+    if (e.length===1 && e[0]==='all') e = Object.keys(DATA.extra_features).sort();
+    extras = Array.from(new Set(e)).sort().join(',');
+  }
   const strip = htext ? (c.strip_status ? '1':'0') : '-';
   const maxlen = htext ? String(Math.trunc(c.max_text_len??256)) : '-';
   const nmode = !htab ? '-' : (arch==='listwise' ? 'linear' : (c.numeric_mode||'linear'));
   const nbins = nmode==='bins' ? String(Math.trunc(c.n_bins??16)) : '-';
+  const catenc = (!htab || arch==='listwise') ? '-' : (c.cat_encoding||'embedding');
+  const buckets = catenc==='hashing' ? String(Math.trunc(c.hash_buckets??8)) : '-';
   const pool = arch==='transformer' ? (c.pooling||'cls') : '-';
+  const clspos = arch==='transformer' ? (c.cls_position||'first') : '-';
   const posit = arch==='transformer' ? ((form==='text'||form==='hybrid'||c.positional) ? '1':'0') : '-';
   const caus = (arch==='transformer'||arch==='tower') ? (c.causal ? '1':'0') : '-';
   const posw = c.pos_weight ? '1':'0';
+  const cart = arch==='listwise' ? '-' : ffloat(c.cart_aux||0);
   const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
   const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
-    ffloat(c.lr??0.001), String(Math.trunc(c.patience??8))].join('|');
+    ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
+    catenc, buckets, clspos, cart, extras, lwtext].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -546,6 +621,14 @@ function coerciones(s){
     out.push('strip-status solo aplica a arquitecturas que ven el texto — ignorado');
   if (s.arch==='listwise' && s.numeric_mode==='bins')
     out.push('listwise no implementa bins → usa lineal');
+  if (s.arch==='listwise' && s.cat_encoding!=='embedding')
+    out.push('listwise no implementa encodings alternativos → embedding');
+  if (s.arch==='listwise' && Number(s.cart_aux)>0)
+    out.push('cart-aux no implementado para listwise → ignorado');
+  if (s.arch==='listwise' && s.extra_features.length)
+    out.push('extra-features no implementado para listwise → ignorado');
+  if (s.arch==='transformer' && s.causal && s.cls_position==='first' && s.pooling==='cls')
+    out.push('⚠ causal + CLS al inicio DEGENERA (medido: p constante, ROC 0.500) — usá CLS al final');
   if (s.arch==='mlp') out.push('MLP: cabezas y bloques no aplican (no hay atención)');
   if (s.arch==='listwise') out.push('listwise: sin positional (no hay orden de página) y batch en queries');
   if (s.arch==='tower') out.push('tower: la torre lleva su PE propio; pooling fijo [CLS] del texto');
@@ -555,11 +638,6 @@ function coerciones(s){
 // ---- pendientes de implementacion (los ejes 🟡) ----
 function pendientes(s){
   const out = [];
-  if (X.catenc==='onehot') out.push({k:'encoding_categoricas', v:'one-hot directo al MLP',
-    n: s.arch==='mlp' ? 'one-hot crudo al MLP (medir qué aporta embeber)' :
-       'one-hot: para el transformer equivale al embedding (§6.1) — elegila con arquitectura MLP'});
-  if (X.catenc==='target') out.push({k:'encoding_categoricas', v:'target encoding',
-    n:'nivel → BTR promedio de train (ajustado por fold para no filtrar el target)'});
   if (X.numenc_mixto){
     const mix = Object.entries(X.numpf).filter(([f,m])=>m!=='linear');
     out.push({k:'encoding_numericas_por_feature', v:Object.fromEntries(Object.entries(X.numpf)),
@@ -579,9 +657,16 @@ function comando(s){
   const p = ['.venv/bin/python','-m','btr.train'];
   if (s.arch!=='transformer') p.push('--arch', s.arch);
   else if (s.formulation!=='features') p.push('--formulation', s.formulation);
+  if (s.arch==='listwise' && s.listwise_texto) p.push('--listwise-texto');
   if (hasTab(s) && s.drop_features.length) p.push('--drop-features', Array.from(new Set(s.drop_features)).sort().join(','));
+  if (hasTab(s) && s.arch!=='listwise' && s.extra_features.length)
+    p.push('--extra-features', Array.from(new Set(s.extra_features)).sort().join(','));
   if (hasText(s) && s.strip_status) p.push('--strip-status');
   if (hasText(s) && s.max_text_len!==256) p.push('--max-text-len', String(s.max_text_len));
+  if (hasTab(s) && s.arch!=='listwise' && s.cat_encoding!=='embedding'){
+    p.push('--cat-encoding', s.cat_encoding);
+    if (s.cat_encoding==='hashing' && s.hash_buckets!==8) p.push('--hash-buckets', String(s.hash_buckets));
+  }
   if (s.d_model!==32) p.push('--d-model', String(s.d_model));
   if (s.arch!=='mlp' && s.n_head!==4) p.push('--n-head', String(s.n_head));
   if (s.arch!=='mlp' && s.n_layer!==2) p.push('--n-layer', String(s.n_layer));
@@ -591,9 +676,11 @@ function comando(s){
     if (s.n_bins!==16) p.push('--n-bins', String(s.n_bins));
   }
   if (s.arch==='transformer' && s.pooling==='mean') p.push('--pooling','mean');
+  if (s.arch==='transformer' && s.cls_position==='last') p.push('--cls-position','last');
   if (s.arch==='transformer' && s.formulation==='features' && s.positional) p.push('--positional');
   if ((s.arch==='transformer'||s.arch==='tower') && s.causal) p.push('--causal');
   if (s.pos_weight) p.push('--pos-weight');
+  if (s.arch!=='listwise' && Number(s.cart_aux)>0) p.push('--cart-aux', ffloat(s.cart_aux));
   if (s.epochs!==60) p.push('--epochs', String(s.epochs));
   if (s.batch_size!==256) p.push('--batch-size', String(s.batch_size));
   if (Number(s.lr)!==0.001) p.push('--lr', ffloat(s.lr));
@@ -666,19 +753,26 @@ function renderResultados(key){
   head.innerHTML = `<span class="pill ok">${g.runs.length} corrida(s) · seeds ${esc(seeds)}</span>`+
     `<span class="pill info">${g.runs[0].params.toLocaleString('es-AR')} parámetros · ${esc(dev)}</span>`+
     (g.pesos?'<span class="pill cls">checkpoint en pesos/ ✓</span>':'');
-  const opts = DATA.metricas.map(m=>`<option value="${m.k}"${m.k===chartMetric?' selected':''}>${esc(m.label)}</option>`).join('');
+  // el historial de la 1ra tanda GPU (schema viejo) solo trae loss/roc/pr por epoca
+  const avail = new Set([...Object.keys(g.runs[0].hist.train||{}), ...Object.keys(g.runs[0].hist.val||{})]);
+  if (!avail.has(chartMetric)) chartMetric = avail.has('pr_auc') ? 'pr_auc' : [...avail][0];
+  const opts = DATA.metricas.filter(m=>avail.has(m.k))
+    .map(m=>`<option value="${m.k}"${m.k===chartMetric?' selected':''}>${esc(m.label)}</option>`).join('');
+  const nota = avail.size<6 ? ' <span class="sd">(historial de la 1ª tanda: solo estas 3 por época; las 16 están en la tabla)</span>' : '';
   chart.innerHTML = `<div class="rowc" style="margin:8px 0 0">
       <label class="inl">métrica <select id="chart-metric">${opts}</select></label>
       <label class="inl"><input type="checkbox" id="chart-train"${chartTrain?' checked':''}> train</label>
-      <label class="inl"><input type="checkbox" id="chart-val"${chartVal?' checked':''}> val</label>
+      <label class="inl"><input type="checkbox" id="chart-val"${chartVal?' checked':''}> val</label>${nota}
     </div><div id="chart-box">${chartSVG(g, chartMetric, chartTrain, chartVal)}</div>`;
   $('chart-metric').onchange = e => { chartMetric = e.target.value; update(); };
   $('chart-train').onchange = e => { chartTrain = e.target.checked; update(); };
   $('chart-val').onchange = e => { chartVal = e.target.checked; update(); };
   let rows = '';
   for (const m of DATA.metricas){
-    const va = g.runs.map(r=>r.val[m.k]), te = g.runs.map(r=>r.test[m.k]);
-    const cell = a => f4(mean(a)) + (a.length>1 ? ` <span class="sd">±${f4(std(a))}</span>` : '');
+    const va = g.runs.map(r=>r.val[m.k]).filter(v=>v!==undefined);
+    const te = g.runs.map(r=>r.test[m.k]).filter(v=>v!==undefined);
+    const cell = a => !a.length ? '—'
+      : f4(mean(a)) + (a.length>1 ? ` <span class="sd">±${f4(std(a))}</span>` : '');
     rows += `<tr${m.k==='pr_auc'?' class="hl"':''}><td>${esc(m.label)}</td><td>${cell(va)}</td><td>${cell(te)}</td></tr>`;
   }
   table.innerHTML = `<table class="mt"><thead><tr><th>métrica</th><th>val</th><th>test</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -699,10 +793,11 @@ function renderRanking(currentKey){
   }
   const dir = (DATA.metricas.find(m=>m.k===rankMetric)||{}).dir || 'up';
   const rows = Object.entries(DATA.results).map(([k,g])=>{
-    const vals = g.runs.map(r=>r[rankSplit][rankMetric]);
+    const vals = g.runs.map(r=>r[rankSplit][rankMetric]).filter(v=>v!==undefined);
+    if (!vals.length) return null;
     return {k, g, m: mean(vals), s: vals.length>1?std(vals):null,
       nm: suiteByKey[k] ? suiteByKey[k]+' (suite)' : g.nombre.replace(/_seed\d+(_\d+)?$/,'')};
-  });
+  }).filter(Boolean);
   if (!rows.length){ $('rank').innerHTML = '<div class="empty">Todavía no hay corridas en resultados/.</div>'; return; }
   rows.sort((a,b)=> dir==='down' ? a.m-b.m : b.m-a.m);
   const lo = Math.min(...rows.map(r=>r.m)), hi = Math.max(...rows.map(r=>r.m));
@@ -727,6 +822,7 @@ function update(){
     const c = ARCH2CODE[el.dataset.arch];
     el.classList.toggle('on', c.arch===S.arch && (c.arch!=='transformer' || c.formulation===S.formulation));
   });
+  $('lwtext-wrap').style.display = S.arch==='listwise' ? '' : 'none';
   $('strip-wrap').style.opacity = htext ? 1 : .45;
   $('strip').disabled = !htext;
   document.querySelectorAll('#feat-grid .feat').forEach(el=>{
@@ -735,19 +831,30 @@ function update(){
     el.querySelector('input').checked = on;
     el.classList.toggle('off', !on || !htab);
   });
+  const extrasOk = htab && S.arch!=='listwise';
+  document.querySelectorAll('#extra-grid .feat').forEach(el=>{
+    const f = el.dataset.x;
+    const on = S.extra_features.includes(f);
+    el.querySelector('input').checked = on;
+    el.classList.toggle('off', !extrasOk);
+  });
   $('nh-wrap').style.opacity = $('nl-wrap').style.opacity = S.arch==='mlp' ? .45 : 1;
   $('pool-wrap').style.display = S.arch==='transformer' ? '' : 'none';
+  $('clspos-wrap').style.display = S.arch==='transformer' ? '' : 'none';
   $('pos-wrap').style.display = (S.arch==='transformer' && S.formulation==='features') ? '' : 'none';
   $('caus-wrap').style.display = (S.arch==='transformer'||S.arch==='tower') ? '' : 'none';
   $('nbins-wrap').style.display = S.numeric_mode==='bins' ? '' : 'none';
+  $('buckets-wrap').style.display = S.cat_encoding==='hashing' ? '' : 'none';
+  $('cart-wrap').style.opacity = S.arch==='listwise' ? .45 : 1;
   $('numpf-wrap').style.display = X.numenc_mixto ? '' : 'none';
   $('k-wrap').style.display = X.val==='gkfold' ? '' : 'none';
-  const archHints = {mlp:'El control sin atención: si el transformer no le gana, la atención no se justifica.',
-    listwise:'Ve la página completa; único capaz de modelar competencia entre productos.',
-    tower:'Tu propuesta: transformer como encoder de texto, MLP como clasificador.',
-    text:'La familia cara (atención 257²): corre en la 3070.',
-    hybrid:'La atención puede cruzar texto ↔ features en la misma capa.',
-    feat:'La ganadora hasta ahora en CPU: PR-AUC 0.766 vs GBM 0.762.'};
+  const archHints = {
+    mlp:'El control sin atención: la atención le saca +0.048 de PR-AUC (gana en 5/6 seeds).',
+    listwise:'0.740 test PR con paciencia 20 (fue el más beneficiado: +0.041). listwise_texto responde si pierde por la idea o por no ver el texto.',
+    tower:'La mejor textual (0.775) — pero su embedding único NO recupera la señal del regex (sin_regex: −0.04).',
+    text:'La familia cara. 0.652: redescubre el tier desde los chars (>> techo intrínseco 0.16) pero no alcanza al tabular. Ojo: paciencia 20 acá EMPEORA test.',
+    hybrid:'0.705: los 256 chars diluyen lo tabular. Pero sin_regex ≈ full: recupera desde el texto lo que saca la regex.',
+    feat:'La base: 0.794 test PR (6 seeds). Mejor global: paciencia 20 + 1 cabeza = 0.816 (pac20_feat_h1).'};
   const aid = Object.entries(ARCH2CODE).find(([id,c])=>c.arch===S.arch &&
     (c.arch!=='transformer'||c.formulation===S.formulation))[0];
   $('arch-hint').textContent = archHints[aid]||'';
@@ -758,17 +865,20 @@ function update(){
   const pend = pendientes(S);
   const key = canonKey(S);
   const inSuite = suiteByKey[key];
-  const invalid = S.arch!=='mlp' && S.d_model % S.n_head !== 0;
+  const badOnehot = S.cat_encoding==='onehot' && S.arch!=='mlp' && hasTab(S) && S.arch!=='listwise';
+  const invalid = (S.arch!=='mlp' && S.d_model % S.n_head !== 0) || badOnehot;
   let pills = '';
-  if (invalid) pills += '<span class="pill err">inválida: d_model % cabezas ≠ 0</span>';
+  if (invalid) pills += badOnehot
+    ? '<span class="pill err">one-hot es solo para MLP: en el transformer, one-hot + lineal ≡ embedding (§6.1)</span>'
+    : '<span class="pill err">inválida: d_model % cabezas ≠ 0</span>';
   else if (pend.length) pills += '<span class="pill warn">requiere implementación</span>';
   else if (inSuite) pills += `<span class="pill ok">en la suite: ${esc(inSuite)}</span>`;
   else pills += '<span class="pill ok">soportada por el código</span>';
   if (!pend.length && !invalid && !inSuite)
     pills += '<span class="pill info">no está en la suite — pedile a Claude que la agregue si va en serio</span>';
   $('estado-pills').innerHTML = pills;
-  const cmd = invalid ? '— arreglá d_model / cabezas —' :
-    (inSuite && X.seeds===3 && !pend.length)
+  const cmd = invalid ? (badOnehot ? '— elegí arquitectura MLP para one-hot —' : '— arreglá d_model / cabezas —') :
+    (inSuite && X.seeds===6 && !pend.length)
       ? `.venv/bin/python experimentos.py --only ${inSuite}\n# (equivale a: ${comando(S)})`
       : comando(S);
   $('cmd').textContent = cmd;
@@ -787,6 +897,7 @@ function update(){
 function applyCfg(cfg){
   for (const k of Object.keys(DATA.defaults)) if (cfg[k]!==undefined) S[k] = cfg[k];
   S.drop_features = (cfg.drop_features||[]).slice();
+  S.extra_features = (cfg.extra_features||[]).slice();
   syncUI(); update();
   window.scrollTo({top:0, behavior:'smooth'});
 }
@@ -796,9 +907,13 @@ function syncUI(){
     (c.arch!=='transformer'||c.formulation===(S.formulation||'features')));
   document.querySelectorAll('#arch-grid input[name=arch]').forEach(r=>r.checked = r.value===aid[0]);
   $('strip').checked = !!S.strip_status;
-  ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins'].forEach(k=>{ $(k).value = S[k]; });
+  $('listwise_texto').checked = !!S.listwise_texto;
+  ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins',
+   'hash_buckets','cart_aux'].forEach(k=>{ $(k).value = S[k]; });
+  $('catenc').value = S.cat_encoding||'embedding';
   $('numenc').value = X.numenc_mixto ? 'mixto' : S.numeric_mode;
   $('pool-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.pooling||'cls')));
+  $('clspos-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.cls_position||'first')));
   $('positional').checked = !!S.positional; $('causal').checked = !!S.causal;
   $('pos_weight').checked = !!S.pos_weight;
   $('seeds').value = X.seeds;
@@ -816,10 +931,20 @@ document.querySelectorAll('#feat-grid input[name=feat]').forEach(cb=>cb.onchange
                                : S.drop_features.concat([f]);
   update();
 });
+document.querySelectorAll('#extra-grid input[name=extraf]').forEach(cb=>cb.onchange = () => {
+  const f = cb.value;
+  S.extra_features = cb.checked ? S.extra_features.concat([f])
+                                : S.extra_features.filter(x=>x!==f);
+  update();
+});
+$('listwise_texto').onchange = e => { S.listwise_texto = e.target.checked; update(); };
 $('pre-catalogo').onclick = () => { S.drop_features = []; S.strip_status = false; syncUI(); update(); };
 $('pre-intrinseco').onclick = () => { S.drop_features = ['listing_status']; S.strip_status = true; syncUI(); update(); };
 $('strip').onchange = e => { S.strip_status = e.target.checked; update(); };
-$('catenc').onchange = e => { X.catenc = e.target.value; update(); };
+$('catenc').onchange = e => { S.cat_encoding = e.target.value; update(); };
+$('clspos-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.cls_position = b.dataset.v; syncUI(); update(); });
+$('cart_aux').onchange = e => { S.cart_aux = parseFloat(e.target.value||0); update(); };
+$('hash_buckets').onchange = e => { S.hash_buckets = parseInt(e.target.value||8,10); update(); };
 $('numenc').onchange = e => {
   X.numenc_mixto = e.target.value==='mixto';
   if (!X.numenc_mixto) S.numeric_mode = e.target.value;

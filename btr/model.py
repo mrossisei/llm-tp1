@@ -130,15 +130,47 @@ class FeatureTokenizer(nn.Module):
       'bins':   x_i se discretiza en cuantiles (bin_edges de train) y se hace
                 lookup en una tabla, igual que una categorica. Captura efectos
                 no monotonicos (la U invertida del precio) sin depender del MLP.
+
+    cat_encoding (propuesta 6.1; one-hot+lineal ≡ embedding, por eso no esta aca):
+      'embedding': una tabla aprendida por columna (column embeddings, el default)
+      'target':    nivel -> BTR promedio suavizado de train (cat_tables, float);
+                   el escalar entra con una proyeccion afin como una numerica
+      'freq':      nivel -> frecuencia relativa en train; idem proyeccion afin
+      'hashing':   nivel -> bucket = hash(valor) % B (cat_tables, long) y lookup
+                   en una tabla de B entradas por feature ("truco del modulo":
+                   util con miles de niveles; aca mide cuanto duele la colision)
     """
 
     def __init__(self, cat_cardinalities, n_numeric, d_model,
-                 numeric_mode='linear', bin_edges=None):
+                 numeric_mode='linear', bin_edges=None,
+                 cat_encoding='embedding', cat_tables=None, hash_buckets=8):
         super().__init__()
         self.numeric_mode = numeric_mode
-        self.cat_embeddings = nn.ModuleList(
-            [nn.Embedding(card, d_model) for card in cat_cardinalities]
-        )
+        self.cat_encoding = cat_encoding
+        self.n_cat = len(cat_cardinalities)
+        if cat_encoding == 'embedding':
+            self.cat_embeddings = nn.ModuleList(
+                [nn.Embedding(card, d_model) for card in cat_cardinalities]
+            )
+        elif cat_encoding in ('target', 'freq'):
+            if cat_tables is None:
+                raise ValueError(f"cat_encoding='{cat_encoding}' requiere cat_tables (lookups de train)")
+            for i, t in enumerate(cat_tables):
+                self.register_buffer(f'cat_table_{i}', t.float())
+            self.cat_val_weight = nn.Parameter(torch.empty(self.n_cat, d_model))
+            self.cat_val_bias = nn.Parameter(torch.zeros(self.n_cat, d_model))
+            nn.init.normal_(self.cat_val_weight, mean=0.0, std=0.02)
+        elif cat_encoding == 'hashing':
+            if cat_tables is None:
+                raise ValueError("cat_encoding='hashing' requiere cat_tables (indice -> bucket)")
+            for i, t in enumerate(cat_tables):
+                self.register_buffer(f'cat_table_{i}', t.long())
+            self.cat_embeddings = nn.ModuleList(
+                [nn.Embedding(hash_buckets, d_model) for _ in cat_cardinalities]
+            )
+        else:
+            raise ValueError(f'cat_encoding desconocido: {cat_encoding}')
+
         if numeric_mode == 'linear':
             self.num_weight = nn.Parameter(torch.empty(n_numeric, d_model))
             self.num_bias = nn.Parameter(torch.zeros(n_numeric, d_model))
@@ -159,11 +191,22 @@ class FeatureTokenizer(nn.Module):
     def n_tokens(self):
         n_num = self.num_weight.shape[0] if self.numeric_mode == 'linear' \
             else len(self.num_bin_embeddings)
-        return len(self.cat_embeddings) + n_num
+        return self.n_cat + n_num
+
+    def _cat_tokens(self, x_cat):
+        if self.cat_encoding == 'embedding':
+            return [emb(x_cat[:, i]) for i, emb in enumerate(self.cat_embeddings)]
+        if self.cat_encoding == 'hashing':
+            return [emb(getattr(self, f'cat_table_{i}')[x_cat[:, i]])
+                    for i, emb in enumerate(self.cat_embeddings)]
+        # target / freq: escalar por nivel -> afin a d_model
+        return [getattr(self, f'cat_table_{i}')[x_cat[:, i]].unsqueeze(-1)
+                * self.cat_val_weight[i] + self.cat_val_bias[i]
+                for i in range(self.n_cat)]
 
     def forward(self, x_cat, x_num):
         # x_cat: (batch, n_cat) long; x_num: (batch, n_num) float
-        tokens = [emb(x_cat[:, i]) for i, emb in enumerate(self.cat_embeddings)]
+        tokens = self._cat_tokens(x_cat)
         if self.numeric_mode == 'linear':
             # (batch, n_num, 1) * (n_num, d_model) -> (batch, n_num, d_model)
             num_tokens = x_num.unsqueeze(-1) * self.num_weight + self.num_bias
@@ -175,6 +218,23 @@ class FeatureTokenizer(nn.Module):
                 tokens.append(emb(idx))
             tokens = torch.stack(tokens, dim=1)
         return tokens  # (batch, n_cat + n_num, d_model)
+
+
+def _bce_multitask(logits, cart_logits, targets, pos_weight, cart_lambda):
+    """BCE del target real + lambda * BCE de cart (multi-task, propuesta de Junior).
+
+    targets: (batch,) = solo bought, o (batch, 2) = [bought, cart]. cart entra
+    UNICAMENTE como etiqueta auxiliar de entrenamiento — nunca como input — y su
+    cabeza se ignora en inferencia (predict_proba expone solo p(bought)).
+    """
+    if targets.dim() == 2:
+        y, y_cart = targets[:, 0], targets[:, 1]
+    else:
+        y, y_cart = targets, None
+    loss = F.binary_cross_entropy_with_logits(logits, y, pos_weight=pos_weight)
+    if cart_lambda and y_cart is not None and cart_logits is not None:
+        loss = loss + cart_lambda * F.binary_cross_entropy_with_logits(cart_logits, y_cart)
+    return loss
 
 
 class BTRTransformer(nn.Module):
@@ -189,19 +249,30 @@ class BTRTransformer(nn.Module):
                  char_vocab_size=None, max_text_len=0, d_model=32, n_head=4,
                  n_layer=2, dropout=0.1, causal=False, pooling='cls',
                  use_positional=False, numeric_mode='linear', bin_edges=None,
-                 pos_weight=None):
+                 pos_weight=None, cls_position='first', cat_encoding='embedding',
+                 cat_tables=None, hash_buckets=8, cart_lambda=0.0):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
         assert formulation in ('features', 'text', 'hybrid')
+        assert cls_position in ('first', 'last')
+        # con mascara causal el CLS en posicion 0 solo se ve a si mismo y el modelo
+        # degenera a predecir la tasa base (medido: ROC 0.500 exacto, p constante).
+        # El causal "bien hecho" pone el CLS al FINAL, como el ultimo token de GPT.
+        if causal and cls_position == 'first' and pooling == 'cls':
+            import warnings
+            warnings.warn('causal con CLS en posicion 0 es degenerado; usar cls_position="last"')
         self.formulation = formulation
         self.pooling = pooling
+        self.cls_position = cls_position
+        self.cart_lambda = cart_lambda
 
         seq_len = 1  # [CLS]
         self.tokenizer = None
         if formulation in ('features', 'hybrid'):
             self.tokenizer = FeatureTokenizer(
-                cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges
+                cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges,
+                cat_encoding, cat_tables, hash_buckets
             )
             seq_len += self.tokenizer.n_tokens
         self.char_embedding_table = None
@@ -228,6 +299,9 @@ class BTRTransformer(nn.Module):
         )
         self.ln_f = nn.LayerNorm(d_model)
         self.cls_head = nn.Linear(d_model, 1)
+        # cabeza auxiliar multi-task sobre el mismo pooled (--cart-aux); se
+        # descarta en inferencia
+        self.cart_head = nn.Linear(d_model, 1) if cart_lambda else None
         # peso para la clase positiva en la BCE (desbalance 87/13), opcional
         self.register_buffer(
             'pos_weight',
@@ -245,11 +319,10 @@ class BTRTransformer(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def _build_sequence(self, x_cat, x_num, x_text):
-        """Arma [CLS | features | chars] segun la formulacion + su padding mask."""
+        """Arma [CLS | features | chars] (o el CLS al final) + su padding mask."""
         batch_size = (x_text if self.formulation == 'text' else x_cat).shape[0]
         device = (x_text if self.formulation == 'text' else x_cat).device
-        parts = [self.cls.expand(batch_size, -1, -1)]
-        masks = [torch.ones(batch_size, 1, dtype=torch.bool, device=device)]
+        parts, masks = [], []
         if self.tokenizer is not None:
             feat = self.tokenizer(x_cat, x_num)
             parts.append(feat)
@@ -257,6 +330,12 @@ class BTRTransformer(nn.Module):
         if self.char_embedding_table is not None:
             parts.append(self.char_embedding_table(x_text))
             masks.append(x_text != PAD_IDX)  # el padding del texto no recibe atencion
+        cls = [self.cls.expand(batch_size, -1, -1)]
+        cls_mask = [torch.ones(batch_size, 1, dtype=torch.bool, device=device)]
+        if self.cls_position == 'first':
+            parts, masks = cls + parts, cls_mask + masks
+        else:  # 'last': con causal, el CLS al final es el unico que ve todo
+            parts, masks = parts + cls, masks + cls_mask
         x = torch.cat(parts, dim=1)
         mask = torch.cat(masks, dim=1)
         return x, (mask if self.char_embedding_table is not None else None)
@@ -271,7 +350,7 @@ class BTRTransformer(nn.Module):
         x = self.ln_f(x)
 
         if self.pooling == 'cls':
-            pooled = x[:, 0]
+            pooled = x[:, 0] if self.cls_position == 'first' else x[:, -1]
         else:  # promedio solo sobre posiciones reales
             m = (padding_mask if padding_mask is not None
                  else torch.ones(x.shape[:2], dtype=torch.bool, device=x.device))
@@ -280,9 +359,8 @@ class BTRTransformer(nn.Module):
 
         loss = None
         if targets is not None:
-            loss = F.binary_cross_entropy_with_logits(
-                logits, targets, pos_weight=self.pos_weight
-            )
+            cart_logits = self.cart_head(pooled).squeeze(-1) if self.cart_head is not None else None
+            loss = _bce_multitask(logits, cart_logits, targets, self.pos_weight, self.cart_lambda)
         return logits, loss
 
     @torch.no_grad()
@@ -308,28 +386,55 @@ class MLPBaseline(nn.Module):
     """
 
     def __init__(self, cat_cardinalities, n_numeric, d_model=32, dropout=0.1,
-                 numeric_mode='linear', bin_edges=None, pos_weight=None):
+                 numeric_mode='linear', bin_edges=None, pos_weight=None,
+                 cat_encoding='embedding', cat_tables=None, hash_buckets=8,
+                 cart_lambda=0.0):
         super().__init__()
-        self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
-                                          numeric_mode, bin_edges)
-        in_dim = self.tokenizer.n_tokens * d_model
+        self.cart_lambda = cart_lambda
+        self.onehot = cat_encoding == 'onehot'
+        if self.onehot:
+            # one-hot crudo de las categoricas + tokens afines de las numericas:
+            # mide que aporta EMBEBER (para el transformer one-hot+lineal ≡
+            # embedding, propuesta 6.1; la comparacion solo tiene sentido aca)
+            if numeric_mode != 'linear':
+                raise ValueError('cat_encoding=onehot solo con numeric_mode=linear')
+            self.cat_cardinalities = list(cat_cardinalities)
+            self.tokenizer = FeatureTokenizer([], n_numeric, d_model,  # solo la parte numerica
+                                              numeric_mode, bin_edges)
+            in_dim = sum(cat_cardinalities) + n_numeric * d_model
+        else:
+            self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
+                                              numeric_mode, bin_edges,
+                                              cat_encoding, cat_tables, hash_buckets)
+            in_dim = self.tokenizer.n_tokens * d_model
         self.net = nn.Sequential(
             nn.Linear(in_dim, 8 * d_model), nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(8 * d_model, 2 * d_model), nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(2 * d_model, 1),
         )
+        self.cart_head = nn.Linear(2 * d_model, 1) if cart_lambda else None
         self.register_buffer(
             'pos_weight',
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
         )
 
+    def _entrada(self, x_cat, x_num):
+        if self.onehot:
+            oh = [F.one_hot(x_cat[:, i], card).float()
+                  for i, card in enumerate(self.cat_cardinalities)]
+            num_tokens = x_num.unsqueeze(-1) * self.tokenizer.num_weight + self.tokenizer.num_bias
+            return torch.cat(oh + [num_tokens.flatten(1)], dim=1)
+        return self.tokenizer(x_cat, x_num).flatten(1)
+
     def forward(self, x_cat, x_num, x_text=None, targets=None):
-        tokens = self.tokenizer(x_cat, x_num)              # (batch, n_tokens, d_model)
-        logits = self.net(tokens.flatten(1)).squeeze(-1)   # (batch,)
+        h = self._entrada(x_cat, x_num)                    # (batch, in_dim)
+        # forward por capas para exponer la penultima activacion a la cabeza de cart
+        pen = self.net[:-1](h)                             # (batch, 2*d_model)
+        logits = self.net[-1](pen).squeeze(-1)             # (batch,)
         loss = None
         if targets is not None:
-            loss = F.binary_cross_entropy_with_logits(logits, targets,
-                                                      pos_weight=self.pos_weight)
+            cart_logits = self.cart_head(pen).squeeze(-1) if self.cart_head is not None else None
+            loss = _bce_multitask(logits, cart_logits, targets, self.pos_weight, self.cart_lambda)
         return logits, loss
 
 
@@ -346,8 +451,11 @@ class TextTowerModel(nn.Module):
 
     def __init__(self, cat_cardinalities, n_numeric, char_vocab_size, max_text_len,
                  d_model=32, n_head=4, n_layer=2, dropout=0.1, causal=False,
-                 numeric_mode='linear', bin_edges=None, pos_weight=None):
+                 numeric_mode='linear', bin_edges=None, pos_weight=None,
+                 cat_encoding='embedding', cat_tables=None, hash_buckets=8,
+                 cart_lambda=0.0):
         super().__init__()
+        self.cart_lambda = cart_lambda
         self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
         self.cls = nn.Parameter(torch.empty(1, 1, d_model))
         nn.init.normal_(self.cls, mean=0.0, std=0.02)
@@ -359,12 +467,14 @@ class TextTowerModel(nn.Module):
         self.ln_f = nn.LayerNorm(d_model)
 
         self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
-                                          numeric_mode, bin_edges)
+                                          numeric_mode, bin_edges,
+                                          cat_encoding, cat_tables, hash_buckets)
         head_in = d_model + self.tokenizer.n_tokens * d_model
         self.head = nn.Sequential(
             nn.Linear(head_in, 4 * d_model), nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(4 * d_model, 1),
         )
+        self.cart_head = nn.Linear(head_in, 1) if cart_lambda else None
         self.register_buffer(
             'pos_weight',
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
@@ -385,12 +495,46 @@ class TextTowerModel(nn.Module):
     def forward(self, x_cat, x_num, x_text, targets=None):
         text_emb = self.encode_text(x_text)                     # (batch, d_model)
         tab = self.tokenizer(x_cat, x_num).flatten(1)           # (batch, n_tokens*d_model)
-        logits = self.head(torch.cat([text_emb, tab], dim=1)).squeeze(-1)
+        h = torch.cat([text_emb, tab], dim=1)
+        logits = self.head(h).squeeze(-1)
         loss = None
         if targets is not None:
-            loss = F.binary_cross_entropy_with_logits(logits, targets,
-                                                      pos_weight=self.pos_weight)
+            cart_logits = self.cart_head(h).squeeze(-1) if self.cart_head is not None else None
+            loss = _bce_multitask(logits, cart_logits, targets, self.pos_weight, self.cart_lambda)
         return logits, loss
+
+
+class TextEncoder(nn.Module):
+    """Torre de caracteres reutilizable: [CLS] + chars + PE -> bloques -> (B, d_model).
+
+    Mismas piezas que TextTowerModel.encode_text, como modulo aparte para poder
+    meterla DENTRO de otra arquitectura (hoy: el token de producto del listwise
+    enriquecido con texto, propuesta #1 de junior_proposals.md).
+    """
+
+    def __init__(self, char_vocab_size, max_text_len, d_model, n_head=4, n_layer=2,
+                 dropout=0.1):
+        super().__init__()
+        self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
+        self.cls = nn.Parameter(torch.empty(1, 1, d_model))
+        nn.init.normal_(self.cls, mean=0.0, std=0.02)
+        seq_len = 1 + max_text_len
+        self.position_embedding_table = nn.Embedding(seq_len, d_model)
+        self.blocks = nn.ModuleList(
+            [Block(d_model, n_head, seq_len, dropout) for _ in range(n_layer)]
+        )
+        self.ln_f = nn.LayerNorm(d_model)
+
+    def forward(self, x_text):
+        batch_size = x_text.shape[0]
+        x = torch.cat([self.cls.expand(batch_size, -1, -1),
+                       self.char_embedding_table(x_text)], dim=1)
+        mask = torch.cat([torch.ones(batch_size, 1, dtype=torch.bool, device=x_text.device),
+                          x_text != PAD_IDX], dim=1)
+        x = x + self.position_embedding_table(torch.arange(x.shape[1], device=x.device))
+        for block in self.blocks:
+            x = block(x, mask)
+        return self.ln_f(x)[:, 0]
 
 
 class ListwiseTransformer(nn.Module):
@@ -403,15 +547,30 @@ class ListwiseTransformer(nn.Module):
     calcula solo sobre los slots reales (padding_mask sobre el padding de la
     pagina). Sin positional encoding: el dataset no tiene columna de posicion
     en la pagina, asi que no hay orden que codificar.
+
+    Con use_text (--listwise-texto, propuesta #1 de junior_proposals.md) cada
+    producto suma el embedding de su title+description via una TextEncoder antes
+    de la proyeccion: el tercer argumento del forward pasa a ser x_text (B, P, L)
+    y la mascara de productos se reconstruye como (x_text != PAD).any(-1).
+    Responde: ¿listwise pierde por la idea (comparar vecinos) o porque su token
+    de producto era ciego a la senal mas fuerte (el sufijo del titulo)?
     """
 
     def __init__(self, cat_cardinalities, n_numeric, max_products, d_model=32,
                  n_head=4, n_layer=2, dropout=0.1, numeric_mode='linear',
-                 bin_edges=None, pos_weight=None):
+                 bin_edges=None, pos_weight=None, use_text=False,
+                 char_vocab_size=None, max_text_len=0):
         super().__init__()
+        self.use_text = use_text
         self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
                                           numeric_mode, bin_edges)
-        self.product_proj = nn.Linear(self.tokenizer.n_tokens * d_model, d_model)
+        proj_in = self.tokenizer.n_tokens * d_model
+        if use_text:
+            assert char_vocab_size and max_text_len, 'listwise-texto requiere vocabulario de chars'
+            self.text_encoder = TextEncoder(char_vocab_size, max_text_len, d_model,
+                                            n_head, n_layer, dropout)
+            proj_in += d_model
+        self.product_proj = nn.Linear(proj_in, d_model)
         self.blocks = nn.ModuleList(
             [Block(d_model, n_head, max_products, dropout) for _ in range(n_layer)]
         )
@@ -422,11 +581,20 @@ class ListwiseTransformer(nn.Module):
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
         )
 
-    def forward(self, x_cat, x_num, prod_mask, targets=None):
-        # x_cat: (batch, P, n_cat); x_num: (batch, P, n_num); prod_mask: (batch, P)
+    def forward(self, x_cat, x_num, mask_or_text, targets=None):
+        # x_cat: (batch, P, n_cat); x_num: (batch, P, n_num)
+        # mask_or_text: prod_mask (batch, P) bool, o x_text (batch, P, L) long
         batch_size, n_products, _ = x_cat.shape
         tokens = self.tokenizer(x_cat.flatten(0, 1), x_num.flatten(0, 1))  # (B*P, T, d)
-        products = self.product_proj(tokens.flatten(1))                    # (B*P, d)
+        flat = tokens.flatten(1)                                           # (B*P, T*d)
+        if self.use_text:
+            x_text = mask_or_text
+            prod_mask = (x_text != PAD_IDX).any(-1)      # slots de padding = texto todo-PAD
+            text_emb = self.text_encoder(x_text.flatten(0, 1))             # (B*P, d)
+            flat = torch.cat([flat, text_emb], dim=1)
+        else:
+            prod_mask = mask_or_text
+        products = self.product_proj(flat)                                 # (B*P, d)
         x = products.view(batch_size, n_products, -1)                      # (B, P, d)
         for block in self.blocks:
             x = block(x, prod_mask)
@@ -459,7 +627,10 @@ def load_checkpoint(path, device='cpu'):
     """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     cls = ARCHITECTURES[ckpt.get('arch', 'transformer')]
-    model = cls(**ckpt['model_config'], bin_edges=ckpt['bin_edges']).to(device)
+    extra = {}
+    if ckpt.get('cat_tables') is not None:  # encodings target/freq/hashing
+        extra['cat_tables'] = ckpt['cat_tables']
+    model = cls(**ckpt['model_config'], bin_edges=ckpt['bin_edges'], **extra).to(device)
     model.load_state_dict(ckpt['state_dict'])
     model.eval()
     return model, ckpt['preprocessor']
