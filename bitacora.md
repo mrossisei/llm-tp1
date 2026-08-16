@@ -140,9 +140,39 @@ del código real (`btr/model.py` instanciado): 28.289 parámetros el tabular, 12
 de armarlos: el MLP baseline tiene 4,5× los parámetros del transformer tabular y aun así rinde
 menos — la ventaja de la atención no es cuestión de tamaño.
 
+## 16/08 — Todas las métricas + el laboratorio interactivo (panel)
+
+**Pedido.** Una página interactiva y modular: elegir cada decisión (features, split, estrategia
+de entrenamiento, encodings — incluso por feature —, cantidad de bloques, etc.), que dé la
+combinación armada para probar, que lo ya armado quede guardado en el código, y que si hay
+resultados los muestre; y que se calculen SIEMPRE todas las métricas con sentido para poder
+graficar cualquiera después.
+
+**Hecho (dos partes).**
+1. `compute_metrics` en `btr/train.py`: cada época (train y val) y cada corrida final (val y
+   test) guardan **16 métricas** (PR-AUC, ROC-AUC, loss, log-loss sin pesar, Brier, F1 máximo +
+   su umbral óptimo, precision/recall/F1/accuracy/balanced/especificidad/MCC @ 0.5, tasas de
+   positivos). Se hizo ANTES de correr la suite en la GPU a propósito: así las 72 corridas ya
+   nacen con el set completo. Dato: el F1 máximo del transformer tabular es 0.784 con umbral
+   0.312 — no 0.5, consecuencia directa del 13% de positivos.
+2. `panel.py` genera `panel.html` (el "Laboratorio BTR"): configurador por decisiones que
+   muestra el comando exacto, detecta si la combinación ya está en la suite (`--only nombre`),
+   si está soportada por el código, o si requiere implementación (en ese caso arma un spec JSON
+   para pegar en el chat y pedirla — así quedaron representados sin implementar: GroupKFold,
+   split por producto, target encoding, one-hot directo al MLP, encodings numéricos por feature,
+   métricas por página). Si la config ya tiene corridas: todas las métricas (media ± desvío),
+   curvas por época de cualquier métrica y ranking global clickeable. La identidad de una config
+   es su **clave canónica** (misma función en Python y JS, con auto-test al cargar la página que
+   avisa si divergen; verificada también con node: 27/27 claves y 6/6 comandos).
+
+**Por qué así.** La página es estática (no puede entrenar ni leer archivos): el estado vive en el
+repo (suite en `experimentos.py`, corridas en `resultados/`) y `panel.py` lo embebe al generar.
+Ciclo: elegir en el panel → correr el comando → `python panel.py` → republicar el artifact.
+
 ## Pendientes
 
 - [ ] Correr la suite completa en la RTX 3070 (`experimentos.py`) y analizar `--resumen`.
+- [ ] Tras la suite: `python panel.py` para re-embeber resultados y pedir republicar el artifact.
 - [ ] Notebook prolijo del EDA (Ej. 1) a partir de `eda/verificaciones.py`, con gráficos.
 - [ ] Mapas de atención del modelo final (¿el CLS mira al listing_status? ¿price_rel × tier?).
 - [ ] Consultar a la cátedra las preguntas de `propuesta.md §11`.

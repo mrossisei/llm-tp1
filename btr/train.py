@@ -1,8 +1,10 @@
 """Entrenamiento y evaluacion de los modelos de BTR.
 
 Protocolo de propuesta.md (seccion 7): split por query, AdamW, early stopping
-por PR-AUC de validacion, metricas ROC-AUC / PR-AUC (desbalance 13%), promedio
-de corridas con seeds distintas. Cada corrida escribe resultados/<nombre>.json
+por PR-AUC de validacion, promedio de corridas con seeds distintas. Cada epoca
+y cada split final guardan TODAS las metricas (ver compute_metrics): las
+decisiones se toman con PR-AUC (desbalance 13%) pero el resto queda registrado
+para poder graficar cualquiera despues. Cada corrida escribe resultados/<nombre>.json
 y, con --save-pesos, pesos/<nombre>.pt (recargable con btr.model.load_checkpoint).
 
 Arquitecturas (--arch) y formulaciones (--formulation), ver propuesta.md 4:
@@ -25,12 +27,16 @@ VALIDACION; test se mira solo para reportar las configuraciones finales.
 
 import argparse
 import json
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score, average_precision_score, balanced_accuracy_score, brier_score_loss,
+    confusion_matrix, log_loss, matthews_corrcoef, precision_recall_curve, roc_auc_score,
+)
 
 from .data import CAT_FEATURES, MAX_TEXT_LEN, NUM_FEATURES, prepare, prepare_listwise
 from .model import BTRTransformer, ListwiseTransformer, MLPBaseline, TextTowerModel
@@ -40,8 +46,47 @@ EVAL_BATCH = 1024        # con secuencias largas no entra todo el split en un fo
 TRAIN_EVAL_ROWS = 4000   # submuestra fija de train para las metricas por epoca
 
 
+def compute_metrics(y_true, probs, loss):
+    """TODAS las metricas con sentido para clasificacion binaria desbalanceada (13%).
+
+    Se calculan siempre todas y se guardan en el JSON de la corrida, para poder
+    graficar cualquiera despues sin reentrenar. Dos grupos:
+      - sin umbral (las que importan para rankear): roc_auc, pr_auc, log_loss, brier
+      - con umbral 0.5 (informativas): accuracy, balanced_accuracy, precision,
+        recall, f1, specificity, mcc — mas f1_best y su umbral optimo, porque con
+        13% de positivos el 0.5 es arbitrario.
+    'loss' es el criterio de entrenamiento del modelo (BCE, con pos_weight si se
+    pidio); 'log_loss' es la BCE sin pesar, comparable entre configuraciones.
+    """
+    pred = probs >= 0.5
+    prec_c, rec_c, thr_c = precision_recall_curve(y_true, probs)
+    f1_c = 2 * prec_c * rec_c / np.clip(prec_c + rec_c, 1e-12, None)
+    i_best = int(np.nanargmax(f1_c))
+    tn, fp, fn, tp = confusion_matrix(y_true, pred, labels=[0, 1]).ravel()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')  # mcc/f1 avisan si pred es todo-negativos
+        return {
+            'loss': float(loss),
+            'roc_auc': float(roc_auc_score(y_true, probs)),
+            'pr_auc': float(average_precision_score(y_true, probs)),
+            'log_loss': float(log_loss(y_true, probs, labels=[0, 1])),
+            'brier': float(brier_score_loss(y_true, probs)),
+            'accuracy': float(accuracy_score(y_true, pred)),
+            'balanced_accuracy': float(balanced_accuracy_score(y_true, pred)),
+            'precision': float(tp / (tp + fp)) if tp + fp else 0.0,
+            'recall': float(tp / (tp + fn)) if tp + fn else 0.0,
+            'f1': float(2 * tp / (2 * tp + fp + fn)) if 2 * tp + fp + fn else 0.0,
+            'specificity': float(tn / (tn + fp)) if tn + fp else 0.0,
+            'mcc': float(matthews_corrcoef(y_true, pred)),
+            'f1_best': float(f1_c[i_best]),
+            'thr_f1_best': float(thr_c[i_best]) if i_best < len(thr_c) else 1.0,
+            'tasa_pred_pos': float(pred.mean()),
+            'tasa_real_pos': float(y_true.mean()),
+        }
+
+
 def evaluate(model, split, max_rows=None):
-    """(loss, roc_auc, pr_auc) del split, en eval mode y por lotes.
+    """Dict con TODAS las metricas del split (compute_metrics), en eval mode y por lotes.
 
     Los splits son 4-tuplas posicionales que se pasan tal cual al modelo:
       filas:    (x_cat, x_num, x_text, y)     -> model(x_cat, x_num, x_text, y)
@@ -68,7 +113,7 @@ def evaluate(model, split, max_rows=None):
         ).item()
     probs = torch.sigmoid(logits).cpu().numpy()
     y_true = y.cpu().numpy()
-    return loss, roc_auc_score(y_true, probs), average_precision_score(y_true, probs)
+    return compute_metrics(y_true, probs, loss)
 
 
 def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, verbose=True):
@@ -87,14 +132,14 @@ def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, v
             loss.backward()
             optimizer.step()
 
-        train_loss, train_roc, train_pr = evaluate(model, splits['train'], max_rows=TRAIN_EVAL_ROWS)
-        val_loss, val_roc, val_pr = evaluate(model, splits['val'])
-        history.append({'epoch': epoch,
-                        'train_loss': train_loss, 'train_roc_auc': train_roc, 'train_pr_auc': train_pr,
-                        'val_loss': val_loss, 'val_roc_auc': val_roc, 'val_pr_auc': val_pr})
+        tr = evaluate(model, splits['train'], max_rows=TRAIN_EVAL_ROWS)
+        va = evaluate(model, splits['val'])
+        # historial con TODAS las metricas por epoca, para graficar cualquiera despues
+        history.append({'epoch': epoch, 'train': tr, 'val': va})
+        val_pr = va['pr_auc']
         if verbose:
-            print(f"epoch {epoch:3d} | loss train {train_loss:.4f} val {val_loss:.4f} | "
-                  f"PR-AUC train {train_pr:.4f} val {val_pr:.4f} | ROC-AUC val {val_roc:.4f}")
+            print(f"epoch {epoch:3d} | loss train {tr['loss']:.4f} val {va['loss']:.4f} | "
+                  f"PR-AUC train {tr['pr_auc']:.4f} val {val_pr:.4f} | ROC-AUC val {va['roc_auc']:.4f}")
 
         if val_pr > best_pr:
             best_pr, since_best = val_pr, 0
@@ -224,10 +269,11 @@ def run(csv_path, seed, args, device):
 
     history = train_model(model, splits, epochs=args.epochs, batch_size=args.batch_size,
                           lr=args.lr, patience=args.patience, verbose=not args.quiet)
-    val_loss, val_roc, val_pr = evaluate(model, splits['val'])
-    test_loss, test_roc, test_pr = evaluate(model, splits['test'])
-    print(f"{name} -> VAL: ROC-AUC {val_roc:.4f} PR-AUC {val_pr:.4f} | "
-          f"TEST: loss {test_loss:.4f} ROC-AUC {test_roc:.4f} PR-AUC {test_pr:.4f}")
+    val_m = evaluate(model, splits['val'])
+    test_m = evaluate(model, splits['test'])
+    print(f"{name} -> VAL: ROC-AUC {val_m['roc_auc']:.4f} PR-AUC {val_m['pr_auc']:.4f} | "
+          f"TEST: loss {test_m['loss']:.4f} ROC-AUC {test_m['roc_auc']:.4f} "
+          f"PR-AUC {test_m['pr_auc']:.4f}")
 
     if not args.no_save:
         results_dir = REPO_ROOT / 'resultados'
@@ -241,8 +287,8 @@ def run(csv_path, seed, args, device):
             'n_parametros': n_params,
             'config': {k: v for k, v in vars(args).items() if k not in ('quiet', 'no_save', 'save_pesos')},
             'historial': history,
-            'val': {'loss': val_loss, 'roc_auc': val_roc, 'pr_auc': val_pr},
-            'test': {'loss': test_loss, 'roc_auc': test_roc, 'pr_auc': test_pr},
+            'val': val_m,
+            'test': test_m,
         }, indent=2))
         print(f"resultados -> {out.relative_to(REPO_ROOT)}")
 
@@ -261,7 +307,7 @@ def run(csv_path, seed, args, device):
             }, ckpt)
             print(f"pesos      -> {ckpt.relative_to(REPO_ROOT)}")
 
-    return test_roc, test_pr
+    return test_m['roc_auc'], test_m['pr_auc']
 
 
 def build_parser():

@@ -504,6 +504,12 @@ fuga — es exactamente la regularidad que el modelo debe aprender.
 
 - **PR-AUC (average precision)**: métrica principal (desbalance 13%; azar ≈ 0.13).
 - **ROC-AUC**: complementaria (azar = 0.5).
+- **Se calculan y guardan SIEMPRE todas** (`compute_metrics` en `btr/train.py`, 16 métricas:
+  las dos de arriba + log-loss, Brier, F1 máximo con su umbral óptimo, precision/recall/F1/
+  accuracy/balanced accuracy/especificidad/MCC @ 0.5, tasas de positivos), por época (train y
+  val) y al final (val y test). Decidimos con PR-AUC; el resto queda registrado para poder
+  graficar cualquiera después sin reentrenar (ver `panel.html` / `panel.py`). Con 13% de
+  positivos el umbral 0.5 es arbitrario: el F1 máximo se da cerca de 0.3.
 - Curvas de loss train/val por época → diagnóstico over/underfitting; early stopping por PR-AUC val.
 - Extra barato si hay tiempo: curva de calibración (el BTR es una probabilidad; si el modelo está
   bien calibrado, el "promedio de p" por producto es directamente su BTR estimado).

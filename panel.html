@@ -1,0 +1,655 @@
+<title>Laboratorio BTR</title>
+<style>
+:root{
+  --bg:#EFF2F5; --card:#FFFFFF; --figbg:#F8FAFC; --grid:#DFE6EC;
+  --ink:#1B2530; --ink2:#3D4B5A; --muted:#5F7183; --line:#D8DFE7;
+  --tab:#1C8A76; --tab-bg:#DFF0EB; --txt:#B58117; --txt-bg:#F8ECCB;
+  --cls:#7052C9; --cls-bg:#E7DEF9; --mlp:#2E68AC; --mlp-bg:#DCE9F8;
+  --out:#C22B5E; --ok:#1C8A76; --warn:#A56A00; --warn-bg:#F8ECCB; --err:#C22B5E;
+  --sans:"Segoe UI","Noto Sans","Liberation Sans",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Code","JetBrains Mono","Fira Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ 
+  --bg:#0F141A; --card:#171E27; --figbg:#121924; --grid:#202C3B;
+  --ink:#E6EBF1; --ink2:#C0CAD6; --muted:#8D9BAB; --line:#2A3543;
+  --tab:#34A98F; --tab-bg:#143530; --txt:#C79A2F; --txt-bg:#3B2F12;
+  --cls:#9678E8; --cls-bg:#2B2350; --mlp:#4C8BD4; --mlp-bg:#17293E;
+  --out:#E85585; --ok:#34A98F; --warn:#E0B14C; --warn-bg:#3B2F12; --err:#E85585;
+ } }
+:root[data-theme="dark"]{ 
+  --bg:#0F141A; --card:#171E27; --figbg:#121924; --grid:#202C3B;
+  --ink:#E6EBF1; --ink2:#C0CAD6; --muted:#8D9BAB; --line:#2A3543;
+  --tab:#34A98F; --tab-bg:#143530; --txt:#C79A2F; --txt-bg:#3B2F12;
+  --cls:#9678E8; --cls-bg:#2B2350; --mlp:#4C8BD4; --mlp-bg:#17293E;
+  --out:#E85585; --ok:#34A98F; --warn:#E0B14C; --warn-bg:#3B2F12; --err:#E85585;
+ }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.55 var(--sans)}
+.wrap{max-width:1180px;margin:0 auto;padding:34px 20px 64px}
+.eyebrow{font:600 10.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+h1{font:700 30px/1.1 var(--sans);margin:6px 0 8px;letter-spacing:-.01em}
+.lede{color:var(--ink2);max-width:78ch;margin:0 0 6px}
+#selftest{display:none;background:var(--err);color:#fff;padding:10px 14px;border-radius:10px;
+  margin:12px 0;font:600 13px var(--mono)}
+.cols{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:18px;margin-top:20px;
+  align-items:start}
+@media (max-width:980px){.cols{grid-template-columns:1fr}.right{position:static}}
+.right{position:sticky;top:14px;display:flex;flex-direction:column;gap:14px;
+  max-height:calc(100vh - 28px);overflow-y:auto;padding-bottom:4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:16px 18px;
+  margin-bottom:14px}
+.right .card{margin-bottom:0}
+.card h2{font:700 15px var(--sans);margin:2px 0 10px}
+.card h2 .n{font:700 11px var(--mono);color:var(--muted);margin-right:6px}
+.hint{color:var(--muted);font-size:12px;margin:8px 0 0;max-width:70ch}
+.hint b{color:var(--ink2)}
+fieldset{border:none;margin:0;padding:0}
+.optgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:7px}
+.opt{display:block;border:1.4px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer;
+  background:var(--figbg)}
+.opt:hover{border-color:var(--muted)}
+.opt input{margin-right:6px;accent-color:var(--tab)}
+.opt.on{border-color:var(--tab);background:var(--tab-bg)}
+.opt .t{font:600 13px var(--sans)}
+.opt .d{display:block;color:var(--muted);font-size:11px;line-height:1.35;margin-top:2px}
+.featgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:5px}
+.feat{display:flex;align-items:center;gap:6px;font:12px var(--mono);border:1.2px solid var(--line);
+  border-radius:8px;padding:5px 8px;cursor:pointer;background:var(--figbg)}
+.feat input{accent-color:var(--tab);margin:0}
+.feat.off{opacity:.45;text-decoration:line-through}
+.feat .card-n{color:var(--muted);margin-left:auto;font-size:10.5px}
+.rowc{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:8px 0 0}
+.rowc label.inl{font:12.5px var(--sans);color:var(--ink2);display:flex;align-items:center;gap:6px}
+.rowc input[type=number]{width:76px;font:12.5px var(--mono);color:var(--ink);background:var(--figbg);
+  border:1.2px solid var(--line);border-radius:7px;padding:4px 7px}
+select{font:12.5px var(--mono);color:var(--ink);background:var(--figbg);border:1.2px solid var(--line);
+  border-radius:7px;padding:4px 7px;max-width:100%}
+input[type=checkbox]{accent-color:var(--tab)}
+.seg{display:inline-flex;border:1.2px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{font:12px var(--mono);border:none;background:var(--figbg);color:var(--ink2);
+  padding:5px 11px;cursor:pointer}
+.seg button.on{background:var(--tab);color:#fff}
+.preset{font:12px var(--mono);border:1.2px solid var(--line);background:var(--figbg);color:var(--ink2);
+  border-radius:999px;padding:4px 12px;cursor:pointer}
+.preset:hover{border-color:var(--tab);color:var(--ink)}
+.pill{display:inline-block;font:11px var(--mono);border-radius:999px;padding:2px 10px;margin:2px 3px 2px 0}
+.pill.ok{background:var(--tab-bg);color:var(--tab);border:1px solid var(--tab)}
+.pill.warn{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
+.pill.err{background:transparent;color:var(--err);border:1px solid var(--err)}
+.pill.info{background:var(--figbg);color:var(--muted);border:1px solid var(--line)}
+.pill.cls{background:var(--cls-bg);color:var(--cls);border:1px solid var(--cls)}
+pre.cmd{font:12px/1.5 var(--mono);background:var(--figbg);border:1px solid var(--line);
+  border-radius:9px;padding:10px 12px;white-space:pre-wrap;word-break:break-all;margin:8px 0;
+  user-select:all}
+.copy{font:11px var(--mono);border:1px solid var(--line);background:var(--figbg);color:var(--ink2);
+  border-radius:7px;padding:3px 10px;cursor:pointer}
+.copy:hover{border-color:var(--tab);color:var(--ink)}
+ul.notes{margin:8px 0 0;padding-left:18px;color:var(--ink2);font-size:12.5px}
+ul.notes li{margin:3px 0}
+table.mt{border-collapse:collapse;width:100%;font-size:12px;margin-top:8px}
+table.mt th{font:600 10px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+  text-align:right;padding:4px 8px;border-bottom:1px solid var(--line)}
+table.mt th:first-child{text-align:left}
+table.mt td{padding:3.5px 8px;border-bottom:1px solid var(--line);text-align:right;
+  font:11.5px var(--mono);font-variant-numeric:tabular-nums;color:var(--ink2)}
+table.mt td:first-child{text-align:left;font-family:var(--sans);font-size:12px;color:var(--ink)}
+table.mt tr.hl td{background:var(--tab-bg);color:var(--ink);font-weight:600}
+.rank{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.rrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;
+  border:1.2px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer;background:var(--figbg)}
+.rrow:hover{border-color:var(--tab)}
+.rrow.sel{border-color:var(--tab);background:var(--tab-bg)}
+.rrow .nm{font:12px var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rrow .bar{height:4px;border-radius:2px;background:var(--tab);margin-top:4px}
+.rrow .vl{font:12px var(--mono);color:var(--ink2);font-variant-numeric:tabular-nums}
+.rrow .sd{color:var(--muted);font-size:10.5px}
+svg.chart{width:100%;height:auto;display:block;background:var(--figbg);border:1px solid var(--line);
+  border-radius:9px;margin-top:8px}
+.axis{font:9.5px var(--mono);fill:var(--muted)}
+.gridl{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+.ln{fill:none;stroke-width:1.4;opacity:.55}
+.ln.mean{stroke-width:2.4;opacity:1}
+.ln-train{stroke:var(--tab)} .ln-val{stroke:var(--cls)}
+.leg{font:11px var(--mono);color:var(--muted);display:flex;gap:14px;margin-top:6px}
+.leg i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+footer{color:var(--muted);font-size:12px;margin-top:26px}
+footer code, .hint code, .lede code{font:11.5px var(--mono);background:var(--figbg);
+  border:1px solid var(--line);border-radius:5px;padding:0 4px}
+button:focus-visible,input:focus-visible,select:focus-visible,.rrow:focus-visible,.opt:focus-within{
+  outline:2px solid var(--mlp);outline-offset:1px}
+.empty{color:var(--muted);font-size:12.5px;background:var(--figbg);border:1px dashed var(--line);
+  border-radius:9px;padding:12px 14px;margin-top:8px}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">TP1 · 73.69 LLM · CONSOLA DE EXPERIMENTOS</div>
+  <h1>Laboratorio BTR</h1>
+  <p class="lede">Elegí cada decisión y el panel arma la configuración: te da el <b>comando
+  exacto</b>, te dice si <b>ya está en la suite</b> o si <b>hay que implementarla</b> (con un spec
+  para pegar en el chat), y si ya se corrió te muestra <b>todas las métricas y sus curvas</b>.
+  La página es estática: acá no se entrena nada — el laboratorio es el repo
+  (<code>panel.py</code> la regenera con los resultados frescos).</p>
+  <div id="selftest">⚠ canonKey() JS ≠ canon() Python — avisale a Claude (drift de implementación)</div>
+</header>
+<div class="cols">
+<div class="left">
+
+<section class="card"><h2><span class="n">1</span>Arquitectura</h2>
+  <fieldset class="optgrid" id="arch-grid"><label class="opt on" data-arch="feat"><input type="radio" name="arch" value="feat" checked><span class="t">A · Transformer tabular</span><span class="d">cada feature es un token · atención entre features · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#feat" target="_blank" rel="noopener">diagrama ↗</a></span></label><label class="opt" data-arch="mlp"><input type="radio" name="arch" value="mlp"><span class="t">MLP (control)</span><span class="d">mismos embeddings, sin atención · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#mlp" target="_blank" rel="noopener">diagrama ↗</a></span></label><label class="opt" data-arch="text"><input type="radio" name="arch" value="text"><span class="t">C · Transformer de texto</span><span class="d">cada carácter es un token · la demo adaptada · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#text" target="_blank" rel="noopener">diagrama ↗</a></span></label><label class="opt" data-arch="hybrid"><input type="radio" name="arch" value="hybrid"><span class="t">A+C · Híbrido</span><span class="d">features + chars en una secuencia · atención cruzada · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#hybrid" target="_blank" rel="noopener">diagrama ↗</a></span></label><label class="opt" data-arch="tower"><input type="radio" name="arch" value="tower"><span class="t">C2 · Torre de texto</span><span class="d">transformer solo p/ embeddings + MLP clasificador · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#tower" target="_blank" rel="noopener">diagrama ↗</a></span></label><label class="opt" data-arch="listwise"><input type="radio" name="arch" value="listwise"><span class="t">B · Listwise</span><span class="d">cada producto de la página es un token · <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533#listwise" target="_blank" rel="noopener">diagrama ↗</a></span></label></fieldset>
+  <p class="hint" id="arch-hint"></p>
+</section>
+
+<section class="card"><h2><span class="n">2</span>Entrada — qué features mandamos</h2>
+  <div class="rowc" style="margin:0 0 8px">
+    <button class="preset" id="pre-catalogo">preset: catálogo (todo)</button>
+    <button class="preset" id="pre-intrinseco">preset: intrínseco (producto nuevo)</button>
+  </div>
+  <fieldset class="featgrid" id="feat-grid"><label class="feat" data-f="listing_status"><input type="checkbox" name="feat" value="listing_status" checked>listing_status<span class="card-n">20 niveles</span></label><label class="feat" data-f="category"><input type="checkbox" name="feat" value="category" checked>category<span class="card-n">12 niveles</span></label><label class="feat" data-f="brand"><input type="checkbox" name="feat" value="brand" checked>brand<span class="card-n">15 niveles</span></label><label class="feat" data-f="storage_type"><input type="checkbox" name="feat" value="storage_type" checked>storage_type<span class="card-n">3 niveles</span></label><label class="feat" data-f="unit_of_measure"><input type="checkbox" name="feat" value="unit_of_measure" checked>unit_of_measure<span class="card-n">5 niveles</span></label><label class="feat" data-f="country_of_origin"><input type="checkbox" name="feat" value="country_of_origin" checked>country_of_origin<span class="card-n">10 niveles</span></label><label class="feat" data-f="allergens"><input type="checkbox" name="feat" value="allergens" checked>allergens<span class="card-n">8 niveles</span></label><label class="feat" data-f="price"><input type="checkbox" name="feat" value="price" checked>price<span class="card-n">num</span></label><label class="feat" data-f="price_rel"><input type="checkbox" name="feat" value="price_rel" checked>price_rel<span class="card-n">num</span></label><label class="feat" data-f="filter_price_min"><input type="checkbox" name="feat" value="filter_price_min" checked>filter_price_min<span class="card-n">num</span></label><label class="feat" data-f="filter_price_max"><input type="checkbox" name="feat" value="filter_price_max" checked>filter_price_max<span class="card-n">num</span></label><label class="feat" data-f="net_weight_oz"><input type="checkbox" name="feat" value="net_weight_oz" checked>net_weight_oz<span class="card-n">num</span></label><label class="feat" data-f="nutrition_score"><input type="checkbox" name="feat" value="nutrition_score" checked>nutrition_score<span class="card-n">num</span></label></fieldset>
+  <div class="rowc">
+    <label class="inl" id="strip-wrap"><input type="checkbox" id="strip">
+      --strip-status: borrar del TEXTO el sufijo del título y la última oración</label>
+  </div>
+  <p class="hint">El preset <b>intrínseco</b> = sacar <code>listing_status</code> + strip del texto:
+  simula el producto nuevo sin historial (techo GBM: 0.762 → 0.162). Destildar features acá
+  se traduce a <code>--drop-features</code>.</p>
+</section>
+
+<section class="card"><h2><span class="n">3</span>Encodings</h2>
+  <div class="rowc">
+    <label class="inl">categóricas <select id="catenc">
+      <option value="embedding">embedding aprendido por columna (actual)</option>
+      <option value="onehot">one-hot directo al MLP (pedir)</option>
+      <option value="target">target encoding por nivel (pedir)</option>
+    </select></label>
+    <label class="inl">numéricas <select id="numenc">
+      <option value="linear">lineal: x·w+b por feature</option>
+      <option value="bins">bins por cuantiles</option>
+      <option value="mixto">elegir por feature (pedir)</option>
+    </select></label>
+    <label class="inl" id="nbins-wrap">n_bins <input type="number" id="n_bins" value="16" min="2" max="64"></label>
+  </div>
+  <div class="rowc" id="numpf-wrap" style="display:none"><label class="inl">price <select name="numpf" data-f="price"><option value="linear">lineal</option><option value="bins">bins</option></select></label><label class="inl">price_rel <select name="numpf" data-f="price_rel"><option value="linear">lineal</option><option value="bins">bins</option></select></label><label class="inl">filter_price_min <select name="numpf" data-f="filter_price_min"><option value="linear">lineal</option><option value="bins">bins</option></select></label><label class="inl">filter_price_max <select name="numpf" data-f="filter_price_max"><option value="linear">lineal</option><option value="bins">bins</option></select></label><label class="inl">net_weight_oz <select name="numpf" data-f="net_weight_oz"><option value="linear">lineal</option><option value="bins">bins</option></select></label><label class="inl">nutrition_score <select name="numpf" data-f="nutrition_score"><option value="linear">lineal</option><option value="bins">bins</option></select></label></div>
+  <p class="hint">Lo que el código hace hoy para categóricas es exactamente <b>column embeddings</b>
+  (una tabla por columna — seguramente el "columnar" que te dijeron). <b>one-hot + capa lineal
+  aprende la misma matriz</b> (propuesta §6.1), por eso no existe como opción aparte del
+  transformer; sí tiene sentido como entrada cruda a un MLP, para medir qué aporta embeber.
+  <b>Target encoding</b> (nivel → BTR promedio en train) es fuerte pero con riesgo de leakage:
+  se ajusta por fold. <b>Bins</b> captura la U invertida del precio sin depender del FFN.</p>
+</section>
+
+<section class="card"><h2><span class="n">4</span>Capacidad del modelo</h2>
+  <div class="rowc">
+    <label class="inl">d_model <input type="number" id="d_model" value="32" min="4" step="4"></label>
+    <label class="inl" id="nh-wrap">cabezas <input type="number" id="n_head" value="4" min="1"></label>
+    <label class="inl" id="nl-wrap">bloques <input type="number" id="n_layer" value="2" min="1"></label>
+    <label class="inl">dropout <input type="number" id="dropout" value="0.1" min="0" max="0.9" step="0.05"></label>
+  </div>
+  <div class="rowc">
+    <span class="pill info">grilla de la suite: d 8·16·32·64 — bloques 1·2·4 — cabezas 1·2·4</span>
+  </div>
+  <div class="rowc">
+    <label class="inl" id="pool-wrap">pooling <span class="seg" id="pool-seg">
+      <button type="button" data-v="cls" class="on">[CLS]</button>
+      <button type="button" data-v="mean">promedio</button></span></label>
+    <label class="inl" id="pos-wrap"><input type="checkbox" id="positional"> positional encoding</label>
+    <label class="inl" id="caus-wrap"><input type="checkbox" id="causal"> máscara causal (ablación)</label>
+    <label class="inl"><input type="checkbox" id="pos_weight"> pos_weight en la BCE (87/13)</label>
+  </div>
+  <p class="hint" id="cap-hint"></p>
+</section>
+
+<section class="card"><h2><span class="n">5</span>Validación y entrenamiento</h2>
+  <fieldset class="optgrid">
+    <label class="opt on" data-val="holdout"><input type="radio" name="val" value="holdout" checked>
+      <span class="t">holdout por query</span><span class="d">70/15/15 × N seeds (actual)</span></label>
+    <label class="opt" data-val="gkfold"><input type="radio" name="val" value="gkfold">
+      <span class="t">GroupKFold por query</span><span class="d">k folds agrupados (pedir)</span></label>
+    <label class="opt" data-val="producto"><input type="radio" name="val" value="producto">
+      <span class="t">split por producto</span><span class="d">verificado: da igual (§7.1) (pedir)</span></label>
+  </fieldset>
+  <div class="rowc">
+    <label class="inl">seeds <input type="number" id="seeds" value="3" min="1" max="10"></label>
+    <label class="inl" id="k-wrap" style="display:none">k <input type="number" id="kfold" value="5" min="3" max="10"></label>
+    <label class="inl">épocas <input type="number" id="epochs" value="60" min="1"></label>
+    <label class="inl">batch <input type="number" id="batch_size" value="256" min="16" step="16"></label>
+    <label class="inl">lr <input type="number" id="lr" value="0.001" min="0" step="0.0005"></label>
+    <label class="inl">patience <input type="number" id="patience" value="8" min="1"></label>
+  </div>
+  <p class="hint">La decisión de parar y de elegir configs se toma SIEMPRE con la validación
+  (PR-AUC); test solo se reporta. Con 2.012 queries el holdout × 3 seeds ya da desvíos chicos;
+  GroupKFold es el paso siguiente si queremos intervalos más finos.</p>
+</section>
+
+<section class="card"><h2><span class="n">6</span>Métricas — se calculan SIEMPRE todas</h2>
+  <div id="met-pills"></div>
+  <div class="rowc">
+    <label class="inl"><input type="checkbox" id="mq"> agregar métricas por página
+      (top-1 de la query, NDCG) al evaluate (pedir)</label>
+  </div>
+  <p class="hint">Cada época guarda las 16 en train y val, y la corrida final en val y test
+  (<code>compute_metrics</code> en <code>btr/train.py</code>) — el gráfico de la derecha puede
+  mostrar cualquiera sin reentrenar. Las de umbral usan 0.5 salvo <b>F1 máximo</b>, que barre
+  el umbral (con 13% de positivos el óptimo ronda 0.3).</p>
+</section>
+
+<footer>Regenerar tras nuevos experimentos: <code>.venv/bin/python panel.py</code> (embebe
+resultados/ y la suite) — después pedirle a Claude que republique el artifact.
+Diagramas de las arquitecturas: <a href="https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533" target="_blank" rel="noopener">Zoo de
+arquitecturas BTR ↗</a> · <span id="gen-date"></span></footer>
+</div>
+<div class="right">
+  <section class="card"><h2>Comando</h2>
+    <div id="estado-pills"></div>
+    <pre class="cmd" id="cmd"></pre>
+    <button class="copy" id="copy-cmd">copiar comando</button>
+    <div id="spec-wrap" style="display:none">
+      <p class="hint" style="margin-top:10px"><b>Requiere implementación</b> — pegá esto en el
+      chat y Claude lo agrega al código:</p>
+      <pre class="cmd" id="spec"></pre>
+      <button class="copy" id="copy-spec">copiar spec</button>
+    </div>
+    <ul class="notes" id="coerciones"></ul>
+  </section>
+  <section class="card"><h2>Resultados de esta configuración</h2>
+    <div id="res-head"></div>
+    <div id="res-chart"></div>
+    <div id="res-table"></div>
+  </section>
+  <section class="card"><h2>Ranking de todo lo corrido</h2>
+    <div class="rowc" style="margin:0">
+      <label class="inl">métrica <select id="rank-metric"></select></label>
+      <label class="inl">split <span class="seg" id="rank-split">
+        <button type="button" data-v="test" class="on">test</button>
+        <button type="button" data-v="val">val</button></span></label>
+    </div>
+    <div class="rank" id="rank"></div>
+  </section>
+</div>
+</div>
+</div>
+<script>
+const DATA = {"gen":"2026-08-16T18:05:38+00:00","zoo":"https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533","features":{"cat":[{"name":"listing_status","card":20},{"name":"category","card":12},{"name":"brand","card":15},{"name":"storage_type","card":3},{"name":"unit_of_measure","card":5},{"name":"country_of_origin","card":10},{"name":"allergens","card":8}],"num":[{"name":"price"},{"name":"price_rel"},{"name":"filter_price_min"},{"name":"filter_price_max"},{"name":"net_weight_oz"},{"name":"nutrition_score"}]},"suite":{"feat_base":{"key":"transformer|features||-|linear|-|32|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--formulation features"},"mlp_base":{"key":"mlp|-||-|linear|-|32|-|-|0.1|-|-|-|0|-|60|256|0.001|8","cfg":{"arch":"mlp","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--arch mlp"},"listwise_base":{"key":"listwise|-||-|linear|-|32|4|2|0.1|-|-|-|0|-|60|256|0.001|8","cfg":{"arch":"listwise","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--arch listwise"},"text_base":{"key":"transformer|text|-|0|-|-|32|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"text","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation text"},"hybrid_full":{"key":"transformer|hybrid||0|linear|-|32|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"hybrid","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation hybrid"},"tower_base":{"key":"tower|-||0|linear|-|32|4|2|0.1|-|-|0|0|256|60|256|0.001|8","cfg":{"arch":"tower","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--arch tower"},"hybrid_sin_regex":{"key":"transformer|hybrid|listing_status|0|linear|-|32|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"hybrid","drop_features":["listing_status"],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation hybrid --drop-features listing_status"},"tower_sin_regex":{"key":"tower|-|listing_status|0|linear|-|32|4|2|0.1|-|-|0|0|256|60|256|0.001|8","cfg":{"arch":"tower","formulation":"features","drop_features":["listing_status"],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--arch tower --drop-features listing_status"},"feat_intrinseco":{"key":"transformer|features|listing_status|-|linear|-|32|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":["listing_status"],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--formulation features --drop-features listing_status"},"text_intrinseco":{"key":"transformer|text|-|1|-|-|32|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"text","drop_features":[],"strip_status":true,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation text --strip-status"},"hybrid_intrinseco":{"key":"transformer|hybrid|listing_status|1|linear|-|32|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"hybrid","drop_features":["listing_status"],"strip_status":true,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation hybrid --strip-status --drop-features listing_status"},"feat_bins":{"key":"transformer|features||-|bins|16|32|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"bins","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--numeric-mode bins"},"feat_pos":{"key":"transformer|features||-|linear|-|32|4|2|0.1|cls|1|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":true,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--positional"},"feat_causal":{"key":"transformer|features||-|linear|-|32|4|2|0.1|cls|0|1|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":true,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--causal"},"feat_mean":{"key":"transformer|features||-|linear|-|32|4|2|0.1|mean|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"mean","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--pooling mean"},"feat_posweight":{"key":"transformer|features||-|linear|-|32|4|2|0.1|cls|0|0|1|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":true,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--pos-weight"},"feat_d8":{"key":"transformer|features||-|linear|-|8|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":8,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--d-model 8"},"feat_d16":{"key":"transformer|features||-|linear|-|16|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":16,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--d-model 16"},"feat_d64":{"key":"transformer|features||-|linear|-|64|4|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":64,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--d-model 64"},"feat_l1":{"key":"transformer|features||-|linear|-|32|4|1|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":1,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--n-layer 1"},"feat_l4":{"key":"transformer|features||-|linear|-|32|4|4|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":4,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--n-layer 4"},"feat_h1":{"key":"transformer|features||-|linear|-|32|1|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":1,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--n-head 1"},"feat_h2":{"key":"transformer|features||-|linear|-|32|2|2|0.1|cls|0|0|0|-|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":2,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"tabular","args":"--n-head 2"},"text_d64":{"key":"transformer|text|-|0|-|-|64|4|2|0.1|cls|1|0|0|256|60|256|0.001|8","cfg":{"arch":"transformer","formulation":"text","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":64,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"familia":"texto","args":"--formulation text --d-model 64"}},"results":{"transformer|features||-|linear|-|32|4|2|0.1|cls|0|0|0|-|60|256|0.001|8":{"cfg":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"runs":[{"seed":42,"epochs":39,"device":"cpu","params":28289,"val":{"loss":0.12611,"roc_auc":0.97676,"pr_auc":0.80525,"log_loss":0.12611,"brier":0.03917,"accuracy":0.94459,"balanced_accuracy":0.89726,"precision":0.7619,"recall":0.83333,"f1":0.79602,"specificity":0.96118,"mcc":0.76506,"f1_best":0.81481,"thr_f1_best":0.19074,"tasa_pred_pos":0.14189,"tasa_real_pos":0.12973},"test":{"loss":0.15877,"roc_auc":0.96785,"pr_auc":0.76612,"log_loss":0.15877,"brier":0.04907,"accuracy":0.93224,"balanced_accuracy":0.88273,"precision":0.71667,"recall":0.81517,"f1":0.76275,"specificity":0.95029,"mcc":0.72545,"f1_best":0.78439,"thr_f1_best":0.31226,"tasa_pred_pos":0.15199,"tasa_real_pos":0.13363},"hist":{"train":{"loss":[0.42009,0.38835,0.38697,0.21478,0.171,0.14321,0.1411,0.13615,0.13393,0.13095,0.13136,0.13031,0.13153,0.13086,0.12594,0.12514,0.12468,0.12469,0.12217,0.13147,0.12171,0.1283,0.12003,0.12015,0.119,0.12798,0.11729,0.12019,0.11976,0.11759,0.11362,0.11647,0.11733,0.11194,0.1124,0.11228,0.12113,0.11089,0.11332],"roc_auc":[0.46968,0.58863,0.83783,0.95208,0.96286,0.96445,0.96505,0.96879,0.9702,0.97087,0.97234,0.97208,0.97333,0.97443,0.97683,0.97737,0.97863,0.9785,0.97982,0.97988,0.98018,0.98066,0.98085,0.98142,0.98134,0.98006,0.98172,0.98176,0.98223,0.98219,0.98305,0.98283,0.98275,0.98319,0.98338,0.98327,0.98235,0.98358,0.98292],"pr_auc":[0.11406,0.20565,0.46859,0.72672,0.79495,0.79922,0.81104,0.82263,0.83854,0.84766,0.84561,0.84815,0.85199,0.84493,0.85355,0.85286,0.85655,0.85256,0.86259,0.85188,0.86044,0.86965,0.86699,0.87419,0.8691,0.8676,0.87457,0.87091,0.87036,0.87363,0.88183,0.88178,0.88213,0.88095,0.88554,0.88911,0.87514,0.88326,0.88452],"log_loss":[0.42009,0.38835,0.38697,0.21478,0.171,0.14321,0.1411,0.13615,0.13393,0.13095,0.13136,0.13031,0.13153,0.13086,0.12594,0.12514,0.12468,0.12469,0.12217,0.13147,0.12171,0.1283,0.12003,0.12015,0.119,0.12798,0.11729,0.12019,0.11976,0.11759,0.11362,0.11647,0.11733,0.11194,0.1124,0.11228,0.12113,0.11089,0.11332],"brier":[0.12374,0.11372,0.11339,0.05427,0.04788,0.0402,0.04079,0.03966,0.03888,0.03814,0.0386,0.03856,0.03927,0.03898,0.03699,0.03698,0.03692,0.03704,0.03652,0.0405,0.03703,0.03969,0.03652,0.03632,0.03609,0.03936,0.0358,0.03631,0.03689,0.03608,0.03482,0.03602,0.03656,0.0342,0.03445,0.03444,0.03717,0.03415,0.03511],"accuracy":[0.8695,0.8695,0.8695,0.92825,0.9295,0.9435,0.9415,0.94225,0.94375,0.94475,0.94875,0.94325,0.94,0.94525,0.94675,0.947,0.94775,0.94625,0.9485,0.9445,0.94625,0.94325,0.9485,0.94725,0.949,0.94325,0.94725,0.94875,0.9485,0.947,0.95025,0.9495,0.94875,0.95225,0.9515,0.95225,0.9485,0.951,0.95],"balanced_accuracy":[0.5,0.5,0.5,0.94246,0.94155,0.90645,0.9224,0.93097,0.90741,0.92508,0.87609,0.92341,0.93293,0.86594,0.90588,0.89707,0.91378,0.90152,0.89467,0.83864,0.89175,0.93317,0.87595,0.90454,0.90473,0.90061,0.89803,0.87284,0.85967,0.91091,0.91115,0.85536,0.93145,0.90986,0.91431,0.90823,0.88409,0.90425,0.90449],"precision":[0.0,0.0,0.0,0.6528,0.65789,0.74749,0.72222,0.7188,0.74791,0.73626,0.8202,0.73011,0.70674,0.80982,0.76684,0.77878,0.76391,0.76883,0.79151,0.85211,0.78062,0.7218,0.81855,0.77138,0.78191,0.75214,0.77917,0.82546,0.84649,0.76271,0.78185,0.86364,0.75119,0.79606,0.78571,0.7982,0.8062,0.79529,0.78853],"recall":[0.0,0.0,0.0,0.96169,0.95785,0.85632,0.89655,0.91571,0.85824,0.89847,0.77778,0.89655,0.92337,0.75862,0.85057,0.8295,0.86782,0.841,0.82184,0.6954,0.81801,0.91954,0.77778,0.84674,0.84483,0.84291,0.83142,0.77011,0.73946,0.86207,0.85824,0.72797,0.90805,0.85249,0.86398,0.84866,0.79693,0.841,0.84291],"f1":[0.0,0.0,0.0,0.77769,0.78003,0.79821,0.8,0.80539,0.79929,0.80932,0.79843,0.80482,0.80066,0.78338,0.80654,0.80334,0.81256,0.80329,0.80639,0.76582,0.79888,0.80876,0.79764,0.80731,0.81215,0.79494,0.80445,0.79683,0.78937,0.80935,0.81826,0.79002,0.8222,0.82331,0.82299,0.82266,0.80154,0.8175,0.81481],"specificity":[1.0,1.0,1.0,0.92323,0.92524,0.95658,0.94825,0.94623,0.95658,0.9517,0.97441,0.95026,0.9425,0.97326,0.96118,0.96463,0.95975,0.96205,0.96751,0.98189,0.9655,0.94681,0.97412,0.96233,0.96463,0.95831,0.96463,0.97556,0.97987,0.95975,0.96406,0.98275,0.95486,0.96722,0.96463,0.9678,0.97125,0.96751,0.96607],"mcc":[0.0,0.0,0.0,0.75643,0.75828,0.76793,0.77235,0.77987,0.76921,0.78265,0.76945,0.77759,0.77557,0.75261,0.77716,0.77326,0.78449,0.77328,0.77689,0.73959,0.76816,0.78385,0.76849,0.77796,0.78348,0.7638,0.77454,0.76815,0.76244,0.78068,0.79067,0.76515,0.79744,0.79637,0.79617,0.79559,0.77197,0.78964,0.78653],"f1_best":[0.23436,0.25787,0.48345,0.79032,0.79806,0.81181,0.80315,0.81039,0.80537,0.81356,0.81559,0.81115,0.81061,0.80513,0.81502,0.81291,0.81625,0.80952,0.81383,0.81391,0.81145,0.81309,0.81456,0.81574,0.81991,0.80115,0.81402,0.82332,0.82137,0.81724,0.82245,0.82075,0.82322,0.82545,0.82941,0.82564,0.81545,0.82155,0.8218],"thr_f1_best":[0.23178,0.14627,0.12601,0.65511,0.64299,0.38499,0.5438,0.55223,0.39703,0.54529,0.45957,0.57177,0.61422,0.34498,0.53775,0.27152,0.48032,0.3926,0.43047,0.39395,0.31978,0.56499,0.29326,0.59891,0.47315,0.56592,0.44936,0.34188,0.31252,0.45013,0.50656,0.33087,0.49977,0.47395,0.5434,0.5327,0.37693,0.39628,0.36569],"tasa_pred_pos":[0.0,0.0,0.0,0.19225,0.19,0.1495,0.162,0.16625,0.14975,0.15925,0.12375,0.16025,0.1705,0.12225,0.14475,0.139,0.14825,0.14275,0.1355,0.1065,0.13675,0.16625,0.124,0.14325,0.141,0.14625,0.13925,0.12175,0.114,0.1475,0.14325,0.11,0.15775,0.13975,0.1435,0.13875,0.129,0.138,0.1395],"tasa_real_pos":[0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305]},"val":{"loss":[0.41917,0.387,0.38547,0.20219,0.1558,0.14488,0.13395,0.13713,0.13253,0.12731,0.13773,0.12723,0.1271,0.1345,0.1273,0.13279,0.12976,0.12958,0.12873,0.13848,0.12793,0.13232,0.13045,0.12698,0.12657,0.14023,0.12616,0.13394,0.13034,0.12174,0.12611,0.13458,0.12677,0.12476,0.12338,0.12961,0.12755,0.12926,0.12385],"roc_auc":[0.41014,0.55361,0.8577,0.95911,0.96903,0.96283,0.9655,0.96068,0.96716,0.97163,0.97167,0.97074,0.9725,0.97292,0.97425,0.9745,0.97401,0.97412,0.97519,0.97442,0.97622,0.97594,0.97611,0.97677,0.97667,0.97304,0.97721,0.97656,0.97691,0.97716,0.97676,0.97616,0.97659,0.9776,0.97742,0.9766,0.97632,0.97615,0.97719],"pr_auc":[0.10324,0.16064,0.47315,0.68458,0.73916,0.74611,0.74198,0.73229,0.75334,0.76524,0.75833,0.77623,0.7734,0.77225,0.78589,0.79219,0.77158,0.77754,0.78624,0.77411,0.79284,0.7879,0.78952,0.79825,0.79485,0.77556,0.80258,0.79956,0.80135,0.80357,0.80525,0.79697,0.79879,0.80192,0.79839,0.79287,0.78611,0.78922,0.79482],"log_loss":[0.41917,0.387,0.38547,0.20219,0.1558,0.14488,0.13395,0.13713,0.13253,0.12731,0.13773,0.12723,0.1271,0.1345,0.1273,0.13279,0.12976,0.12958,0.12873,0.13848,0.12793,0.13232,0.13045,0.12698,0.12657,0.14023,0.12616,0.13394,0.13034,0.12174,0.12611,0.13458,0.12677,0.12476,0.12338,0.12961,0.12755,0.12926,0.12385],"brier":[0.12333,0.11317,0.11281,0.04905,0.04219,0.04236,0.03967,0.04152,0.04066,0.03869,0.04328,0.03871,0.03883,0.04233,0.03929,0.04104,0.03989,0.04049,0.03995,0.04494,0.03965,0.04074,0.04112,0.03896,0.03947,0.04425,0.03938,0.04286,0.04236,0.03801,0.03917,0.04288,0.03956,0.03908,0.03866,0.03996,0.04065,0.04066,0.03841],"accuracy":[0.87027,0.87027,0.87027,0.94054,0.94257,0.93851,0.94324,0.93986,0.94054,0.94459,0.93851,0.94595,0.94459,0.93784,0.94527,0.94122,0.94257,0.94527,0.94324,0.92703,0.94662,0.94324,0.94257,0.94595,0.94459,0.93716,0.94392,0.93851,0.93716,0.94797,0.94459,0.93851,0.94054,0.94257,0.94392,0.94459,0.94054,0.94324,0.94595],"balanced_accuracy":[0.5,0.5,0.5,0.95697,0.95814,0.89376,0.91421,0.91891,0.89271,0.9172,0.85166,0.92019,0.9305,0.84906,0.90872,0.88424,0.9116,0.89986,0.88983,0.79631,0.89842,0.92529,0.87172,0.90247,0.89282,0.89299,0.89022,0.84058,0.82872,0.91028,0.89726,0.83615,0.91266,0.88723,0.89908,0.89504,0.86834,0.89205,0.89139],"precision":[0.0,0.0,0.0,0.69118,0.69888,0.73059,0.73684,0.71548,0.74299,0.74123,0.77901,0.74561,0.72917,0.77778,0.75342,0.7561,0.73568,0.76303,0.76214,0.77273,0.77295,0.72689,0.7801,0.76415,0.76699,0.72398,0.76585,0.79532,0.80368,0.76744,0.7619,0.8024,0.72414,0.76098,0.75587,0.76442,0.77083,0.75962,0.77723],"recall":[0.0,0.0,0.0,0.97917,0.97917,0.83333,0.875,0.89062,0.82812,0.88021,0.73438,0.88542,0.91146,0.72917,0.85938,0.80729,0.86979,0.83854,0.81771,0.61979,0.83333,0.90104,0.77604,0.84375,0.82292,0.83333,0.81771,0.70833,0.68229,0.85938,0.83333,0.69792,0.875,0.8125,0.83854,0.82812,0.77083,0.82292,0.81771],"f1":[0.0,0.0,0.0,0.81034,0.81562,0.77859,0.8,0.7935,0.78325,0.80476,0.75603,0.80952,0.81019,0.75269,0.80292,0.78086,0.79714,0.79901,0.78894,0.68786,0.80201,0.80465,0.77807,0.80198,0.79397,0.77482,0.79093,0.74931,0.73803,0.81081,0.79602,0.74652,0.79245,0.78589,0.79506,0.795,0.77083,0.79,0.79695],"specificity":[1.0,1.0,1.0,0.93478,0.93711,0.95419,0.95342,0.9472,0.9573,0.95419,0.96894,0.95497,0.94953,0.96894,0.95807,0.96118,0.95342,0.96118,0.96196,0.97283,0.96351,0.94953,0.96739,0.96118,0.96273,0.95264,0.96273,0.97283,0.97516,0.96118,0.96118,0.97438,0.95031,0.96196,0.95963,0.96196,0.96584,0.96118,0.96506],"mcc":[0.0,0.0,0.0,0.79289,0.79834,0.74524,0.77106,0.76503,0.75039,0.77663,0.7213,0.7822,0.78486,0.71767,0.77355,0.74749,0.76759,0.76856,0.75683,0.65216,0.77194,0.77799,0.74509,0.77204,0.76264,0.74098,0.75913,0.71596,0.70564,0.78244,0.76506,0.71397,0.76274,0.75331,0.76406,0.76384,0.73667,0.75806,0.76613],"f1_best":[0.23058,0.24017,0.50505,0.81057,0.81917,0.8204,0.82018,0.82018,0.81938,0.82743,0.81659,0.82018,0.81579,0.8196,0.81778,0.81678,0.81223,0.81659,0.8204,0.81858,0.819,0.81448,0.81982,0.82483,0.80964,0.78657,0.81716,0.81758,0.81838,0.81838,0.81481,0.81499,0.81223,0.81499,0.81562,0.81465,0.8134,0.79912,0.81839],"thr_f1_best":[0.23178,0.14626,0.12611,0.65282,0.54464,0.2236,0.31672,0.30186,0.21963,0.28112,0.18467,0.25339,0.36898,0.22304,0.24431,0.15744,0.26618,0.16215,0.22963,0.20492,0.25673,0.43962,0.22358,0.21562,0.44902,0.49059,0.26531,0.11108,0.16516,0.25508,0.19074,0.24318,0.27294,0.32274,0.17687,0.30478,0.38546,0.23055,0.30509],"tasa_pred_pos":[0.0,0.0,0.0,0.18378,0.18176,0.14797,0.15405,0.16149,0.14459,0.15405,0.1223,0.15405,0.16216,0.12162,0.14797,0.13851,0.15338,0.14257,0.13919,0.10405,0.13986,0.16081,0.12905,0.14324,0.13919,0.14932,0.13851,0.11554,0.11014,0.14527,0.14189,0.11284,0.15676,0.13851,0.14392,0.14054,0.12973,0.14054,0.13649],"tasa_real_pos":[0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973]}}}],"pesos":true,"nombre":"feat_base_features_d32_h4_l2_linear_seed42"},"listwise|-||-|linear|-|32|4|2|0.1|-|-|-|0|-|60|256|0.001|8":{"cfg":{"arch":"listwise","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"runs":[{"seed":42,"epochs":17,"device":"cpu","params":41601,"val":{"loss":0.13912,"roc_auc":0.97196,"pr_auc":0.77751,"log_loss":0.13912,"brier":0.04205,"accuracy":0.93784,"balanced_accuracy":0.89116,"precision":0.72936,"recall":0.82812,"f1":0.77561,"specificity":0.95419,"mcc":0.74171,"f1_best":0.82851,"thr_f1_best":0.1971,"tasa_pred_pos":0.1473,"tasa_real_pos":0.12973},"test":{"loss":0.17628,"roc_auc":0.95054,"pr_auc":0.66422,"log_loss":0.17628,"brier":0.05416,"accuracy":0.92464,"balanced_accuracy":0.88836,"precision":0.67557,"recall":0.83886,"f1":0.74841,"specificity":0.93787,"mcc":0.71041,"f1_best":0.77606,"thr_f1_best":0.05533,"tasa_pred_pos":0.16593,"tasa_real_pos":0.13363},"hist":{"train":{"loss":[0.3869,0.36069,0.35147,0.32587,0.27829,0.2037,0.16606,0.1571,0.14848,0.14528,0.14552,0.14067,0.13717,0.13566,0.13487,0.13511,0.13032],"roc_auc":[0.71708,0.83028,0.87321,0.90683,0.93454,0.95249,0.95951,0.96251,0.96339,0.96588,0.96686,0.96809,0.96911,0.96988,0.97071,0.97088,0.97249],"pr_auc":[0.27242,0.37466,0.44009,0.52794,0.63065,0.69818,0.72552,0.74731,0.76107,0.78026,0.79023,0.79217,0.80028,0.80929,0.81174,0.82511,0.83278],"log_loss":[0.3869,0.36069,0.35147,0.32587,0.27829,0.2037,0.16606,0.1571,0.14848,0.14528,0.14552,0.14067,0.13717,0.13566,0.13487,0.13511,0.13032],"brier":[0.11308,0.10696,0.10309,0.09807,0.0834,0.05907,0.04791,0.04598,0.04348,0.04285,0.04357,0.04168,0.04075,0.0404,0.04017,0.04042,0.03858],"accuracy":[0.87062,0.87062,0.87062,0.87062,0.87206,0.90535,0.9343,0.93632,0.93949,0.9405,0.93762,0.94367,0.94381,0.94424,0.94367,0.94223,0.94583],"balanced_accuracy":[0.5,0.5,0.5,0.5,0.50746,0.69961,0.92245,0.93262,0.91927,0.91131,0.93194,0.89227,0.92601,0.92769,0.89701,0.92985,0.91817],"precision":[0.0,0.0,0.0,0.0,0.77778,0.73308,0.68634,0.68843,0.71263,0.72433,0.69456,0.76107,0.72842,0.72915,0.7558,0.71741,0.74623],"recall":[0.0,0.0,0.0,0.0,0.01559,0.42205,0.90646,0.92762,0.89198,0.87194,0.92428,0.82294,0.902,0.90535,0.83408,0.91314,0.88085],"f1":[0.0,0.0,0.0,0.0,0.03057,0.53569,0.78119,0.79032,0.79228,0.79131,0.79312,0.7908,0.80597,0.80775,0.79301,0.80353,0.80797],"specificity":[1.0,1.0,1.0,1.0,0.99934,0.97716,0.93844,0.93761,0.94655,0.95069,0.9396,0.96161,0.95002,0.95002,0.95995,0.94655,0.95549],"mcc":[0.0,0.0,0.0,0.0,0.09851,0.51029,0.75336,0.7654,0.76393,0.76139,0.76798,0.75908,0.7796,0.7818,0.76174,0.77794,0.78031],"f1_best":[0.35236,0.4589,0.52212,0.59108,0.6706,0.74056,0.78198,0.79453,0.79507,0.79882,0.8008,0.80438,0.8089,0.80838,0.807,0.81307,0.81508],"thr_f1_best":[0.08662,0.13574,0.18415,0.15705,0.20349,0.3042,0.48972,0.57564,0.49068,0.46155,0.61642,0.32319,0.53862,0.5182,0.28048,0.57282,0.45109],"tasa_pred_pos":[0.0,0.0,0.0,0.0,0.00259,0.07448,0.17087,0.17433,0.16194,0.15574,0.17217,0.13989,0.16021,0.16064,0.14277,0.16467,0.15272],"tasa_real_pos":[0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938,0.12938]},"val":{"loss":[0.38886,0.36382,0.35464,0.33015,0.28276,0.20587,0.15293,0.13959,0.13912,0.13761,0.13563,0.15165,0.13806,0.13948,0.1497,0.13465,0.14042],"roc_auc":[0.69384,0.80851,0.85972,0.90306,0.9374,0.96038,0.96842,0.9696,0.97196,0.97329,0.97224,0.97147,0.97161,0.97184,0.9722,0.97193,0.97288],"pr_auc":[0.2868,0.3569,0.42553,0.52205,0.62494,0.67518,0.71175,0.76737,0.77751,0.7667,0.74504,0.74309,0.73889,0.74659,0.7611,0.74367,0.76607],"log_loss":[0.38886,0.36382,0.35464,0.33015,0.28276,0.20587,0.15293,0.13959,0.13912,0.13761,0.13563,0.15165,0.13806,0.13948,0.1497,0.13465,0.14042],"brier":[0.11352,0.10783,0.10415,0.09944,0.08551,0.06188,0.04408,0.04091,0.04205,0.04163,0.04101,0.04729,0.04247,0.04321,0.04673,0.04129,0.04363],"accuracy":[0.87027,0.87027,0.87027,0.87027,0.87297,0.89797,0.94122,0.94324,0.93784,0.94324,0.94392,0.93311,0.94054,0.93986,0.93378,0.94189,0.93581],"balanced_accuracy":[0.5,0.5,0.5,0.5,0.51042,0.6666,0.91526,0.92529,0.89116,0.8987,0.92568,0.85077,0.90379,0.89454,0.85337,0.91122,0.87005],"precision":[0.0,0.0,0.0,0.0,1.0,0.71579,0.72532,0.72689,0.72936,0.75234,0.72996,0.74346,0.73214,0.73733,0.74479,0.73246,0.73892],"recall":[0.0,0.0,0.0,0.0,0.02083,0.35417,0.88021,0.90104,0.82812,0.83854,0.90104,0.73958,0.85417,0.83333,0.74479,0.86979,0.78125],"f1":[0.0,0.0,0.0,0.0,0.04082,0.47387,0.79529,0.80465,0.77561,0.7931,0.80653,0.74151,0.78846,0.7824,0.74479,0.79524,0.75949],"specificity":[1.0,1.0,1.0,1.0,1.0,0.97904,0.95031,0.94953,0.95419,0.95885,0.95031,0.96196,0.95342,0.95575,0.96196,0.95264,0.95885],"mcc":[0.0,0.0,0.0,0.0,0.13483,0.45681,0.76621,0.77799,0.74171,0.76183,0.78002,0.7031,0.75714,0.74954,0.70675,0.76549,0.72286],"f1_best":[0.34507,0.42607,0.49013,0.5687,0.64694,0.75594,0.81166,0.81938,0.82851,0.82327,0.81532,0.8125,0.81596,0.81333,0.80973,0.81651,0.81348],"thr_f1_best":[0.08604,0.13359,0.17621,0.14888,0.17773,0.21179,0.34666,0.243,0.1971,0.23016,0.38304,0.07831,0.16909,0.15155,0.07801,0.37223,0.13687],"tasa_pred_pos":[0.0,0.0,0.0,0.0,0.0027,0.06419,0.15743,0.16081,0.1473,0.14459,0.16014,0.12905,0.15135,0.14662,0.12973,0.15405,0.13716],"tasa_real_pos":[0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973]}}}],"pesos":true,"nombre":"listwise_base_listwise_d32_h4_l2_linear_seed42"},"mlp|-||-|linear|-|32|-|-|0.1|-|-|-|0|-|60|256|0.001|8":{"cfg":{"arch":"mlp","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"runs":[{"seed":42,"epochs":18,"device":"cpu","params":126209,"val":{"loss":0.13726,"roc_auc":0.97507,"pr_auc":0.78046,"log_loss":0.13726,"brier":0.04309,"accuracy":0.93784,"balanced_accuracy":0.85349,"precision":0.77174,"recall":0.73958,"f1":0.75532,"specificity":0.96739,"mcc":0.71995,"f1_best":0.81081,"thr_f1_best":0.12388,"tasa_pred_pos":0.12432,"tasa_real_pos":0.12973},"test":{"loss":0.16799,"roc_auc":0.96451,"pr_auc":0.7151,"log_loss":0.16799,"brier":0.05248,"accuracy":0.92844,"balanced_accuracy":0.85047,"precision":0.72685,"recall":0.74408,"f1":0.73536,"specificity":0.95687,"mcc":0.69406,"f1_best":0.78571,"thr_f1_best":0.08775,"tasa_pred_pos":0.1368,"tasa_real_pos":0.13363},"hist":{"train":{"loss":[0.31229,0.18505,0.13968,0.13131,0.12636,0.12206,0.11307,0.10825,0.10025,0.09674,0.09025,0.08257,0.08147,0.07635,0.07325,0.06709,0.06289,0.05763],"roc_auc":[0.93973,0.96604,0.9684,0.97327,0.97644,0.97967,0.98335,0.98464,0.9869,0.9881,0.98936,0.99114,0.99171,0.99252,0.99334,0.99433,0.99509,0.99584],"pr_auc":[0.66514,0.77279,0.74898,0.77806,0.80278,0.8307,0.8614,0.88195,0.89962,0.90879,0.92032,0.93497,0.93669,0.94445,0.9484,0.95765,0.96322,0.97006],"log_loss":[0.31229,0.18505,0.13968,0.13131,0.12636,0.12206,0.11307,0.10825,0.10025,0.09674,0.09025,0.08257,0.08147,0.07635,0.07325,0.06709,0.06289,0.05763],"brier":[0.09304,0.06056,0.0439,0.04112,0.03942,0.03805,0.03465,0.03284,0.02999,0.02894,0.02678,0.02428,0.02395,0.02238,0.0214,0.01952,0.01827,0.01659],"accuracy":[0.8695,0.8695,0.94225,0.94325,0.9475,0.946,0.9555,0.958,0.96225,0.96225,0.963,0.96775,0.96925,0.972,0.9725,0.975,0.97525,0.978],"balanced_accuracy":[0.5,0.5,0.93097,0.92992,0.93236,0.9315,0.91173,0.92212,0.93189,0.91398,0.92011,0.94075,0.93266,0.94564,0.93534,0.95306,0.95646,0.95234],"precision":[0.0,0.0,0.7188,0.72451,0.74375,0.73684,0.81502,0.8172,0.83184,0.86019,0.85551,0.85662,0.88145,0.87963,0.90234,0.8893,0.88525,0.91412],"recall":[0.0,0.0,0.91571,0.91188,0.91188,0.91188,0.85249,0.87356,0.8908,0.84866,0.86207,0.90421,0.88314,0.90996,0.88506,0.92337,0.93103,0.91762],"f1":[0.0,0.0,0.80539,0.80746,0.81928,0.81507,0.83333,0.84444,0.86031,0.85439,0.85878,0.87978,0.8823,0.89454,0.89362,0.90602,0.90756,0.91587],"specificity":[1.0,1.0,0.94623,0.94796,0.95285,0.95112,0.97096,0.97067,0.97297,0.9793,0.97815,0.97729,0.98217,0.98131,0.98562,0.98275,0.98189,0.98706],"mcc":[0.0,0.0,0.77987,0.78174,0.79454,0.78997,0.80794,0.82081,0.83918,0.83273,0.8375,0.86159,0.86461,0.87857,0.87788,0.89181,0.89366,0.90322],"f1_best":[0.67321,0.80069,0.81026,0.81572,0.82047,0.82655,0.84022,0.84644,0.86299,0.86637,0.87226,0.88615,0.88889,0.89649,0.90189,0.90909,0.91288,0.92049],"thr_f1_best":[0.20087,0.30887,0.53606,0.57132,0.52132,0.57768,0.42299,0.48308,0.3921,0.32704,0.4067,0.55058,0.4199,0.52782,0.44621,0.47129,0.54311,0.40093],"tasa_pred_pos":[0.0,0.0,0.16625,0.16425,0.16,0.1615,0.1365,0.1395,0.13975,0.12875,0.1315,0.13775,0.13075,0.135,0.128,0.1355,0.13725,0.131],"tasa_real_pos":[0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305,0.1305]},"val":{"loss":[0.31381,0.1817,0.13062,0.13104,0.13347,0.12962,0.13475,0.13174,0.13501,0.13726,0.13832,0.13713,0.14338,0.13578,0.14714,0.15236,0.15162,0.16409],"roc_auc":[0.93978,0.96874,0.97115,0.97118,0.9707,0.97263,0.97399,0.97442,0.97382,0.97507,0.97385,0.97505,0.97346,0.97569,0.97397,0.97169,0.97312,0.97148],"pr_auc":[0.64283,0.69887,0.72064,0.74006,0.74016,0.75613,0.76992,0.75513,0.77056,0.78046,0.77507,0.77484,0.77382,0.77429,0.77415,0.76553,0.7674,0.76768],"log_loss":[0.31381,0.1817,0.13062,0.13104,0.13347,0.12962,0.13475,0.13174,0.13501,0.13726,0.13832,0.13713,0.14338,0.13578,0.14714,0.15236,0.15162,0.16409],"brier":[0.09359,0.06173,0.04276,0.04201,0.04323,0.04129,0.04341,0.04239,0.04297,0.04309,0.04269,0.04183,0.04408,0.04092,0.04467,0.04447,0.04311,0.04667],"accuracy":[0.87027,0.87027,0.93784,0.93716,0.93649,0.93851,0.93851,0.93851,0.94054,0.93784,0.93919,0.94392,0.93919,0.94527,0.94122,0.94527,0.94527,0.93851],"balanced_accuracy":[0.5,0.5,0.90667,0.89963,0.8926,0.89598,0.86052,0.87825,0.88385,0.85349,0.86756,0.888,0.85648,0.88213,0.85543,0.88657,0.88657,0.86052],"precision":[0.0,0.0,0.71552,0.71806,0.72072,0.72851,0.7672,0.74634,0.75243,0.77174,0.76289,0.76847,0.77717,0.78462,0.7933,0.77889,0.77889,0.7672],"recall":[0.0,0.0,0.86458,0.84896,0.83333,0.83854,0.75521,0.79688,0.80729,0.73958,0.77083,0.8125,0.74479,0.79688,0.73958,0.80729,0.80729,0.75521],"f1":[0.0,0.0,0.78302,0.77804,0.77295,0.77966,0.76115,0.77078,0.77889,0.75532,0.76684,0.78987,0.76064,0.7907,0.7655,0.79284,0.79284,0.76115],"specificity":[1.0,1.0,0.94876,0.95031,0.95186,0.95342,0.96584,0.95963,0.9604,0.96739,0.96429,0.96351,0.96817,0.96739,0.97127,0.96584,0.96584,0.96584],"mcc":[0.0,0.0,0.75167,0.74527,0.73887,0.74662,0.7259,0.73585,0.74521,0.71995,0.73189,0.75794,0.72604,0.75925,0.73253,0.76148,0.76148,0.7259],"f1_best":[0.66098,0.81166,0.82198,0.81614,0.8196,0.81279,0.81549,0.81128,0.80092,0.81081,0.79905,0.81146,0.80191,0.82629,0.8,0.79389,0.81572,0.80096],"thr_f1_best":[0.19855,0.20098,0.25011,0.26718,0.20981,0.31966,0.18232,0.08135,0.24215,0.12388,0.24352,0.28581,0.26972,0.27166,0.19397,0.49114,0.39447,0.21787],"tasa_pred_pos":[0.0,0.0,0.15676,0.15338,0.15,0.14932,0.1277,0.13851,0.13919,0.12432,0.13108,0.13716,0.12432,0.13176,0.12095,0.13446,0.13446,0.1277],"tasa_real_pos":[0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973,0.12973]}}}],"pesos":true,"nombre":"mlp_base_mlp_d32_h4_l2_linear_seed42"}},"defaults":{"arch":"transformer","formulation":"features","drop_features":[],"strip_status":false,"max_text_len":256,"numeric_mode":"linear","n_bins":16,"d_model":32,"n_head":4,"n_layer":2,"dropout":0.1,"pooling":"cls","positional":false,"causal":false,"pos_weight":false,"epochs":60,"batch_size":256,"lr":0.001,"patience":8},"metricas":[{"k":"pr_auc","label":"PR-AUC","dir":"up"},{"k":"roc_auc","label":"ROC-AUC","dir":"up"},{"k":"loss","label":"loss (criterio de entrenamiento)","dir":"down"},{"k":"log_loss","label":"log-loss (BCE sin pesar)","dir":"down"},{"k":"brier","label":"Brier score","dir":"down"},{"k":"f1_best","label":"F1 máximo","dir":"up"},{"k":"thr_f1_best","label":"umbral del F1 máximo","dir":"none"},{"k":"f1","label":"F1 @ 0.5","dir":"up"},{"k":"precision","label":"precisión @ 0.5","dir":"up"},{"k":"recall","label":"recall @ 0.5","dir":"up"},{"k":"specificity","label":"especificidad @ 0.5","dir":"up"},{"k":"accuracy","label":"accuracy @ 0.5","dir":"up"},{"k":"balanced_accuracy","label":"balanced accuracy @ 0.5","dir":"up"},{"k":"mcc","label":"MCC @ 0.5","dir":"up"},{"k":"tasa_pred_pos","label":"tasa de positivos predicha","dir":"none"},{"k":"tasa_real_pos","label":"tasa de positivos real","dir":"none"}]};
+
+'use strict';
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const ffloat = x => { let s = Number(x).toFixed(10); s = s.replace(/0+$/,'').replace(/\.$/,''); return s; };
+const ARCH2CODE = {feat:{arch:'transformer',formulation:'features'}, mlp:{arch:'mlp'},
+  text:{arch:'transformer',formulation:'text'}, hybrid:{arch:'transformer',formulation:'hybrid'},
+  tower:{arch:'tower'}, listwise:{arch:'listwise'}};
+const ALL_FEATS = DATA.features.cat.map(f=>f.name).concat(DATA.features.num.map(f=>f.name));
+
+// ---- estado (mismos nombres que argparse en btr/train.py) ----
+const S = Object.assign({}, DATA.defaults);
+S.drop_features = (S.drop_features||[]).slice();
+const X = {catenc:'embedding', numenc_mixto:false, numpf:{}, val:'holdout', kfold:5, seeds:3, mq:false};
+DATA.features.num.forEach(f => X.numpf[f.name] = 'linear');
+
+const hasText = s => (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid')) || s.arch==='tower';
+const hasTab  = s => !(s.arch==='transformer' && s.formulation==='text');
+
+// ---- clave canonica: ESPEJO EXACTO de canon() en panel.py ----
+function canonKey(c){
+  const arch = c.arch;
+  const form = arch==='transformer' ? (c.formulation||'features') : '-';
+  const htext = (arch==='transformer' && (form==='text'||form==='hybrid')) || arch==='tower';
+  const htab = !(arch==='transformer' && form==='text');
+  let drop = c.drop_features||[];
+  if (typeof drop === 'string') drop = drop.split(',').map(s=>s.trim()).filter(Boolean);
+  const drops = htab ? Array.from(new Set(drop)).sort().join(',') : '-';
+  const strip = htext ? (c.strip_status ? '1':'0') : '-';
+  const maxlen = htext ? String(Math.trunc(c.max_text_len??256)) : '-';
+  const nmode = !htab ? '-' : (arch==='listwise' ? 'linear' : (c.numeric_mode||'linear'));
+  const nbins = nmode==='bins' ? String(Math.trunc(c.n_bins??16)) : '-';
+  const pool = arch==='transformer' ? (c.pooling||'cls') : '-';
+  const posit = arch==='transformer' ? ((form==='text'||form==='hybrid'||c.positional) ? '1':'0') : '-';
+  const caus = (arch==='transformer'||arch==='tower') ? (c.causal ? '1':'0') : '-';
+  const posw = c.pos_weight ? '1':'0';
+  const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
+  const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
+  return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
+    ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
+    String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
+    ffloat(c.lr??0.001), String(Math.trunc(c.patience??8))].join('|');
+}
+
+// auto-test contra las claves generadas en Python (guardia anti-drift)
+(function(){
+  let bad = 0;
+  for (const [n,v] of Object.entries(DATA.suite)) if (canonKey(v.cfg) !== v.key) bad++;
+  for (const [k,g] of Object.entries(DATA.results)) if (canonKey(g.cfg) !== k) bad++;
+  if (bad) $('selftest').style.display = 'block';
+})();
+
+const suiteByKey = {};
+for (const [n,v] of Object.entries(DATA.suite)) suiteByKey[v.key] = n;
+
+// ---- coerciones: que ajusta el codigo solo, segun la arquitectura ----
+function coerciones(s){
+  const out = [];
+  if (s.arch==='transformer' && s.formulation==='text' && s.drop_features.length)
+    out.push('formulación text: los features tabulares no entran al modelo — el drop no aplica');
+  if (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid'))
+    out.push('con texto el positional encoding va SIEMPRE (el orden de los chars importa)');
+  if (!hasText(s) && s.strip_status)
+    out.push('strip-status solo aplica a arquitecturas que ven el texto — ignorado');
+  if (s.arch==='listwise' && s.numeric_mode==='bins')
+    out.push('listwise no implementa bins → usa lineal');
+  if (s.arch==='mlp') out.push('MLP: cabezas y bloques no aplican (no hay atención)');
+  if (s.arch==='listwise') out.push('listwise: sin positional (no hay orden de página) y batch en queries');
+  if (s.arch==='tower') out.push('tower: la torre lleva su PE propio; pooling fijo [CLS] del texto');
+  return out;
+}
+
+// ---- pendientes de implementacion (los ejes 🟡) ----
+function pendientes(s){
+  const out = [];
+  if (X.catenc==='onehot') out.push({k:'encoding_categoricas', v:'one-hot directo al MLP',
+    n: s.arch==='mlp' ? 'one-hot crudo al MLP (medir qué aporta embeber)' :
+       'one-hot: para el transformer equivale al embedding (§6.1) — elegila con arquitectura MLP'});
+  if (X.catenc==='target') out.push({k:'encoding_categoricas', v:'target encoding',
+    n:'nivel → BTR promedio de train (ajustado por fold para no filtrar el target)'});
+  if (X.numenc_mixto){
+    const mix = Object.entries(X.numpf).filter(([f,m])=>m!=='linear');
+    out.push({k:'encoding_numericas_por_feature', v:Object.fromEntries(Object.entries(X.numpf)),
+      n:'modo por feature: hoy --numeric-mode es global ('+(mix.map(([f,m])=>f+'→'+m).join(', ')||'todo lineal')+')'});
+  }
+  if (X.val==='gkfold') out.push({k:'validacion', v:'GroupKFold k='+X.kfold,
+    n:'k-fold agrupado por query en lugar del holdout'});
+  if (X.val==='producto') out.push({k:'validacion', v:'split por producto',
+    n:'agrupar por producto en vez de query (ya verificado que no cambia métricas)'});
+  if (X.mq) out.push({k:'metricas_por_pagina', v:true,
+    n:'top-1 por query y NDCG de página en compute_metrics (requiere pasar query_id al evaluate)'});
+  return out;
+}
+
+// ---- comando CLI (solo flags no-default, espejo de build_parser) ----
+function comando(s){
+  const p = ['.venv/bin/python','-m','btr.train'];
+  if (s.arch!=='transformer') p.push('--arch', s.arch);
+  else if (s.formulation!=='features') p.push('--formulation', s.formulation);
+  if (hasTab(s) && s.drop_features.length) p.push('--drop-features', Array.from(new Set(s.drop_features)).sort().join(','));
+  if (hasText(s) && s.strip_status) p.push('--strip-status');
+  if (hasText(s) && s.max_text_len!==256) p.push('--max-text-len', String(s.max_text_len));
+  if (s.d_model!==32) p.push('--d-model', String(s.d_model));
+  if (s.arch!=='mlp' && s.n_head!==4) p.push('--n-head', String(s.n_head));
+  if (s.arch!=='mlp' && s.n_layer!==2) p.push('--n-layer', String(s.n_layer));
+  if (Number(s.dropout)!==0.1) p.push('--dropout', ffloat(s.dropout));
+  if (hasTab(s) && s.arch!=='listwise' && s.numeric_mode==='bins'){
+    p.push('--numeric-mode','bins');
+    if (s.n_bins!==16) p.push('--n-bins', String(s.n_bins));
+  }
+  if (s.arch==='transformer' && s.pooling==='mean') p.push('--pooling','mean');
+  if (s.arch==='transformer' && s.formulation==='features' && s.positional) p.push('--positional');
+  if ((s.arch==='transformer'||s.arch==='tower') && s.causal) p.push('--causal');
+  if (s.pos_weight) p.push('--pos-weight');
+  if (s.epochs!==60) p.push('--epochs', String(s.epochs));
+  if (s.batch_size!==256) p.push('--batch-size', String(s.batch_size));
+  if (Number(s.lr)!==0.001) p.push('--lr', ffloat(s.lr));
+  if (s.patience!==8) p.push('--patience', String(s.patience));
+  if (X.seeds!==1) p.push('--seeds', String(X.seeds));
+  p.push('--save-pesos');
+  return p.join(' ');
+}
+
+// ---- resultados ----
+const mean = a => a.reduce((x,y)=>x+y,0)/a.length;
+const std = a => { const m = mean(a); return Math.sqrt(mean(a.map(x=>(x-m)*(x-m)))); };
+const f4 = x => (Math.round(x*10000)/10000).toFixed(4);
+
+function chartSVG(g, metric, showTrain, showVal){
+  const W=560, H=250, L=52, R=10, T=12, B=26;
+  const series = [];
+  for (const run of g.runs){
+    if (showTrain && run.hist.train[metric]) series.push({v:run.hist.train[metric], c:'ln-train'});
+    if (showVal && run.hist.val[metric]) series.push({v:run.hist.val[metric], c:'ln-val'});
+  }
+  if (!series.length) return '<div class="empty">sin datos para esa métrica</div>';
+  const all = series.flatMap(s=>s.v);
+  let y0 = Math.min(...all), y1 = Math.max(...all);
+  const pad = (y1-y0)||1e-6; y0 -= pad*0.06; y1 += pad*0.06;
+  const maxEp = Math.max(...series.map(s=>s.v.length));
+  const xs = i => L + (W-L-R)*(maxEp>1 ? i/(maxEp-1) : 0.5);
+  const ys = v => T + (H-T-B)*(1-(v-y0)/(y1-y0));
+  const flabel = v => { const s = f4(v).replace(/0+$/,'').replace(/\.$/,''); return (s===''||s==='-') ? '0' : s; };
+  let out = '';
+  for (let k=0;k<=4;k++){
+    const v = y0 + (y1-y0)*k/4, y = ys(v);
+    out += `<line class="gridl" x1="${L}" y1="${y}" x2="${W-R}" y2="${y}"/>`;
+    out += `<text class="axis" x="${L-6}" y="${y+3}" text-anchor="end">${flabel(v)}</text>`;
+  }
+  for (const t of [0, Math.round((maxEp-1)/2), maxEp-1]){
+    out += `<text class="axis" x="${xs(t)}" y="${H-8}" text-anchor="middle">${t}</text>`;
+  }
+  const line = (vals, cls) => `<polyline class="${cls}" points="${vals.map((v,i)=>xs(i).toFixed(1)+','+ys(v).toFixed(1)).join(' ')}"/>`;
+  for (const s of series) out += line(s.v, 'ln '+s.c);
+  for (const [sp,cls] of [['train','ln-train'],['val','ln-val']]){
+    if ((sp==='train'&&!showTrain)||(sp==='val'&&!showVal)) continue;
+    const runs = g.runs.filter(r=>r.hist[sp][metric]);
+    if (runs.length>1){
+      const m=[]; for (let i=0;i<maxEp;i++){
+        const vs = runs.map(r=>r.hist[sp][metric][i]).filter(v=>v!==undefined);
+        if (vs.length) m.push(mean(vs));
+      }
+      out += line(m, 'ln mean '+cls);
+    }
+  }
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img">${out}</svg>` +
+    '<div class="leg">' + (showTrain?'<span><i class="ln-train" style="background:var(--tab)"></i>train (submuestra 4k)</span>':'') +
+    (showVal?'<span><i style="background:var(--cls)"></i>val</span>':'') +
+    (g.runs.length>1?'<span>línea gruesa = media entre seeds</span>':'') + '</div>';
+}
+
+let chartMetric = 'pr_auc', chartTrain = true, chartVal = true;
+function renderResultados(key){
+  const g = DATA.results[key];
+  const head = $('res-head'), chart = $('res-chart'), table = $('res-table');
+  if (!g){
+    head.innerHTML = '<div class="empty">Sin resultados todavía para esta configuración exacta. '+
+      'Corré el comando de arriba (o la suite completa en la 3070) y regenerá el panel con '+
+      '<b>python panel.py</b>.</div>';
+    chart.innerHTML = ''; table.innerHTML = ''; return;
+  }
+  const seeds = g.runs.map(r=>r.seed).join(', ');
+  const dev = Array.from(new Set(g.runs.map(r=>r.device))).join('/');
+  head.innerHTML = `<span class="pill ok">${g.runs.length} corrida(s) · seeds ${esc(seeds)}</span>`+
+    `<span class="pill info">${g.runs[0].params.toLocaleString('es-AR')} parámetros · ${esc(dev)}</span>`+
+    (g.pesos?'<span class="pill cls">checkpoint en pesos/ ✓</span>':'');
+  const opts = DATA.metricas.map(m=>`<option value="${m.k}"${m.k===chartMetric?' selected':''}>${esc(m.label)}</option>`).join('');
+  chart.innerHTML = `<div class="rowc" style="margin:8px 0 0">
+      <label class="inl">métrica <select id="chart-metric">${opts}</select></label>
+      <label class="inl"><input type="checkbox" id="chart-train"${chartTrain?' checked':''}> train</label>
+      <label class="inl"><input type="checkbox" id="chart-val"${chartVal?' checked':''}> val</label>
+    </div><div id="chart-box">${chartSVG(g, chartMetric, chartTrain, chartVal)}</div>`;
+  $('chart-metric').onchange = e => { chartMetric = e.target.value; update(); };
+  $('chart-train').onchange = e => { chartTrain = e.target.checked; update(); };
+  $('chart-val').onchange = e => { chartVal = e.target.checked; update(); };
+  let rows = '';
+  for (const m of DATA.metricas){
+    const va = g.runs.map(r=>r.val[m.k]), te = g.runs.map(r=>r.test[m.k]);
+    const cell = a => f4(mean(a)) + (a.length>1 ? ` <span class="sd">±${f4(std(a))}</span>` : '');
+    rows += `<tr${m.k==='pr_auc'?' class="hl"':''}><td>${esc(m.label)}</td><td>${cell(va)}</td><td>${cell(te)}</td></tr>`;
+  }
+  table.innerHTML = `<table class="mt"><thead><tr><th>métrica</th><th>val</th><th>test</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+let rankMetric = 'pr_auc', rankSplit = 'test';
+function renderRanking(currentKey){
+  const sel = $('rank-metric');
+  if (!sel.options.length){
+    sel.innerHTML = DATA.metricas.map(m=>`<option value="${m.k}">${esc(m.label)}</option>`).join('');
+    sel.value = rankMetric;
+    sel.onchange = e => { rankMetric = e.target.value; update(); };
+    $('rank-split').querySelectorAll('button').forEach(b=>b.onclick = () => {
+      rankSplit = b.dataset.v;
+      $('rank-split').querySelectorAll('button').forEach(x=>x.classList.toggle('on', x===b));
+      update();
+    });
+  }
+  const dir = (DATA.metricas.find(m=>m.k===rankMetric)||{}).dir || 'up';
+  const rows = Object.entries(DATA.results).map(([k,g])=>{
+    const vals = g.runs.map(r=>r[rankSplit][rankMetric]);
+    return {k, g, m: mean(vals), s: vals.length>1?std(vals):null,
+      nm: suiteByKey[k] ? suiteByKey[k]+' (suite)' : g.nombre.replace(/_seed\d+(_\d+)?$/,'')};
+  });
+  if (!rows.length){ $('rank').innerHTML = '<div class="empty">Todavía no hay corridas en resultados/.</div>'; return; }
+  rows.sort((a,b)=> dir==='down' ? a.m-b.m : b.m-a.m);
+  const lo = Math.min(...rows.map(r=>r.m)), hi = Math.max(...rows.map(r=>r.m));
+  $('rank').innerHTML = rows.map(r=>{
+    const w = hi>lo ? 8+92*(dir==='down' ? (hi-r.m)/(hi-lo) : (r.m-lo)/(hi-lo)) : 100;
+    return `<div class="rrow${r.k===currentKey?' sel':''}" data-key="${esc(r.k)}" tabindex="0" role="button">
+      <div><div class="nm">${esc(r.nm)}</div><div class="bar" style="width:${w.toFixed(0)}%"></div></div>
+      <div class="vl">${f4(r.m)}${r.s!==null?` <span class="sd">±${f4(r.s)}</span>`:''}</div></div>`;
+  }).join('');
+  $('rank').querySelectorAll('.rrow').forEach(el=>{
+    const go = () => { applyCfg(DATA.results[el.dataset.key].cfg); };
+    el.onclick = go;
+    el.onkeydown = e => { if (e.key==='Enter'||e.key===' ') { e.preventDefault(); go(); } };
+  });
+}
+
+// ---- estado / update ----
+function update(){
+  // coherencia de ejes segun arquitectura
+  const htext = hasText(S), htab = hasTab(S);
+  document.querySelectorAll('#arch-grid .opt').forEach(el=>{
+    const c = ARCH2CODE[el.dataset.arch];
+    el.classList.toggle('on', c.arch===S.arch && (c.arch!=='transformer' || c.formulation===S.formulation));
+  });
+  $('strip-wrap').style.opacity = htext ? 1 : .45;
+  $('strip').disabled = !htext;
+  document.querySelectorAll('#feat-grid .feat').forEach(el=>{
+    const f = el.dataset.f;
+    const on = !S.drop_features.includes(f);
+    el.querySelector('input').checked = on;
+    el.classList.toggle('off', !on || !htab);
+  });
+  $('nh-wrap').style.opacity = $('nl-wrap').style.opacity = S.arch==='mlp' ? .45 : 1;
+  $('pool-wrap').style.display = S.arch==='transformer' ? '' : 'none';
+  $('pos-wrap').style.display = (S.arch==='transformer' && S.formulation==='features') ? '' : 'none';
+  $('caus-wrap').style.display = (S.arch==='transformer'||S.arch==='tower') ? '' : 'none';
+  $('nbins-wrap').style.display = S.numeric_mode==='bins' ? '' : 'none';
+  $('numpf-wrap').style.display = X.numenc_mixto ? '' : 'none';
+  $('k-wrap').style.display = X.val==='gkfold' ? '' : 'none';
+  const archHints = {mlp:'El control sin atención: si el transformer no le gana, la atención no se justifica.',
+    listwise:'Ve la página completa; único capaz de modelar competencia entre productos.',
+    tower:'Tu propuesta: transformer como encoder de texto, MLP como clasificador.',
+    text:'La familia cara (atención 257²): corre en la 3070.',
+    hybrid:'La atención puede cruzar texto ↔ features en la misma capa.',
+    feat:'La ganadora hasta ahora en CPU: PR-AUC 0.766 vs GBM 0.762.'};
+  const aid = Object.entries(ARCH2CODE).find(([id,c])=>c.arch===S.arch &&
+    (c.arch!=='transformer'||c.formulation===S.formulation))[0];
+  $('arch-hint').textContent = archHints[aid]||'';
+  $('cap-hint').textContent = (S.arch!=='mlp' && S.d_model % S.n_head !== 0)
+    ? '⚠ d_model debe ser múltiplo del número de cabezas (head_size = d_model / cabezas)' : '';
+
+  // estado + comando + spec
+  const pend = pendientes(S);
+  const key = canonKey(S);
+  const inSuite = suiteByKey[key];
+  const invalid = S.arch!=='mlp' && S.d_model % S.n_head !== 0;
+  let pills = '';
+  if (invalid) pills += '<span class="pill err">inválida: d_model % cabezas ≠ 0</span>';
+  else if (pend.length) pills += '<span class="pill warn">requiere implementación</span>';
+  else if (inSuite) pills += `<span class="pill ok">en la suite: ${esc(inSuite)}</span>`;
+  else pills += '<span class="pill ok">soportada por el código</span>';
+  if (!pend.length && !invalid && !inSuite)
+    pills += '<span class="pill info">no está en la suite — pedile a Claude que la agregue si va en serio</span>';
+  $('estado-pills').innerHTML = pills;
+  const cmd = invalid ? '— arreglá d_model / cabezas —' :
+    (inSuite && X.seeds===3 && !pend.length)
+      ? `.venv/bin/python experimentos.py --only ${inSuite}\n# (equivale a: ${comando(S)})`
+      : comando(S);
+  $('cmd').textContent = cmd;
+  $('spec-wrap').style.display = pend.length ? '' : 'none';
+  if (pend.length){
+    $('spec').textContent = 'IMPLEMENTAR ' + JSON.stringify(
+      {pedidos: pend.map(p=>({[p.k]: p.v, nota: p.n})), sobre: cmd}, null, 1);
+  }
+  const notas = coerciones(S).map(c=>`<li>${esc(c)}</li>`).join('');
+  $('coerciones').innerHTML = notas;
+
+  renderResultados(key);
+  renderRanking(key);
+}
+
+function applyCfg(cfg){
+  for (const k of Object.keys(DATA.defaults)) if (cfg[k]!==undefined) S[k] = cfg[k];
+  S.drop_features = (cfg.drop_features||[]).slice();
+  syncUI(); update();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function syncUI(){
+  const aid = Object.entries(ARCH2CODE).find(([id,c])=>c.arch===S.arch &&
+    (c.arch!=='transformer'||c.formulation===(S.formulation||'features')));
+  document.querySelectorAll('#arch-grid input[name=arch]').forEach(r=>r.checked = r.value===aid[0]);
+  $('strip').checked = !!S.strip_status;
+  ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins'].forEach(k=>{ $(k).value = S[k]; });
+  $('numenc').value = X.numenc_mixto ? 'mixto' : S.numeric_mode;
+  $('pool-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.pooling||'cls')));
+  $('positional').checked = !!S.positional; $('causal').checked = !!S.causal;
+  $('pos_weight').checked = !!S.pos_weight;
+  $('seeds').value = X.seeds;
+}
+
+// ---- wiring ----
+document.querySelectorAll('#arch-grid input[name=arch]').forEach(r=>r.onchange = () => {
+  Object.assign(S, {formulation:'features'}, ARCH2CODE[r.value]);
+  if (!ARCH2CODE[r.value].formulation) S.formulation = 'features';
+  update();
+});
+document.querySelectorAll('#feat-grid input[name=feat]').forEach(cb=>cb.onchange = () => {
+  const f = cb.value;
+  S.drop_features = cb.checked ? S.drop_features.filter(x=>x!==f)
+                               : S.drop_features.concat([f]);
+  update();
+});
+$('pre-catalogo').onclick = () => { S.drop_features = []; S.strip_status = false; syncUI(); update(); };
+$('pre-intrinseco').onclick = () => { S.drop_features = ['listing_status']; S.strip_status = true; syncUI(); update(); };
+$('strip').onchange = e => { S.strip_status = e.target.checked; update(); };
+$('catenc').onchange = e => { X.catenc = e.target.value; update(); };
+$('numenc').onchange = e => {
+  X.numenc_mixto = e.target.value==='mixto';
+  if (!X.numenc_mixto) S.numeric_mode = e.target.value;
+  update();
+};
+document.querySelectorAll('select[name=numpf]').forEach(s=>s.onchange = e => {
+  X.numpf[s.dataset.f] = e.target.value; update();
+});
+[['d_model',1],['n_head',1],['n_layer',1],['dropout',0],['epochs',1],['batch_size',1],
+ ['lr',0],['patience',1],['n_bins',1]].forEach(([k,isInt])=>{
+  $(k).onchange = e => { S[k] = isInt ? parseInt(e.target.value||0,10) : parseFloat(e.target.value||0); update(); };
+});
+$('seeds').onchange = e => { X.seeds = parseInt(e.target.value||1,10); update(); };
+$('kfold').onchange = e => { X.kfold = parseInt(e.target.value||5,10); update(); };
+$('pool-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.pooling = b.dataset.v; syncUI(); update(); });
+$('positional').onchange = e => { S.positional = e.target.checked; update(); };
+$('causal').onchange = e => { S.causal = e.target.checked; update(); };
+$('pos_weight').onchange = e => { S.pos_weight = e.target.checked; update(); };
+document.querySelectorAll('input[name=val]').forEach(r=>r.onchange = () => {
+  X.val = r.value;
+  document.querySelectorAll('[data-val]').forEach(el=>el.classList.toggle('on', el.dataset.val===X.val));
+  update();
+});
+$('mq').onchange = e => { X.mq = e.target.checked; update(); };
+const copiar = (btn, src) => {
+  const txt = $(src).textContent;
+  const done = ok => { btn.textContent = ok ? '¡copiado!' : 'seleccioná el texto y copialo'; setTimeout(()=>btn.textContent = btn.dataset.t, 1600); };
+  btn.dataset.t = btn.textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(()=>done(true), ()=>done(false));
+  else done(false);
+};
+$('copy-cmd').onclick = () => copiar($('copy-cmd'), 'cmd');
+$('copy-spec').onclick = () => copiar($('copy-spec'), 'spec');
+$('met-pills').innerHTML = DATA.metricas.map(m=>{
+  const d = m.dir==='up' ? '↑' : m.dir==='down' ? '↓' : '·';
+  return `<span class="pill info">${esc(m.label)} ${d}</span>`;
+}).join('');
+$('gen-date').textContent = 'datos embebidos: ' + DATA.gen.slice(0,16).replace('T',' ') + ' UTC';
+
+syncUI();
+update();
+
+</script>

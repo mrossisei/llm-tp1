@@ -19,6 +19,8 @@ En particular §5.1 tiene el recorrido de punta a punta (qué entra, qué sale) 
 │   ├── model.py               # bloques del transformer + las 4 arquitecturas
 │   └── train.py               # entrenamiento, early stopping, métricas, multi-seed, guardado
 ├── experimentos.py            # suite completa (24 configs × seeds), resumible, con --resumen
+├── panel.py                   # genera panel.html: laboratorio interactivo de experimentos
+├── panel.html                 # ese laboratorio, con la suite y los resultados embebidos
 ├── eda/verificaciones.py      # reproduce todos los números del EDA y los baselines
 ├── resultados/                # un JSON por corrida (config + curvas train/val + val/test finales)
 └── pesos/                     # checkpoints .pt recargables (la suite los guarda por defecto)
@@ -90,3 +92,19 @@ Referencia rápida (test, mismo split por query seed 42; reproducir con
 transformer tabular 0.766 (y 3 seeds: 0.815 ± 0.037) · MLP baseline 0.715 · listwise 0.664 ·
 sin información de estado el techo se desploma (GBM: PR-AUC 0.162 — ver §2.3.1 de la propuesta) ·
 `text`/`hybrid`/`tower`: pendientes de entrenar en GPU.
+
+## El laboratorio interactivo (`panel.html`)
+
+La consola del proyecto: se compone una configuración eligiendo cada decisión (arquitectura,
+features, encodings, capacidad, validación) y la página muestra el **comando exacto**, si la
+combinación **ya está en la suite** o si **requiere implementación** (da un spec para pedirla), y
+— si ya se corrió — **todas las métricas** (media ± desvío entre seeds), las **curvas por época**
+de cualquier métrica y el **ranking** de todo lo corrido. Es HTML estático autocontenido: se abre
+localmente o como artifact. Después de cada tanda de experimentos:
+
+```bash
+.venv/bin/python panel.py     # re-embebe resultados/ y la suite en panel.html
+```
+
+Cada corrida guarda las 16 métricas por época (`compute_metrics` en `btr/train.py`), así que el
+panel grafica cualquiera sin reentrenar.
