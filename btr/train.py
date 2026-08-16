@@ -268,6 +268,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description='Entrena los modelos de BTR')
     parser.add_argument('--csv', default=str(REPO_ROOT / 'supermarket_products.csv'))
     parser.add_argument('--seeds', type=int, default=1, help='cantidad de corridas a promediar')
+    parser.add_argument('--seed-start', type=int, default=42, help='primera seed de la serie')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--tag', default='', help='prefijo para el nombre de la corrida')
     parser.add_argument('--arch', choices=['transformer', 'mlp', 'tower', 'listwise'],
@@ -303,7 +304,8 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     device = resolve_device(args.device)
-    results = [run(args.csv, seed, args, device) for seed in range(42, 42 + args.seeds)]
+    results = [run(args.csv, seed, args, device)
+               for seed in range(args.seed_start, args.seed_start + args.seeds)]
     rocs, prs = zip(*results)
     print(f"\n===== {args.seeds} corrida(s) | TEST ROC-AUC {np.mean(rocs):.4f} +- {np.std(rocs):.4f} "
           f"| TEST PR-AUC {np.mean(prs):.4f} +- {np.std(prs):.4f} =====")

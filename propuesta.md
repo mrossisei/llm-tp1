@@ -26,13 +26,14 @@
   invertida dentro del rango del filtro), y varios campos son redundantes o ruido.
 - **Dos familias de modelos** (§2.3.1): *catálogo* (usa el estado del listing: responde qué
   conviene promocionar hoy) e *intrínseco* (sin estado, `--strip-status`: responde qué esperar de
-  un producto nuevo; techo mucho más bajo — PR-AUC ≈ 0.17 vs 0.81 — y eso es un hallazgo, no un bug).
+  un producto nuevo; techo mucho más bajo — PR-AUC ≈ 0.16 vs 0.76 — y eso es un hallazgo, no un bug).
 - **Split:** por `query_id` (group split) 70/15/15, promediando varias corridas con seeds distintas.
 - **Métricas:** ROC-AUC y PR-AUC (desbalance 13% de positivos; PR-AUC de azar ≈ 0.13), más curvas
   de loss train/val para over/underfitting. Sin umbral (no lo pide el enunciado).
-- **Bandas de referencia ya medidas** (ver §7): regresión logística lineal ROC 0.966 / PR 0.717;
-  un modelo no lineal con interacciones llega a ROC 0.975 / PR 0.81. El transformer debería quedar
-  en esa banda alta; si no supera al lineal, la capa de atención no está aportando.
+- **Bandas de referencia ya medidas** (ver §7): regresión logística lineal ROC 0.959 / PR 0.660;
+  un modelo no lineal con interacciones llega a ROC 0.968 / PR 0.762 (mismo split por query que los
+  modelos; reproducible con `eda/verificaciones.py`). El transformer debería quedar en esa banda
+  alta; si no supera al lineal, la capa de atención no está aportando.
 
 ---
 
@@ -154,12 +155,12 @@ Los números que dimensionan el dilema (GBM no lineal, split por query, seed 42)
 
 | Modelo | ROC-AUC | PR-AUC |
 |---|---|---|
-| Con estado (`listing_status` + resto) | 0.975 | 0.807 |
-| **Sin estado (solo atributos intrínsecos)** | **0.592** | **0.167** |
+| Con estado (`listing_status` + resto) | 0.968 | 0.762 |
+| **Sin estado (solo atributos intrínsecos)** | **0.556** | **0.162** |
 
 Además, el 61% de las filas está en tiers con BTR = 0.000 exacto. Es decir: en este dataset la
 compra está gobernada **casi por completo** por la señal de estado/popularidad; los atributos
-intrínsecos apenas superan el azar (0.167 vs 0.132). Sacar la señal de estado por completo dejaría
+intrínsecos apenas superan el azar (0.162 vs 0.134). Sacar la señal de estado por completo dejaría
 un problema casi impredecible — y la cátedra claramente la puso en el texto para que el EDA la
 encuentre y el modelo la use.
 
@@ -506,21 +507,22 @@ fuga — es exactamente la regularidad que el modelo debe aprender.
 
 ### 7.3 Baselines (escalera de complejidad)
 
-Ya medidos con un split por query (seed 42), para saber dónde estamos parados:
+Medidos con **el mismo split por query (seed 42, test 15%) que usan los modelos** —
+reproducibles con `.venv/bin/python eda/verificaciones.py`:
 
 | Modelo | ROC-AUC | PR-AUC | Lectura |
 |---|---|---|---|
 | Azar / prevalencia | 0.50 | 0.13 | piso |
-| Regresión logística SOLO `listing_status` | 0.960 | 0.670 | la señal de texto sola |
-| Regresión logística todo (one-hot + z-score) | 0.966 | 0.717 | techo **lineal** |
-| Regresión logística SIN `listing_status` | 0.547 | 0.149 | sin texto no hay problema que resolver |
-| Gradient boosting (referencia no lineal) | 0.975 | **0.807** | techo aproximado con interacciones |
-| GBM **sin estado** (mundo "producto nuevo") | 0.592 | 0.167 | techo intrínseco (§2.3.1) |
+| Regresión logística SOLO `listing_status` | 0.953 | 0.644 | la señal de texto sola |
+| Regresión logística todo (one-hot + z-score) | 0.959 | 0.660 | techo **lineal** |
+| Regresión logística SIN `listing_status` | 0.535 | 0.142 | sin texto no hay problema que resolver |
+| Gradient boosting (referencia no lineal) | 0.968 | **0.762** | techo aproximado con interacciones |
+| GBM **sin estado** (mundo "producto nuevo") | 0.556 | 0.162 | techo intrínseco (§2.3.1) |
 | MLP baseline (mismos embeddings, sin atención) | 0.964 | 0.715 | primera corrida, seed 42 |
 
-Lecturas importantes: (1) el gap 0.72 → 0.81 de PR-AUC es **el margen que justifica un modelo con
-interacciones**: ahí tiene que vivir el transformer; (2) un MLP (baseline SIA) debería caer también
-en esa banda — la comparación honesta transformer vs MLP con mismos inputs es parte del informe;
+Lecturas importantes: (1) el gap 0.66 → 0.76 de PR-AUC es **el margen que justifica un modelo con
+interacciones**: ahí tiene que vivir el transformer (primera corrida seed 42: 0.766 ✓);
+(2) la comparación honesta transformer vs MLP con los mismos inputs es parte del informe;
 (3) si alguien del equipo obtiene 0.99+, oler leakage antes que festejar.
 
 ### 7.4 Plan de ablaciones (en orden de valor)
@@ -566,7 +568,9 @@ la sugerencia de Colab.
 
 ```
 llm-tp1/
-├── propuesta.md              ← este documento
+├── propuesta.md              ← este documento (diseño vivo)
+├── bitacora.md               ← registro cronológico de discusiones y decisiones
+├── eda/verificaciones.py     ← reproduce todos los números del EDA y los baselines
 ├── supermarket_products.csv
 ├── btr/
 │   ├── __init__.py
@@ -634,7 +638,7 @@ Cambios mínimos sobre nuestra arquitectura A:
 - [ ] ¿Excluir `cart` por leakage es la lectura esperada, o quieren verlo usado (p. ej. multi-task)?
 - [ ] El estado del listing (Best Seller, etc.) deriva de popularidad pasada: ¿esperan que se use
   como feature (está disponible al predecir), que se excluya (circularidad para promocionar), o
-  exactamente la doble lectura de §2.3.1? (Llevar los números: 0.81 vs 0.17 de PR-AUC.)
+  exactamente la doble lectura de §2.3.1? (Llevar los números: 0.76 vs 0.16 de PR-AUC.)
 - [ ] Confirmar que el promedio de corridas con distintas seeds (sin CV) alcanza (dijeron que sí).
 - [ ] ¿El timestamp intra-query de 2 años es intencional (trampa de EDA) o artefacto del generador?
 

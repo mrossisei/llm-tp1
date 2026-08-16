@@ -10,15 +10,17 @@ En particular §5.1 tiene el recorrido de punta a punta (qué entra, qué sale) 
 ## Estructura
 
 ```
-├── propuesta.md               # análisis del problema y plan (leer primero)
+├── propuesta.md               # documento de diseño: análisis del problema y plan (leer primero)
+├── bitacora.md                # registro cronológico de discusiones y decisiones
 ├── supermarket_products.csv   # dataset de eventos de búsqueda
 ├── btr/
 │   ├── data.py                # carga, features derivados, split por query, tensores
-│   ├── model.py               # bloques del transformer + FeatureTokenizer + BTRTransformer
+│   ├── model.py               # bloques del transformer + las 4 arquitecturas
 │   └── train.py               # entrenamiento, early stopping, métricas, multi-seed, guardado
+├── experimentos.py            # suite completa (24 configs × seeds), resumible, con --resumen
+├── eda/verificaciones.py      # reproduce todos los números del EDA y los baselines
 ├── resultados/                # un JSON por corrida (config + curvas train/val + val/test finales)
-├── pesos/                     # checkpoints .pt (solo con --save-pesos)
-└── notebooks/                 # (próximamente) EDA y experimentos
+└── pesos/                     # checkpoints .pt recargables (la suite los guarda por defecto)
 ```
 
 ## Setup
@@ -27,8 +29,9 @@ En particular §5.1 tiene el recorrido de punta a punta (qué entra, qué sale) 
 uv venv .venv
 # CPU:
 uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
-# GPU (máquina con NVIDIA, ej. RTX 3070): instalar torch sin el index de CPU
+# GPU (máquina con NVIDIA, ej. RTX 3070): instalar torch SIN el index de CPU
 #   uv pip install --python .venv/bin/python torch
+#   verificar: .venv/bin/python -c "import torch; print(torch.cuda.is_available())"  -> True
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
@@ -44,14 +47,21 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ### La suite de experimentos (correr en la máquina con GPU)
 
 Todas las arquitecturas y ablaciones del TP están codificadas en `experimentos.py`
-(24 configuraciones, ver `--list`). En la máquina con GPU:
+(24 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**:
 
 ```bash
-.venv/bin/python experimentos.py                     # toda la suite, 3 seeds por config
-.venv/bin/python experimentos.py --familia texto     # solo la familia cara (GPU)
-.venv/bin/python experimentos.py --only text_base,hybrid_sin_regex --save-pesos
-.venv/bin/python experimentos.py --resumen           # tabla comparativa de resultados/
+.venv/bin/python experimentos.py                     # corre TODA la suite (24 configs × 3 seeds) en la GPU
+.venv/bin/python experimentos.py --resumen           # tabla comparativa: media ± desvío por config
 ```
+
+Garantías: usa la GPU automáticamente (imprime el nombre de la placa al arrancar) y **aborta con
+instrucciones si detectara que la familia texto correría en CPU** (típicamente torch instalado en
+versión CPU); es **resumible** — si se corta, relanzar la misma línea continúa donde quedó
+(saltea toda corrida cuyo JSON ya esté en `resultados/`); guarda los checkpoints en `pesos/` por
+defecto (`--no-pesos` para no hacerlo); si una corrida falla, sigue con el resto y lo reporta al
+final. Al terminar: commitear `resultados/` y `pesos/` y pushear.
+
+Otras variantes: `--familia texto` (solo lo caro), `--only text_base,hybrid_sin_regex`, `--list`.
 
 Arquitecturas (`--arch` en `btr.train`): `transformer` (formulaciones `features`/`text`/`hybrid`),
 `mlp` (baseline sin atención), `tower` (transformer solo como encoder de texto → embedding + MLP),
@@ -74,8 +84,8 @@ x_cat, x_num, x_text, _ = prep.transform(df_nuevo)  # mismas transformaciones qu
 probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 ```
 
-Referencia rápida (test, split por query): regresión logística PR-AUC ≈ 0.72 ·
-transformer tabular (3 seeds) ROC-AUC 0.972 ± 0.004, PR-AUC 0.815 ± 0.037 ·
-MLP baseline 0.715 y listwise 0.664 (seed 42) · sin información de estado el techo se
-desploma (GBM: PR-AUC 0.167 — ver §2.3.1 de la propuesta) · `text`/`hybrid`/`tower`:
-pendientes de entrenar en GPU.
+Referencia rápida (test, mismo split por query seed 42; reproducir con
+`.venv/bin/python eda/verificaciones.py`): regresión logística PR-AUC 0.660 · GBM 0.762 ·
+transformer tabular 0.766 (y 3 seeds: 0.815 ± 0.037) · MLP baseline 0.715 · listwise 0.664 ·
+sin información de estado el techo se desploma (GBM: PR-AUC 0.162 — ver §2.3.1 de la propuesta) ·
+`text`/`hybrid`/`tower`: pendientes de entrenar en GPU.

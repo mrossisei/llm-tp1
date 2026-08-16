@@ -1,15 +1,20 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
-Uso tipico en la maquina con GPU:
-    .venv/bin/python experimentos.py                  # corre toda la suite (3 seeds c/u)
-    .venv/bin/python experimentos.py --list           # ver que corre cada experimento
-    .venv/bin/python experimentos.py --only text_base,hybrid_sin_regex
-    .venv/bin/python experimentos.py --resumen        # tabla comparativa de resultados/
+USO EN LA MAQUINA CON GPU (dos lineas):
+    .venv/bin/python experimentos.py              # corre TODA la suite (24 configs x 3 seeds)
+    .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
-Cada experimento invoca btr.train con --tag <nombre>; los JSON quedan en
-resultados/ y el resumen los agrupa por configuracion (promedio +- desvio entre
-seeds). La familia "texto" es la costosa (secuencia ~257): en CPU son 40-90 min
-por corrida, en GPU minutos. La familia tabular corre en segundos donde sea.
+Garantias de la suite:
+- Usa la GPU automaticamente (--device auto -> cuda si esta disponible). Si la familia
+  "texto" fuera a correr en CPU, ABORTA con instrucciones (evita 20+ horas de CPU por
+  un torch mal instalado); para forzar CPU a proposito: --device cpu.
+- Es RESUMIBLE: cada (experimento, seed) que ya tiene su JSON en resultados/ se
+  saltea. Si se corta a la mitad, volver a correr la misma linea continua donde quedo.
+- Guarda pesos/ por defecto (checkpoints recargables para analisis posteriores, p. ej.
+  mapas de atencion); desactivable con --no-pesos.
+- Si un experimento falla, sigue con el resto y lo reporta al final.
+
+Otras opciones: --list, --only a,b, --familia tabular|texto, --seeds N, --epochs N (pruebas).
 """
 
 import argparse
@@ -19,6 +24,8 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+from btr.train import build_parser, run_name
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -34,7 +41,7 @@ EXPERIMENTOS = {
     # ¿el transformer redescubre la senal del texto sin el regex?
     'hybrid_sin_regex': (['--formulation', 'hybrid', '--drop-features', 'listing_status'], 'texto'),
     'tower_sin_regex':  (['--arch', 'tower', '--drop-features', 'listing_status'], 'texto'),
-    # familia "producto nuevo" (sin informacion de estado/popularidad, ver propuesta 2.3.1)
+    # familia "producto nuevo" (sin informacion de estado/popularidad, propuesta 2.3.1)
     'feat_intrinseco':  (['--formulation', 'features', '--drop-features', 'listing_status'], 'tabular'),
     'text_intrinseco':  (['--formulation', 'text', '--strip-status'], 'texto'),
     'hybrid_intrinseco': (['--formulation', 'hybrid', '--strip-status',
@@ -58,23 +65,68 @@ EXPERIMENTOS = {
 }
 
 
+def resolver_device(arg):
+    if arg != 'auto':
+        return arg
+    import torch
+    return 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
+def chequear_gpu(device_arg, nombres):
+    """Aborta si la familia texto correria en CPU sin pedirlo explicitamente."""
+    device = resolver_device(device_arg)
+    if device == 'cuda':
+        import torch
+        print(f"GPU detectada: {torch.cuda.get_device_name(0)}")
+        return
+    con_texto = [n for n in nombres if EXPERIMENTOS[n][1] == 'texto']
+    if con_texto and device_arg == 'auto':
+        raise SystemExit(
+            "\nNO se detecto GPU (torch.cuda.is_available() = False) y la suite incluye la\n"
+            f"familia 'texto' ({len(con_texto)} experimentos, 40-90 min POR CORRIDA en CPU).\n"
+            "En la maquina con RTX 3070 esto suele significar que torch quedo instalado en\n"
+            "version CPU. Solucion:\n"
+            "    uv pip install --python .venv/bin/python --reinstall torch\n"
+            "(sin el index de CPU; verificar con: .venv/bin/python -c 'import torch; print(torch.cuda.is_available())')\n"
+            "Para correr en CPU a proposito: --device cpu | solo lo barato: --familia tabular"
+        )
+    print(f"Corriendo en {device} (familia texto excluida o CPU explicita)")
+
+
+def nombre_esperado(nombre_exp, extra, seed):
+    """El nombre de archivo que va a producir esta corrida (misma logica que btr.train)."""
+    args = build_parser().parse_args(['--tag', nombre_exp, *extra])
+    return run_name(args, seed)
+
+
 def correr(nombres, seeds, device, save_pesos, epochs):
+    chequear_gpu(device, nombres)
+    resultados_dir = REPO_ROOT / 'resultados'
+    plan, salteados = [], 0
+    for nombre in nombres:
+        extra, _ = EXPERIMENTOS[nombre]
+        for seed in range(42, 42 + seeds):
+            if (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
+                salteados += 1
+            else:
+                plan.append((nombre, extra, seed))
+    print(f"Plan: {len(plan)} corridas ({salteados} ya hechas, salteadas)")
+
     fallidos = []
-    for i, nombre in enumerate(nombres, 1):
-        extra, familia = EXPERIMENTOS[nombre]
-        cmd = [sys.executable, '-m', 'btr.train', '--tag', nombre, '--seeds', str(seeds),
-               '--device', device, '--quiet', *extra]
+    for i, (nombre, extra, seed) in enumerate(plan, 1):
+        cmd = [sys.executable, '-m', 'btr.train', '--tag', nombre, '--seeds', '1',
+               '--seed-start', str(seed), '--device', device, '--quiet', *extra]
         if save_pesos:
             cmd.append('--save-pesos')
         if epochs:
             cmd += ['--epochs', str(epochs)]
-        print(f"\n[{i}/{len(nombres)}] {nombre} ({familia}): {' '.join(cmd[3:])}", flush=True)
+        print(f"\n[{i}/{len(plan)}] {nombre} seed {seed}: {' '.join(extra)}", flush=True)
         result = subprocess.run(cmd, cwd=REPO_ROOT)
         if result.returncode != 0:
-            print(f"  !! {nombre} fallo (exit {result.returncode}), sigo con el resto")
-            fallidos.append(nombre)
+            print(f"  !! {nombre} seed {seed} fallo (exit {result.returncode}), sigo con el resto")
+            fallidos.append(f'{nombre}/seed{seed}')
     if fallidos:
-        print(f"\nExperimentos fallidos: {fallidos}")
+        print(f"\nCorridas fallidas: {fallidos}")
     else:
         print("\nSuite completa sin errores. Ver resumen: python experimentos.py --resumen")
 
@@ -117,7 +169,7 @@ def main():
     parser.add_argument('--familia', choices=['tabular', 'texto'], help='correr solo una familia')
     parser.add_argument('--seeds', type=int, default=3)
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
-    parser.add_argument('--save-pesos', action='store_true')
+    parser.add_argument('--no-pesos', action='store_true', help='no guardar checkpoints en pesos/')
     parser.add_argument('--epochs', type=int, help='override de epocas (para pruebas rapidas)')
     args = parser.parse_args()
 
@@ -134,7 +186,7 @@ def main():
         raise SystemExit(f'experimentos desconocidos: {desconocidos} (ver --list)')
     if args.familia:
         nombres = [n for n in nombres if EXPERIMENTOS[n][1] == args.familia]
-    correr(nombres, args.seeds, args.device, args.save_pesos, args.epochs)
+    correr(nombres, args.seeds, args.device, not args.no_pesos, args.epochs)
 
 
 if __name__ == '__main__':
