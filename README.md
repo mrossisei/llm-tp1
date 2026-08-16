@@ -12,6 +12,7 @@ En particular §5.1 tiene el recorrido de punta a punta (qué entra, qué sale) 
 ```
 ├── propuesta.md               # documento de diseño: análisis del problema y plan (leer primero)
 ├── bitacora.md                # registro cronológico de discusiones y decisiones
+├── diagramas.md               # diagramas de las 6 arquitecturas (GitHub los renderiza)
 ├── supermarket_products.csv   # dataset de eventos de búsqueda
 ├── btr/
 │   ├── data.py                # carga, features derivados, split por query, tensores

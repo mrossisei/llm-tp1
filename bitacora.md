@@ -126,6 +126,20 @@ EDA y baselines quedaron reproducibles en `eda/verificaciones.py` (y la tabla de
 propuesta se re-midió con el mismo split por query que usan los modelos, para que todo sea
 comparable). Este archivo (`bitacora.md`) queda como registro de las discusiones.
 
+## 16/08 — Diagramas de las arquitecturas
+
+**Pedido.** Un gráfico/esquema por arquitectura, completo (no solo el transformer), para poder
+imaginarse cada una.
+
+**Decisión.** Dos versiones con el mismo contenido: `diagramas.md` en el repo (mermaid, GitHub lo
+renderiza solo, queda versionado) y una versión visual más rica como página con SVG (código de
+color compartido entre las seis figuras: teal=tabular, ámbar=texto, violeta=CLS, azul=MLP/lineal,
+frambuesa=salida; flechas anotadas con los shapes reales de los tensores). Las dimensiones salen
+del código real (`btr/model.py` instanciado): 28.289 parámetros el tabular, 126.209 el MLP,
+35.713 el de texto, 39.073 el híbrido, 96.225 la torre, 41.601 el listwise. Dato lindo que salió
+de armarlos: el MLP baseline tiene 4,5× los parámetros del transformer tabular y aun así rinde
+menos — la ventaja de la atención no es cuestión de tamaño.
+
 ## Pendientes
 
 - [ ] Correr la suite completa en la RTX 3070 (`experimentos.py`) y analizar `--resumen`.

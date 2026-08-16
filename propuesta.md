@@ -257,6 +257,9 @@ Justificación teórica del recorte de arquitectura (conexión con las clases 1 
 
 ## 4. La pregunta conceptual central: ¿qué son los "tokens"?
 
+> Diagramas completos de las seis arquitecturas (del CSV a la probabilidad, con las dimensiones
+> reales del código): [`diagramas.md`](diagramas.md).
+
 En texto el token es la unidad discreta de la secuencia. Acá hay tres candidatos, y elegir es LA
 decisión de diseño del TP:
 
