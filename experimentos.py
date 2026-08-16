@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (39 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (44 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -100,6 +100,20 @@ EXPERIMENTOS |= {
     # texto corto: la senal vive en el sufijo del titulo (<= 81 chars); 96 chars
     # cubren el titulo entero y la atencion pasa de 257^2 a 97^2 (~7x mas barata)
     'text_len96':       (['--formulation', 'text', '--max-text-len', '96'], 'texto'),
+
+    # ---- el estado como CAMPO separado (idea de Fer, 16/08) ----
+    # (a) completar el 2x2 {token parseado si/no} x {sufijo en el texto si/no}:
+    # full=ambos canales, sin_regex=solo texto, intrinseco=ninguno; faltaba
+    # "solo el campo, texto limpio" — la separacion prolija que propuso Fer
+    'hybrid_status_campo': (['--formulation', 'hybrid', '--strip-status'], 'texto'),
+    'tower_status_campo':  (['--arch', 'tower', '--strip-status'], 'texto'),
+    # (b) encoding del campo, incluso CON ORDEN. El orden defendible se deriva
+    # del BTR de train (ordinal = solo rango, target = rango + magnitud); un
+    # orden semantico a mano es indefendible (EDA 2.3: el wording no predice el
+    # tier). --cat-feature-encoding lo aplica SOLO a listing_status.
+    'feat_ordinal':        (['--cat-encoding', 'ordinal', *PAC], 'tabular'),
+    'feat_status_ordinal': (['--cat-feature-encoding', 'listing_status=ordinal', *PAC], 'tabular'),
+    'feat_status_target':  (['--cat-feature-encoding', 'listing_status=target', *PAC], 'tabular'),
 }
 
 

@@ -37,6 +37,18 @@ def ffloat(x):
     return f'{float(x):.10f}'.rstrip('0').rstrip('.')
 
 
+def _catfe_pares(c, catenc_global):
+    """Overrides por-feature reales (modo distinto del global), desde el string del flag."""
+    pares = {}
+    for par in str(c.get('cat_feature_encoding', '') or '').split(','):
+        par = par.strip()
+        if par and '=' in par:
+            f, m = (s.strip() for s in par.split('=', 1))
+            if m != catenc_global:
+                pares[f] = m
+    return pares
+
+
 def canon(c):
     """Clave canonica de una config (dict con los nombres de argparse).
 
@@ -71,7 +83,10 @@ def canon(c):
     nmode = '-' if not has_tab else ('linear' if arch == 'listwise' else c.get('numeric_mode', 'linear'))
     nbins = str(int(c.get('n_bins', 16))) if nmode == 'bins' else '-'
     catenc = '-' if (not has_tab or arch == 'listwise') else c.get('cat_encoding', 'embedding')
-    buckets = str(int(c.get('hash_buckets', 8))) if catenc == 'hashing' else '-'
+    pares = {} if catenc in ('-', 'onehot') else _catfe_pares(c, catenc)
+    catfe = '-' if catenc in ('-', 'onehot') else ','.join(f'{f}={pares[f]}' for f in sorted(pares))
+    buckets = str(int(c.get('hash_buckets', 8))) \
+        if (catenc == 'hashing' or 'hashing' in pares.values()) else '-'
     pool = c.get('pooling', 'cls') if arch == 'transformer' else '-'
     clspos = c.get('cls_position', 'first') if arch == 'transformer' else '-'
     if arch == 'transformer':
@@ -88,7 +103,7 @@ def canon(c):
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
         str(int(c.get('epochs', 60))), str(int(c.get('batch_size', 256))),
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
-        catenc, buckets, clspos, cart, extras, lwtext,
+        catenc, buckets, clspos, cart, extras, lwtext, catfe,
     ])
 
 
@@ -96,10 +111,10 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'numeric_mode', 'n_bins', 'd_model', 'n_head', 'n_layer', 'dropout',
               'pooling', 'positional', 'causal', 'pos_weight', 'epochs', 'batch_size',
               'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
-              'cart_aux', 'extra_features', 'listwise_texto']
+              'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
-                'cart_aux': 0.0, 'listwise_texto': False}
+                'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': ''}
 
 
 def cfg_dict(c):
@@ -112,6 +127,9 @@ def cfg_dict(c):
         if campo == 'extra_features' and v == ['all']:
             v = sorted(EXTRA_FEATURES)
         out[campo] = sorted(set(v))
+    pares = sorted(p.strip() for p in str(out.get('cat_feature_encoding') or '').split(',')
+                   if p.strip() and '=' in p)
+    out['cat_feature_encoding'] = ','.join(pares)
     return out
 
 
@@ -338,6 +356,13 @@ def controles(features):
                   f'<option value="linear">lineal</option><option value="bins">bins</option>'
                   f'</select></label>')
 
+    catpf = ''
+    for f in features['cat']:
+        opts = ''.join(f'<option value="{m}">{m}</option>'
+                       for m in ('embedding', 'target', 'ordinal', 'freq', 'hashing'))
+        catpf += (f'<label class="inl">{f["name"]} <select name="catpf" data-f="{f["name"]}">'
+                  f'<option value="">(global)</option>{opts}</select></label>')
+
     extras = ''
     for f, tipo in sorted(EXTRA_FEATURES.items()):
         extras += (f'<label class="feat" data-x="{f}"><input type="checkbox" name="extraf" '
@@ -378,6 +403,7 @@ def controles(features):
       <option value="embedding">embedding aprendido por columna (default)</option>
       <option value="onehot">one-hot crudo (solo MLP)</option>
       <option value="target">target encoding suavizado</option>
+      <option value="ordinal">ordinal (rango por BTR de train)</option>
       <option value="freq">frequency encoding</option>
       <option value="hashing">hashing trick (el "modular")</option>
     </select></label>
@@ -391,7 +417,10 @@ def controles(features):
     <label class="inl" id="nbins-wrap">n_bins <input type="number" id="n_bins" value="16" min="2" max="64"></label>
   </div>
   <div class="rowc" id="numpf-wrap" style="display:none">{numpf}</div>
-  <p class="hint">Los cinco encodings de categóricas están <b>implementados</b>
+  <details id="catpf-details" style="margin-top:8px"><summary class="hint" style="cursor:pointer">
+    encoding por feature categórica (override del global) — p. ej. solo listing_status en ordinal</summary>
+    <div class="rowc">{catpf}</div></details>
+  <p class="hint">Los seis encodings de categóricas están <b>implementados</b>
   (<code>--cat-encoding</code>, suite <code>feat_target</code>/<code>feat_freq</code>/<code>feat_hash8</code>/<code>mlp_onehot</code>).
   El default es <b>column embeddings</b> (una tabla por columna — el "columnar/modular" que te
   mencionaron es esta familia: hashing usa el módulo). <b>one-hot + capa lineal aprende la misma
@@ -557,6 +586,26 @@ DATA.features.num.forEach(f => X.numpf[f.name] = 'linear');
 
 const hasText = s => (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid'))
   || s.arch==='tower' || (s.arch==='listwise' && s.listwise_texto);
+const catfeRaw = str => {
+  const o = {};
+  for (const par of String(str||'').split(',')){
+    const p = par.trim();
+    if (p && p.includes('=')){ const i = p.indexOf('='); o[p.slice(0,i).trim()] = p.slice(i+1).trim(); }
+  }
+  return o;
+};
+const catfePares = (c, catencGlobal) => {
+  const pares = {};
+  for (const par of String(c.cat_feature_encoding||'').split(',')){
+    const p = par.trim();
+    if (p && p.includes('=')){
+      const i = p.indexOf('=');
+      const f = p.slice(0,i).trim(), m = p.slice(i+1).trim();
+      if (m !== catencGlobal) pares[f] = m;
+    }
+  }
+  return pares;
+};
 const hasTab  = s => !(s.arch==='transformer' && s.formulation==='text');
 
 // ---- clave canonica: ESPEJO EXACTO de canon() en panel.py ----
@@ -583,7 +632,11 @@ function canonKey(c){
   const nmode = !htab ? '-' : (arch==='listwise' ? 'linear' : (c.numeric_mode||'linear'));
   const nbins = nmode==='bins' ? String(Math.trunc(c.n_bins??16)) : '-';
   const catenc = (!htab || arch==='listwise') ? '-' : (c.cat_encoding||'embedding');
-  const buckets = catenc==='hashing' ? String(Math.trunc(c.hash_buckets??8)) : '-';
+  const pares = (catenc==='-'||catenc==='onehot') ? {} : catfePares(c, catenc);
+  const catfe = (catenc==='-'||catenc==='onehot') ? '-'
+    : Object.keys(pares).sort().map(f=>`${f}=${pares[f]}`).join(',');
+  const buckets = (catenc==='hashing' || Object.values(pares).includes('hashing'))
+    ? String(Math.trunc(c.hash_buckets??8)) : '-';
   const pool = arch==='transformer' ? (c.pooling||'cls') : '-';
   const clspos = arch==='transformer' ? (c.cls_position||'first') : '-';
   const posit = arch==='transformer' ? ((form==='text'||form==='hybrid'||c.positional) ? '1':'0') : '-';
@@ -596,7 +649,7 @@ function canonKey(c){
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
     ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
-    catenc, buckets, clspos, cart, extras, lwtext].join('|');
+    catenc, buckets, clspos, cart, extras, lwtext, catfe].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -623,6 +676,10 @@ function coerciones(s){
     out.push('listwise no implementa bins → usa lineal');
   if (s.arch==='listwise' && s.cat_encoding!=='embedding')
     out.push('listwise no implementa encodings alternativos → embedding');
+  if (s.arch==='listwise' && Object.keys(catfeRaw(s.cat_feature_encoding)).length)
+    out.push('listwise no implementa encoding por feature → ignorado');
+  if (s.cat_encoding==='onehot' && Object.keys(catfeRaw(s.cat_feature_encoding)).length)
+    out.push('onehot es global del MLP: los overrides por feature se ignoran');
   if (s.arch==='listwise' && Number(s.cart_aux)>0)
     out.push('cart-aux no implementado para listwise → ignorado');
   if (s.arch==='listwise' && s.extra_features.length)
@@ -665,7 +722,13 @@ function comando(s){
   if (hasText(s) && s.max_text_len!==256) p.push('--max-text-len', String(s.max_text_len));
   if (hasTab(s) && s.arch!=='listwise' && s.cat_encoding!=='embedding'){
     p.push('--cat-encoding', s.cat_encoding);
-    if (s.cat_encoding==='hashing' && s.hash_buckets!==8) p.push('--hash-buckets', String(s.hash_buckets));
+  }
+  if (hasTab(s) && s.arch!=='listwise' && s.cat_encoding!=='onehot'){
+    const pares = catfePares(s, s.cat_encoding||'embedding');
+    const fs = Object.keys(pares).sort();
+    if (fs.length) p.push('--cat-feature-encoding', fs.map(f=>`${f}=${pares[f]}`).join(','));
+    const usaHash = s.cat_encoding==='hashing' || Object.values(pares).includes('hashing');
+    if (usaHash && s.hash_buckets!==8) p.push('--hash-buckets', String(s.hash_buckets));
   }
   if (s.d_model!==32) p.push('--d-model', String(s.d_model));
   if (s.arch!=='mlp' && s.n_head!==4) p.push('--n-head', String(s.n_head));
@@ -844,7 +907,9 @@ function update(){
   $('pos-wrap').style.display = (S.arch==='transformer' && S.formulation==='features') ? '' : 'none';
   $('caus-wrap').style.display = (S.arch==='transformer'||S.arch==='tower') ? '' : 'none';
   $('nbins-wrap').style.display = S.numeric_mode==='bins' ? '' : 'none';
-  $('buckets-wrap').style.display = S.cat_encoding==='hashing' ? '' : 'none';
+  const catfeVals = Object.values(catfeRaw(S.cat_feature_encoding));
+  $('buckets-wrap').style.display = (S.cat_encoding==='hashing' || catfeVals.includes('hashing')) ? '' : 'none';
+  $('catpf-details').style.opacity = (S.arch==='listwise' || S.cat_encoding==='onehot' || !hasTab(S)) ? .45 : 1;
   $('cart-wrap').style.opacity = S.arch==='listwise' ? .45 : 1;
   $('numpf-wrap').style.display = X.numenc_mixto ? '' : 'none';
   $('k-wrap').style.display = X.val==='gkfold' ? '' : 'none';
@@ -911,6 +976,8 @@ function syncUI(){
   ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins',
    'hash_buckets','cart_aux'].forEach(k=>{ $(k).value = S[k]; });
   $('catenc').value = S.cat_encoding||'embedding';
+  const catfeObj = catfeRaw(S.cat_feature_encoding);
+  document.querySelectorAll('select[name=catpf]').forEach(sel=>{ sel.value = catfeObj[sel.dataset.f]||''; });
   $('numenc').value = X.numenc_mixto ? 'mixto' : S.numeric_mode;
   $('pool-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.pooling||'cls')));
   $('clspos-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.cls_position||'first')));
@@ -942,6 +1009,12 @@ $('pre-catalogo').onclick = () => { S.drop_features = []; S.strip_status = false
 $('pre-intrinseco').onclick = () => { S.drop_features = ['listing_status']; S.strip_status = true; syncUI(); update(); };
 $('strip').onchange = e => { S.strip_status = e.target.checked; update(); };
 $('catenc').onchange = e => { S.cat_encoding = e.target.value; update(); };
+document.querySelectorAll('select[name=catpf]').forEach(sel=>sel.onchange = () => {
+  const o = catfeRaw(S.cat_feature_encoding);
+  if (sel.value==='') delete o[sel.dataset.f]; else o[sel.dataset.f] = sel.value;
+  S.cat_feature_encoding = Object.keys(o).sort().map(f=>f+'='+o[f]).join(',');
+  update();
+});
 $('clspos-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.cls_position = b.dataset.v; syncUI(); update(); });
 $('cart_aux').onchange = e => { S.cart_aux = parseFloat(e.target.value||0); update(); };
 $('hash_buckets').onchange = e => { S.hash_buckets = parseInt(e.target.value||8,10); update(); };

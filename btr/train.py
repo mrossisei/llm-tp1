@@ -174,6 +174,10 @@ def run_name(args, seed):
     if args.cat_encoding != 'embedding':
         parts.append(f"cat{args.cat_encoding}"
                      + (str(args.hash_buckets) if args.cat_encoding == 'hashing' else ''))
+    if args.cat_feature_encoding:
+        pares = sorted(p.strip().replace('_', '').replace('=', '-')
+                       for p in args.cat_feature_encoding.split(',') if p.strip())
+        parts.append('cfe-' + '+'.join(pares))
     if args.strip_status:
         parts.append('stripstatus')
     if args.drop_features:
@@ -221,49 +225,82 @@ def drop_feature_columns(splits, drop, listwise=False, cat_features=None, num_fe
     return splits, keep_cat, keep_num
 
 
-def build_cat_tables(args, prep, train_df, keep_cat):
-    """Lookups por feature categorica para --cat-encoding target/freq/hashing.
+def parse_cat_feature_encoding(args, cats):
+    """'listing_status=ordinal,brand=hashing' -> dict validado {feature: modo}."""
+    pares = {}
+    for par in (p.strip() for p in args.cat_feature_encoding.split(',') if p.strip()):
+        if '=' not in par:
+            raise SystemExit(f'--cat-feature-encoding espera feature=modo, no: {par!r}')
+        f, m = (s.strip() for s in par.split('=', 1))
+        if f not in cats:
+            raise SystemExit(f'--cat-feature-encoding: feature desconocida o excluida: {f!r} '
+                             f'(disponibles: {cats})')
+        if m not in ('embedding', 'target', 'freq', 'ordinal', 'hashing'):
+            raise SystemExit(f'--cat-feature-encoding: modo invalido {m!r} '
+                             '(embedding/target/freq/ordinal/hashing; onehot es solo global MLP)')
+        pares[f] = m
+    return pares
+
+
+def build_cat_tables(modes, prep, train_df, keep_cat, hash_buckets):
+    """Lookups por feature categorica para los modos que los requieren.
 
     Ajustados SOLO con train, alineados a los indices de prep.vocabs (0 = UNK):
       target:  nivel -> media suavizada de bought: (sum + m*global) / (n + m), m=50
                (el suavizado amortigua niveles chicos y la auto-inclusion del target)
+      ordinal: nivel -> rango del nivel al ordenar por esa media suavizada,
+               normalizado a [0,1] (UNK -> 0.5). Conserva el ORDEN aprendible de
+               los datos y descarta las magnitudes; un orden semantico "a mano"
+               seria indefendible (EDA: el wording no predice el tier).
       freq:    nivel -> frecuencia relativa del nivel en train
       hashing: nivel -> md5(feature|valor) % B  (el "modulo" clasico del hashing trick)
+
+    Devuelve dict {posicion en la lista kept: tensor} o None si ninguna lo necesita.
     """
-    if args.cat_encoding in ('embedding', 'onehot'):
-        return None
     import hashlib
     m, global_mean = 50.0, float(train_df[TARGET].mean())
-    tablas = []
-    cats = prep.cats
-    for i in keep_cat:
-        f = cats[i]
+    tablas = {}
+    for pos, i in enumerate(keep_cat):
+        modo = modes[pos]
+        if modo == 'embedding':
+            continue
+        f = prep.cats[i]
         vocab = prep.vocabs[f]
-        if args.cat_encoding == 'hashing':
+        if modo == 'hashing':
             t = torch.zeros(len(vocab) + 1, dtype=torch.long)
             for valor, idx in vocab.items():
                 h = int(hashlib.md5(f'{f}|{valor}'.encode()).hexdigest(), 16)
-                t[idx] = h % args.hash_buckets
-        else:
+                t[idx] = h % hash_buckets
+        elif modo == 'freq':
+            t = torch.zeros(len(vocab) + 1)
+            for valor, idx in vocab.items():
+                t[idx] = float((train_df[f] == valor).sum()) / len(train_df)
+        else:  # target u ordinal: ambos parten de la media suavizada por nivel
             grp = train_df.groupby(f)[TARGET].agg(['sum', 'count'])
-            t = torch.full((len(vocab) + 1,),
-                           global_mean if args.cat_encoding == 'target' else 0.0)
+            suav = {}
             for valor, idx in vocab.items():
                 n = float(grp.loc[valor, 'count'])
-                if args.cat_encoding == 'target':
-                    t[idx] = (float(grp.loc[valor, 'sum']) + m * global_mean) / (n + m)
-                else:
-                    t[idx] = n / len(train_df)
-        tablas.append(t)
-    return tablas
+                suav[idx] = (float(grp.loc[valor, 'sum']) + m * global_mean) / (n + m)
+            t = torch.full((len(vocab) + 1,), global_mean if modo == 'target' else 0.5)
+            if modo == 'target':
+                for idx, v in suav.items():
+                    t[idx] = v
+            else:  # ordinal
+                orden = sorted(suav, key=suav.get)  # indices ordenados por BTR suavizado
+                k = max(len(orden) - 1, 1)
+                for rango, idx in enumerate(orden):
+                    t[idx] = rango / k
+        tablas[pos] = t
+    return tablas or None
 
 
 def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
-                max_products=None, cat_tables=None):
+                max_products=None, cat_tables=None, cat_modes=None):
     """Configura y construye la arquitectura pedida; devuelve (modelo, config para el ckpt)."""
     common = dict(d_model=args.d_model, dropout=args.dropout,
                   numeric_mode=args.numeric_mode, pos_weight=pos_weight)
-    encod = dict(cat_encoding=args.cat_encoding, hash_buckets=args.hash_buckets)
+    encod = dict(cat_encoding=args.cat_encoding, hash_buckets=args.hash_buckets,
+                 cat_modes=cat_modes)
     if args.arch == 'transformer':
         config = dict(formulation=args.formulation, cat_cardinalities=cardinalities,
                       n_numeric=n_numeric, char_vocab_size=prep.char_vocab_size,
@@ -304,6 +341,10 @@ def run(csv_path, seed, args, device):
                          'embedding (propuesta 6.1) — no hay experimento que correr')
     if args.cat_encoding != 'embedding' and listwise:
         raise SystemExit('cat-encoding alternativo no implementado para listwise')
+    if args.cat_feature_encoding and listwise:
+        raise SystemExit('cat-feature-encoding no implementado para listwise')
+    if args.cat_feature_encoding and args.cat_encoding == 'onehot':
+        raise SystemExit('cat-feature-encoding no se combina con onehot (que es global del MLP)')
     extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
     if extras == ('all',):
         extras = tuple(sorted(EXTRA_FEATURES))
@@ -345,9 +386,22 @@ def run(csv_path, seed, args, device):
         pos_weight = ((1 - y_flat.mean()) / y_flat.mean()).item()  # negativos/positivos
 
     cardinalities = [c for i, c in enumerate(prep.cat_cardinalities) if i in keep_cat]
-    cat_tables = None if listwise else build_cat_tables(args, prep, train_df, keep_cat)
+    if listwise:
+        cat_tables, cat_modes = None, None
+    else:
+        por_feature = parse_cat_feature_encoding(args, [prep.cats[i] for i in keep_cat])
+        cat_modes = [por_feature.get(prep.cats[i], args.cat_encoding) for i in keep_cat]
+        if args.cat_encoding == 'onehot':
+            cat_modes = None  # onehot es global del MLP, no entra al tokenizer
+            cat_tables = None
+        else:
+            cat_tables = build_cat_tables(cat_modes, prep, train_df, keep_cat,
+                                          args.hash_buckets)
+            if all(m == args.cat_encoding for m in cat_modes):
+                cat_modes = None  # sin overrides: config mas limpia
     model, model_config = build_model(args, prep, cardinalities, len(keep_num),
-                                      bin_edges, pos_weight, max_products, cat_tables)
+                                      bin_edges, pos_weight, max_products, cat_tables,
+                                      cat_modes)
     model = model.to(device)
     n_params = sum(p.numel() for p in model.parameters())
     name = run_name(args, seed)
@@ -417,10 +471,13 @@ def build_parser():
                         help=f'features descartados a reintroducir, separados por coma '
                              f'(o "all"): {sorted(EXTRA_FEATURES)}')
     parser.add_argument('--cat-encoding', default='embedding',
-                        choices=['embedding', 'onehot', 'target', 'freq', 'hashing'],
+                        choices=['embedding', 'onehot', 'target', 'freq', 'ordinal', 'hashing'],
                         help='encoding de las categoricas (onehot: solo --arch mlp)')
     parser.add_argument('--hash-buckets', type=int, default=8,
                         help='buckets del hashing trick (--cat-encoding hashing)')
+    parser.add_argument('--cat-feature-encoding', default='', metavar='F=MODO,...',
+                        help='override de encoding POR feature categorica, p. ej. '
+                             'listing_status=ordinal (el resto usa --cat-encoding)')
     parser.add_argument('--cls-position', default='first', choices=['first', 'last'],
                         help='last: CLS al final (necesario para que --causal tenga sentido)')
     parser.add_argument('--cart-aux', type=float, default=0.0, metavar='LAMBDA',

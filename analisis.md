@@ -149,11 +149,36 @@ lo nuevo).
 | `feat_cartaux01/03/05` | multi-task con `cart` como label auxiliar (Junior #2), barrido de λ |
 | `listwise_texto` | Junior #1: ¿listwise pierde por la idea o por no ver el texto? (torre de chars dentro del token de producto) |
 | `text_len96` | truncar a 96 chars (el título entero, donde vive la señal): atención 7× más barata, ¿mismo resultado? |
+| `hybrid_status_campo`, `tower_status_campo` | idea de Fer: el estado SOLO como campo, texto limpio — la celda que faltaba del 2×2 (§4.1) |
+| `feat_ordinal`, `feat_status_ordinal`, `feat_status_target` | idea de Fer: encoding del estado CON ORDEN — rango (ordinal) vs magnitud (target), global y solo para `listing_status` (§4.1) |
+
+### 4.1 El estado como campo separado (idea de Fer)
+
+Dos experimentos con una misma motivación: "separar el Best Seller del título y tratarlo como un
+campo, con un encoding que tenga sentido, incluso con orden".
+
+**(a) El 2×2 completo.** Con las corridas de la 1ª tanda, hybrid y tower tienen medidas 3 de las
+4 celdas de {token parseado sí/no} × {sufijo en el texto sí/no}: *full* (ambos canales,
+redundante), *sin_regex* (solo texto) e *intrinseco* (ninguno). Faltaba exactamente la
+separación prolija que propone Fer: **texto limpio + estado solo como campo**
+(`--strip-status` sin drop). Si `status_campo` > `full`, el sufijo dentro del texto era ruido
+puro que diluía la atención; si < `full`, los chars aportaban algo más que el token parseado.
+
+**(b) El orden del campo.** Un orden semántico a mano es indefendible acá — el EDA (§2.3) mostró
+que el wording NO predice el tier ("Highly Rated" suena igual que "Top Rated" y compra 50×
+menos). Los órdenes defendibles se derivan del BTR de train: **ordinal** = solo el rango del
+nivel (normalizado a [0,1]), **target** = rango + magnitud (media suavizada, m=50). Como los
+tiers tienen saltos enormes de magnitud (0.65 / 0.03 / 0.000), la hipótesis es
+target ≥ ordinal; y el embedding aprendido puede representar cualquiera de los dos, así que
+embedding ≥ target es lo esperable — el valor del experimento es medir cuánto se pierde al
+comprimir 21 niveles × 32 dims en UN escalar, y la eficiencia de parámetros. Implementado como
+encoding **por feature** (`--cat-feature-encoding listing_status=ordinal`): el resto de las
+categóricas queda en embedding, así el efecto se aísla.
 
 **En la máquina de la 3070** (tras `git pull`): las dos líneas de siempre —
 
 ```bash
-.venv/bin/python experimentos.py            # corre SOLO lo nuevo (~15 configs × 6 seeds)
+.venv/bin/python experimentos.py            # corre SOLO lo nuevo (~20 configs × 6 seeds)
 .venv/bin/python experimentos.py --resumen
 ```
 

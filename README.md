@@ -50,7 +50,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ### La suite de experimentos (correr en la máquina con GPU)
 
 Todas las arquitecturas y ablaciones del TP están codificadas en `experimentos.py`
-(39 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**
+(44 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**
 (resume automático: solo corre lo que falte):
 
 ```bash

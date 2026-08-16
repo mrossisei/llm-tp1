@@ -135,41 +135,63 @@ class FeatureTokenizer(nn.Module):
       'embedding': una tabla aprendida por columna (column embeddings, el default)
       'target':    nivel -> BTR promedio suavizado de train (cat_tables, float);
                    el escalar entra con una proyeccion afin como una numerica
+      'ordinal':   nivel -> RANGO del nivel al ordenar por ese BTR de train,
+                   normalizado a [0,1]: conserva el orden pero no las magnitudes
+                   (un orden "a mano" por semantica seria indefendible: el EDA
+                   mostro que el wording no predice el tier)
       'freq':      nivel -> frecuencia relativa en train; idem proyeccion afin
       'hashing':   nivel -> bucket = hash(valor) % B (cat_tables, long) y lookup
                    en una tabla de B entradas por feature ("truco del modulo":
                    util con miles de niveles; aca mide cuanto duele la colision)
+
+    cat_modes permite un encoding POR feature (p. ej. solo listing_status en
+    ordinal y el resto embedding): lista alineada a cat_cardinalities; si se
+    omite, todas usan cat_encoding. cat_tables: dict {posicion: tensor lookup}
+    para las que lo requieren.
     """
+
+    SCALAR_MODES = ('target', 'freq', 'ordinal')  # nivel -> escalar -> afin a d_model
 
     def __init__(self, cat_cardinalities, n_numeric, d_model,
                  numeric_mode='linear', bin_edges=None,
-                 cat_encoding='embedding', cat_tables=None, hash_buckets=8):
+                 cat_encoding='embedding', cat_tables=None, hash_buckets=8,
+                 cat_modes=None):
         super().__init__()
         self.numeric_mode = numeric_mode
         self.cat_encoding = cat_encoding
         self.n_cat = len(cat_cardinalities)
-        if cat_encoding == 'embedding':
+        modes = list(cat_modes) if cat_modes else [cat_encoding] * self.n_cat
+        assert len(modes) == self.n_cat, 'cat_modes debe alinear con cat_cardinalities'
+        self.cat_modes = modes
+        if all(m == 'embedding' for m in modes):
+            # camino identico al original: los checkpoints viejos cargan tal cual
             self.cat_embeddings = nn.ModuleList(
                 [nn.Embedding(card, d_model) for card in cat_cardinalities]
             )
-        elif cat_encoding in ('target', 'freq'):
-            if cat_tables is None:
-                raise ValueError(f"cat_encoding='{cat_encoding}' requiere cat_tables (lookups de train)")
-            for i, t in enumerate(cat_tables):
-                self.register_buffer(f'cat_table_{i}', t.float())
-            self.cat_val_weight = nn.Parameter(torch.empty(self.n_cat, d_model))
-            self.cat_val_bias = nn.Parameter(torch.zeros(self.n_cat, d_model))
-            nn.init.normal_(self.cat_val_weight, mean=0.0, std=0.02)
-        elif cat_encoding == 'hashing':
-            if cat_tables is None:
-                raise ValueError("cat_encoding='hashing' requiere cat_tables (indice -> bucket)")
-            for i, t in enumerate(cat_tables):
-                self.register_buffer(f'cat_table_{i}', t.long())
-            self.cat_embeddings = nn.ModuleList(
-                [nn.Embedding(hash_buckets, d_model) for _ in cat_cardinalities]
-            )
         else:
-            raise ValueError(f'cat_encoding desconocido: {cat_encoding}')
+            cat_tables = cat_tables or {}
+            embs = {}
+            self.cat_scalar_weight = nn.ParameterDict()
+            self.cat_scalar_bias = nn.ParameterDict()
+            for i, (m, card) in enumerate(zip(modes, cat_cardinalities)):
+                if m == 'embedding':
+                    embs[str(i)] = nn.Embedding(card, d_model)
+                elif m == 'hashing':
+                    if i not in cat_tables:
+                        raise ValueError(f'hashing en feature {i} requiere cat_tables[{i}]')
+                    self.register_buffer(f'cat_table_{i}', cat_tables[i].long())
+                    embs[str(i)] = nn.Embedding(hash_buckets, d_model)
+                elif m in self.SCALAR_MODES:
+                    if i not in cat_tables:
+                        raise ValueError(f'{m} en feature {i} requiere cat_tables[{i}]')
+                    self.register_buffer(f'cat_table_{i}', cat_tables[i].float())
+                    w = nn.Parameter(torch.empty(d_model))
+                    nn.init.normal_(w, mean=0.0, std=0.02)
+                    self.cat_scalar_weight[str(i)] = w
+                    self.cat_scalar_bias[str(i)] = nn.Parameter(torch.zeros(d_model))
+                else:
+                    raise ValueError(f'cat_encoding desconocido: {m}')
+            self.cat_embeddings = nn.ModuleDict(embs)
 
         if numeric_mode == 'linear':
             self.num_weight = nn.Parameter(torch.empty(n_numeric, d_model))
@@ -194,15 +216,18 @@ class FeatureTokenizer(nn.Module):
         return self.n_cat + n_num
 
     def _cat_tokens(self, x_cat):
-        if self.cat_encoding == 'embedding':
+        if isinstance(self.cat_embeddings, nn.ModuleList):  # todo embedding (camino original)
             return [emb(x_cat[:, i]) for i, emb in enumerate(self.cat_embeddings)]
-        if self.cat_encoding == 'hashing':
-            return [emb(getattr(self, f'cat_table_{i}')[x_cat[:, i]])
-                    for i, emb in enumerate(self.cat_embeddings)]
-        # target / freq: escalar por nivel -> afin a d_model
-        return [getattr(self, f'cat_table_{i}')[x_cat[:, i]].unsqueeze(-1)
-                * self.cat_val_weight[i] + self.cat_val_bias[i]
-                for i in range(self.n_cat)]
+        out = []
+        for i, m in enumerate(self.cat_modes):
+            if m == 'embedding':
+                out.append(self.cat_embeddings[str(i)](x_cat[:, i]))
+            elif m == 'hashing':
+                out.append(self.cat_embeddings[str(i)](getattr(self, f'cat_table_{i}')[x_cat[:, i]]))
+            else:  # target / freq / ordinal: escalar por nivel -> afin a d_model
+                v = getattr(self, f'cat_table_{i}')[x_cat[:, i]].unsqueeze(-1)
+                out.append(v * self.cat_scalar_weight[str(i)] + self.cat_scalar_bias[str(i)])
+        return out
 
     def forward(self, x_cat, x_num):
         # x_cat: (batch, n_cat) long; x_num: (batch, n_num) float
@@ -250,7 +275,7 @@ class BTRTransformer(nn.Module):
                  n_layer=2, dropout=0.1, causal=False, pooling='cls',
                  use_positional=False, numeric_mode='linear', bin_edges=None,
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
-                 cat_tables=None, hash_buckets=8, cart_lambda=0.0):
+                 cat_tables=None, hash_buckets=8, cart_lambda=0.0, cat_modes=None):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
@@ -272,7 +297,7 @@ class BTRTransformer(nn.Module):
         if formulation in ('features', 'hybrid'):
             self.tokenizer = FeatureTokenizer(
                 cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges,
-                cat_encoding, cat_tables, hash_buckets
+                cat_encoding, cat_tables, hash_buckets, cat_modes
             )
             seq_len += self.tokenizer.n_tokens
         self.char_embedding_table = None
@@ -388,7 +413,7 @@ class MLPBaseline(nn.Module):
     def __init__(self, cat_cardinalities, n_numeric, d_model=32, dropout=0.1,
                  numeric_mode='linear', bin_edges=None, pos_weight=None,
                  cat_encoding='embedding', cat_tables=None, hash_buckets=8,
-                 cart_lambda=0.0):
+                 cart_lambda=0.0, cat_modes=None):
         super().__init__()
         self.cart_lambda = cart_lambda
         self.onehot = cat_encoding == 'onehot'
@@ -405,7 +430,7 @@ class MLPBaseline(nn.Module):
         else:
             self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
                                               numeric_mode, bin_edges,
-                                              cat_encoding, cat_tables, hash_buckets)
+                                              cat_encoding, cat_tables, hash_buckets, cat_modes)
             in_dim = self.tokenizer.n_tokens * d_model
         self.net = nn.Sequential(
             nn.Linear(in_dim, 8 * d_model), nn.ReLU(), nn.Dropout(dropout),
@@ -453,7 +478,7 @@ class TextTowerModel(nn.Module):
                  d_model=32, n_head=4, n_layer=2, dropout=0.1, causal=False,
                  numeric_mode='linear', bin_edges=None, pos_weight=None,
                  cat_encoding='embedding', cat_tables=None, hash_buckets=8,
-                 cart_lambda=0.0):
+                 cart_lambda=0.0, cat_modes=None):
         super().__init__()
         self.cart_lambda = cart_lambda
         self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
@@ -468,7 +493,7 @@ class TextTowerModel(nn.Module):
 
         self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
                                           numeric_mode, bin_edges,
-                                          cat_encoding, cat_tables, hash_buckets)
+                                          cat_encoding, cat_tables, hash_buckets, cat_modes)
         head_in = d_model + self.tokenizer.n_tokens * d_model
         self.head = nn.Sequential(
             nn.Linear(head_in, 4 * d_model), nn.ReLU(), nn.Dropout(dropout),

@@ -198,6 +198,29 @@ requirements). **15 configs nuevas en la suite** (grilla campeón, causal_last, 
 extras, 3 λ de cart, listwise_texto, text_len96); protocolo nuevo: 6 seeds, tabulares con
 paciencia 20. El panel y el zoo quedaron actualizados con los resultados y los ejes nuevos.
 
+## 16/08 — El estado como campo separado y encodings con orden (idea de Fer)
+
+**Pedido.** Separar el "Best Seller" del título al analizarlo y ponerlo como un campo más, con
+el encoding apropiado — "incluso asignando una especie de orden, pero que hay que pensarlo bien".
+
+**Análisis.** El campo ya existía (`listing_status`, parseado por regex desde el día 1). Lo
+genuinamente nuevo del pedido son dos cosas: (a) que al analizar el TEXTO el sufijo no viaje
+duplicado adentro del título — con las corridas de la 1ª tanda esto completa un **2×2 limpio**
+{token parseado sí/no} × {sufijo en el texto sí/no} del que ya teníamos 3 celdas (full,
+sin_regex, intrinseco); y (b) el orden: uno **semántico a mano es indefendible** en este dataset
+(EDA §2.3: "Highly Rated" suena igual que "Top Rated" y compra 50× menos — el wording no predice
+el tier), pero sí hay dos órdenes defendibles derivados del BTR de train: **ordinal** (solo el
+rango, normalizado) y **target** (rango + magnitud). Hipótesis: target ≥ ordinal (los tiers
+tienen saltos de magnitud enormes) y embedding ≥ target (el embedding puede aprender cualquiera
+de los dos); el experimento mide cuánto cuesta comprimir el campo a UN escalar.
+
+**Hecho.** `--cat-encoding ordinal` (nuevo modo) y `--cat-feature-encoding feature=modo` para
+aplicar un encoding SOLO a un campo (p. ej. `listing_status=ordinal`, el resto embedding) —
+esto además volvió real el eje "encoding por feature categórica" del panel. 5 configs nuevas:
+`hybrid_status_campo` y `tower_status_campo` (la celda faltante del 2×2: texto limpio + campo),
+`feat_ordinal`, `feat_status_ordinal`, `feat_status_target`. Round-trip de checkpoints con
+encoding mixto verificado (ROC idéntico al recargar). → `analisis.md §4.1`
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
