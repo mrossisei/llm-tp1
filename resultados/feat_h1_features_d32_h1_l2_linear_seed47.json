@@ -1,0 +1,153 @@
+{
+  "nombre": "feat_h1_features_d32_h1_l2_linear_seed47",
+  "fecha": "2026-08-16T16:32:32+00:00",
+  "seed": 47,
+  "device": "cuda",
+  "n_parametros": 28289,
+  "config": {
+    "csv": "C:\\Users\\Matias\\LLM\\llm-tp1\\supermarket_products.csv",
+    "seeds": 1,
+    "seed_start": 47,
+    "device": "auto",
+    "tag": "feat_h1",
+    "arch": "transformer",
+    "formulation": "features",
+    "max_text_len": 256,
+    "strip_status": false,
+    "drop_features": "",
+    "d_model": 32,
+    "n_head": 1,
+    "n_layer": 2,
+    "dropout": 0.1,
+    "epochs": 60,
+    "batch_size": 256,
+    "lr": 0.001,
+    "patience": 8,
+    "numeric_mode": "linear",
+    "n_bins": 16,
+    "pooling": "cls",
+    "positional": false,
+    "causal": false,
+    "pos_weight": false
+  },
+  "historial": [
+    {
+      "epoch": 0,
+      "train_loss": 0.4021497666835785,
+      "train_roc_auc": 0.5311096374889478,
+      "train_pr_auc": 0.14814888824282127,
+      "val_loss": 0.3945253789424896,
+      "val_roc_auc": 0.510643390425999,
+      "val_pr_auc": 0.1235624256179701
+    },
+    {
+      "epoch": 1,
+      "train_loss": 0.3865980803966522,
+      "train_roc_auc": 0.5409993921308577,
+      "train_pr_auc": 0.15135008813724599,
+      "val_loss": 0.3766056001186371,
+      "val_roc_auc": 0.5238603425559947,
+      "val_pr_auc": 0.131065466424878
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.3863369822502136,
+      "train_roc_auc": 0.7026914787798408,
+      "train_pr_auc": 0.24823960966418848,
+      "val_loss": 0.375922828912735,
+      "val_roc_auc": 0.7228963548528766,
+      "val_pr_auc": 0.23617378835993136
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.26693031191825867,
+      "train_roc_auc": 0.9492495579133511,
+      "train_pr_auc": 0.7164563723673583,
+      "val_loss": 0.26425278186798096,
+      "val_roc_auc": 0.9569653052261747,
+      "val_pr_auc": 0.7306222739276313
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.18999144434928894,
+      "train_roc_auc": 0.9338110632183909,
+      "train_pr_auc": 0.6235047478447132,
+      "val_loss": 0.18843162059783936,
+      "val_roc_auc": 0.9432872200263503,
+      "val_pr_auc": 0.6641105598050642
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.16788022220134735,
+      "train_roc_auc": 0.9411795424403182,
+      "train_pr_auc": 0.6398652295482934,
+      "val_loss": 0.16554085910320282,
+      "val_roc_auc": 0.949187527448397,
+      "val_pr_auc": 0.6829523047946966
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.16123810410499573,
+      "train_roc_auc": 0.9418653293545535,
+      "train_pr_auc": 0.6581286384360115,
+      "val_loss": 0.15766380727291107,
+      "val_roc_auc": 0.948746157224418,
+      "val_pr_auc": 0.6855272491744728
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.15951484441757202,
+      "train_roc_auc": 0.9503669319186561,
+      "train_pr_auc": 0.6910869818327819,
+      "val_loss": 0.15606878697872162,
+      "val_roc_auc": 0.9556082564778217,
+      "val_pr_auc": 0.684032902430288
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.15817612409591675,
+      "train_roc_auc": 0.9560010499557914,
+      "train_pr_auc": 0.7233605937643566,
+      "val_loss": 0.1545184999704361,
+      "val_roc_auc": 0.9600087834870444,
+      "val_pr_auc": 0.6897772359083989
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.15535025298595428,
+      "train_roc_auc": 0.9590821175950486,
+      "train_pr_auc": 0.7557954620624705,
+      "val_loss": 0.15200935304164886,
+      "val_roc_auc": 0.9580281071585418,
+      "val_pr_auc": 0.7109378841319867
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.16181275248527527,
+      "train_roc_auc": 0.9510104442970823,
+      "train_pr_auc": 0.7373989597259258,
+      "val_loss": 0.16014401614665985,
+      "val_roc_auc": 0.9503952569169959,
+      "val_pr_auc": 0.6681364996822801
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.15151770412921906,
+      "train_roc_auc": 0.9504594938107869,
+      "train_pr_auc": 0.7418775309842565,
+      "val_loss": 0.1486077457666397,
+      "val_roc_auc": 0.9531005709266577,
+      "val_pr_auc": 0.6843675778427918
+    }
+  ],
+  "val": {
+    "loss": 0.26425278186798096,
+    "roc_auc": 0.9569653052261747,
+    "pr_auc": 0.7306222739276313
+  },
+  "test": {
+    "loss": 0.25918397307395935,
+    "roc_auc": 0.9551646961514134,
+    "pr_auc": 0.7423192020664814
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "nombre": "hybrid_intrinseco_hybrid_d32_h4_l2_linear_stripstatus_sin-listingstatus_seed43",
+  "fecha": "2026-08-16T13:18:31+00:00",
+  "seed": 43,
+  "device": "cuda",
+  "n_parametros": 38369,
+  "config": {
+    "csv": "C:\\Users\\Matias\\LLM\\llm-tp1\\supermarket_products.csv",
+    "seeds": 1,
+    "seed_start": 43,
+    "device": "auto",
+    "tag": "hybrid_intrinseco",
+    "arch": "transformer",
+    "formulation": "hybrid",
+    "max_text_len": 256,
+    "strip_status": true,
+    "drop_features": "listing_status",
+    "d_model": 32,
+    "n_head": 4,
+    "n_layer": 2,
+    "dropout": 0.1,
+    "epochs": 60,
+    "batch_size": 256,
+    "lr": 0.001,
+    "patience": 8,
+    "numeric_mode": "linear",
+    "n_bins": 16,
+    "pooling": "cls",
+    "positional": false,
+    "causal": false,
+    "pos_weight": false
+  },
+  "historial": [
+    {
+      "epoch": 0,
+      "train_loss": 0.4191007912158966,
+      "train_roc_auc": 0.5108536715906657,
+      "train_pr_auc": 0.14305883494456806,
+      "val_loss": 0.40484419465065,
+      "val_roc_auc": 0.4520857230560447,
+      "val_pr_auc": 0.1077336295567146
+    },
+    {
+      "epoch": 1,
+      "train_loss": 0.39625516533851624,
+      "train_roc_auc": 0.5010177156925713,
+      "train_pr_auc": 0.13698854458183732,
+      "val_loss": 0.3763768970966339,
+      "val_roc_auc": 0.478983230205018,
+      "val_pr_auc": 0.1136488440760115
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.3960869312286377,
+      "train_roc_auc": 0.5314488332262899,
+      "train_pr_auc": 0.1423783380819338,
+      "val_loss": 0.3743882179260254,
+      "val_roc_auc": 0.48431668740003553,
+      "val_pr_auc": 0.11646945379541801
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.39578115940093994,
+      "train_roc_auc": 0.5621290944123314,
+      "train_pr_auc": 0.15976288402842984,
+      "val_loss": 0.3747943937778473,
+      "val_roc_auc": 0.5449032263276087,
+      "val_pr_auc": 0.14562488542357116
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.3958021402359009,
+      "train_roc_auc": 0.581624384500107,
+      "train_pr_auc": 0.1624433001504949,
+      "val_loss": 0.3746940493583679,
+      "val_roc_auc": 0.5196919883031488,
+      "val_pr_auc": 0.12519746654333844
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.39592304825782776,
+      "train_roc_auc": 0.5788570434596447,
+      "train_pr_auc": 0.16487107939121032,
+      "val_loss": 0.37448567152023315,
+      "val_roc_auc": 0.5269257799247137,
+      "val_pr_auc": 0.1283741975862251
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.3959169089794159,
+      "train_roc_auc": 0.4465853136373368,
+      "train_pr_auc": 0.11432296331135591,
+      "val_loss": 0.37450259923934937,
+      "val_roc_auc": 0.4810047336704526,
+      "val_pr_auc": 0.11255081781395535
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.39589619636535645,
+      "train_roc_auc": 0.5059607150503105,
+      "train_pr_auc": 0.13485346542920884,
+      "val_loss": 0.3745168149471283,
+      "val_roc_auc": 0.5233634101814304,
+      "val_pr_auc": 0.12651842333265242
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.39585065841674805,
+      "train_roc_auc": 0.5540197495183043,
+      "train_pr_auc": 0.16087747090857654,
+      "val_loss": 0.3745778501033783,
+      "val_roc_auc": 0.5590335557458358,
+      "val_pr_auc": 0.13985866489156348
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.3957897126674652,
+      "train_roc_auc": 0.5728781310211946,
+      "train_pr_auc": 0.16908479362979947,
+      "val_loss": 0.3747233748435974,
+      "val_roc_auc": 0.5621476000452365,
+      "val_pr_auc": 0.14055619264248745
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.3959808647632599,
+      "train_roc_auc": 0.5561076321986727,
+      "train_pr_auc": 0.15902081458315745,
+      "val_loss": 0.37443989515304565,
+      "val_roc_auc": 0.5031625119149554,
+      "val_pr_auc": 0.12098421848320054
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.3957926630973816,
+      "train_roc_auc": 0.5895819952900878,
+      "train_pr_auc": 0.18323905361322684,
+      "val_loss": 0.3747003972530365,
+      "val_roc_auc": 0.5535971048677641,
+      "val_pr_auc": 0.1379399995300265
+    }
+  ],
+  "val": {
+    "loss": 0.3747943937778473,
+    "roc_auc": 0.5449032263276087,
+    "pr_auc": 0.14562488542357116
+  },
+  "test": {
+    "loss": 0.3651389181613922,
+    "roc_auc": 0.5321451926588363,
+    "pr_auc": 0.1330776616336833
+  }
+}
