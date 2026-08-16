@@ -1,0 +1,4 @@
+# torch se instala aparte con el index de CPU (ver README)
+pandas
+numpy
+scikit-learn
