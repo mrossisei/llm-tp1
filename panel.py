@@ -25,7 +25,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from btr.data import (CAT_FEATURES, EXTRA_FEATURES, NUM_FEATURES, Preprocessor,
+from btr.data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, NUM_FEATURES, Preprocessor,
                       load_dataset, split_by_query)
 from btr.train import build_parser
 from experimentos import EXPERIMENTOS
@@ -59,8 +59,8 @@ def canon(c):
     arch = c['arch']
     form = c.get('formulation', 'features') if arch == 'transformer' else '-'
     lwtext = ('1' if c.get('listwise_texto') else '0') if arch == 'listwise' else '-'
-    has_text = ((arch == 'transformer' and form in ('text', 'hybrid')) or arch == 'tower'
-                or lwtext == '1')
+    has_text = ((arch == 'transformer' and form in ('text', 'hybrid', 'fusion'))
+                or arch == 'tower' or lwtext == '1')
     has_tab = not (arch == 'transformer' and form == 'text')
     if has_tab:
         drop = c.get('drop_features', '') or ''
@@ -74,7 +74,7 @@ def canon(c):
         if isinstance(extra, str):
             extra = [f.strip() for f in extra.split(',') if f.strip()]
         if extra == ['all']:
-            extra = sorted(EXTRA_FEATURES)
+            extra = sorted(EXTRA_ALL)
         extras = ','.join(sorted(set(extra)))
     else:
         extras = '-'
@@ -96,6 +96,9 @@ def canon(c):
     caus = ('1' if c.get('causal') else '0') if arch in ('transformer', 'tower') else '-'
     posw = '1' if c.get('pos_weight') else '0'
     cart = '-' if arch == 'listwise' else ffloat(c.get('cart_aux', 0) or 0)
+    ttok = '-' if not has_text else ('chars' if arch == 'listwise'
+                                     else c.get('text_tokens', 'chars'))
+    w2v = '-' if not has_text else ('1' if (ttok == 'words' and c.get('w2v_init')) else '0')
     nh = '-' if arch == 'mlp' else str(int(c.get('n_head', 4)))
     nl = '-' if arch == 'mlp' else str(int(c.get('n_layer', 2)))
     return '|'.join([
@@ -103,7 +106,7 @@ def canon(c):
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
         str(int(c.get('epochs', 60))), str(int(c.get('batch_size', 256))),
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
-        catenc, buckets, clspos, cart, extras, lwtext, catfe,
+        catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
     ])
 
 
@@ -111,10 +114,12 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'numeric_mode', 'n_bins', 'd_model', 'n_head', 'n_layer', 'dropout',
               'pooling', 'positional', 'causal', 'pos_weight', 'epochs', 'batch_size',
               'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
-              'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding']
+              'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding',
+              'text_tokens', 'w2v_init']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
-                'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': ''}
+                'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
+                'text_tokens': 'chars', 'w2v_init': False}
 
 
 def cfg_dict(c):
@@ -125,7 +130,7 @@ def cfg_dict(c):
         if isinstance(v, str):
             v = [f.strip() for f in v.split(',') if f.strip()]
         if campo == 'extra_features' and v == ['all']:
-            v = sorted(EXTRA_FEATURES)
+            v = sorted(EXTRA_ALL)
         out[campo] = sorted(set(v))
     pares = sorted(p.strip() for p in str(out.get('cat_feature_encoding') or '').split(',')
                    if p.strip() and '=' in p)
@@ -323,6 +328,7 @@ ZOO = 'https://claude.ai/code/artifact/1464165c-3e4a-4c56-81f0-e8d467b35533'
 
 ARCHS = [
     ('feat', 'A · Transformer tabular', 'cada feature es un token · atención entre features'),
+    ('fusion', '5B · Fusión', 'el resumen del texto como token 15 · cruce sin dilución'),
     ('mlp', 'MLP (control)', 'mismos embeddings, sin atención'),
     ('text', 'C · Transformer de texto', 'cada carácter es un token · la demo adaptada'),
     ('hybrid', 'A+C · Híbrido', 'features + chars en una secuencia · atención cruzada'),
@@ -417,6 +423,13 @@ def controles(features):
     <label class="inl" id="nbins-wrap">n_bins <input type="number" id="n_bins" value="16" min="2" max="64"></label>
   </div>
   <div class="rowc" id="numpf-wrap" style="display:none">{numpf}</div>
+  <div class="rowc" id="texttok-wrap">
+    <label class="inl">texto: tokens <span class="seg" id="ttok-seg">
+      <button type="button" data-v="chars" class="on">caracteres</button>
+      <button type="button" data-v="words">palabras</button></span></label>
+    <label class="inl" id="w2v-wrap"><input type="checkbox" id="w2v_init">
+      inicializar con word2vec (skipgram sobre train)</label>
+  </div>
   <details id="catpf-details" style="margin-top:8px"><summary class="hint" style="cursor:pointer">
     encoding por feature categórica (override del global) — p. ej. solo listing_status en ordinal</summary>
     <div class="rowc">{catpf}</div></details>
@@ -574,7 +587,7 @@ const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 const ffloat = x => { let s = Number(x).toFixed(10); s = s.replace(/0+$/,'').replace(/\.$/,''); return s; };
 const ARCH2CODE = {feat:{arch:'transformer',formulation:'features'}, mlp:{arch:'mlp'},
   text:{arch:'transformer',formulation:'text'}, hybrid:{arch:'transformer',formulation:'hybrid'},
-  tower:{arch:'tower'}, listwise:{arch:'listwise'}};
+  fusion:{arch:'transformer',formulation:'fusion'}, tower:{arch:'tower'}, listwise:{arch:'listwise'}};
 const ALL_FEATS = DATA.features.cat.map(f=>f.name).concat(DATA.features.num.map(f=>f.name));
 
 // ---- estado (mismos nombres que argparse en btr/train.py) ----
@@ -584,7 +597,8 @@ S.extra_features = (S.extra_features||[]).slice();
 const X = {catenc:'embedding', numenc_mixto:false, numpf:{}, val:'holdout', kfold:5, seeds:3, mq:false};
 DATA.features.num.forEach(f => X.numpf[f.name] = 'linear');
 
-const hasText = s => (s.arch==='transformer' && (s.formulation==='text'||s.formulation==='hybrid'))
+const hasText = s => (s.arch==='transformer' &&
+  (s.formulation==='text'||s.formulation==='hybrid'||s.formulation==='fusion'))
   || s.arch==='tower' || (s.arch==='listwise' && s.listwise_texto);
 const catfeRaw = str => {
   const o = {};
@@ -613,8 +627,8 @@ function canonKey(c){
   const arch = c.arch;
   const form = arch==='transformer' ? (c.formulation||'features') : '-';
   const lwtext = arch==='listwise' ? (c.listwise_texto ? '1':'0') : '-';
-  const htext = (arch==='transformer' && (form==='text'||form==='hybrid')) || arch==='tower'
-    || lwtext==='1';
+  const htext = (arch==='transformer' && (form==='text'||form==='hybrid'||form==='fusion'))
+    || arch==='tower' || lwtext==='1';
   const htab = !(arch==='transformer' && form==='text');
   const lista = v => {
     if (typeof v === 'string') v = v.split(',').map(s=>s.trim()).filter(Boolean);
@@ -643,13 +657,15 @@ function canonKey(c){
   const caus = (arch==='transformer'||arch==='tower') ? (c.causal ? '1':'0') : '-';
   const posw = c.pos_weight ? '1':'0';
   const cart = arch==='listwise' ? '-' : ffloat(c.cart_aux||0);
+  const ttok = !htext ? '-' : (arch==='listwise' ? 'chars' : (c.text_tokens||'chars'));
+  const w2v = !htext ? '-' : ((ttok==='words' && c.w2v_init) ? '1' : '0');
   const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
   const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
     ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
-    catenc, buckets, clspos, cart, extras, lwtext, catfe].join('|');
+    catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -689,6 +705,12 @@ function coerciones(s){
   if (s.arch==='mlp') out.push('MLP: cabezas y bloques no aplican (no hay atención)');
   if (s.arch==='listwise') out.push('listwise: sin positional (no hay orden de página) y batch en queries');
   if (s.arch==='tower') out.push('tower: la torre lleva su PE propio; pooling fijo [CLS] del texto');
+  if (s.w2v_init && s.text_tokens!=='words')
+    out.push('w2v-init requiere tokens de palabras — ignorado con caracteres');
+  if (s.arch==='listwise' && s.listwise_texto && s.text_tokens==='words')
+    out.push('listwise-texto es char-level (words no implementado ahí) → chars');
+  if (s.arch==='transformer' && s.formulation==='fusion')
+    out.push('fusion: el texto entra como UN token-resumen (torre interna); sin PE (sigue siendo un set)');
   return out;
 }
 
@@ -720,6 +742,10 @@ function comando(s){
     p.push('--extra-features', Array.from(new Set(s.extra_features)).sort().join(','));
   if (hasText(s) && s.strip_status) p.push('--strip-status');
   if (hasText(s) && s.max_text_len!==256) p.push('--max-text-len', String(s.max_text_len));
+  if (hasText(s) && s.arch!=='listwise' && s.text_tokens==='words'){
+    p.push('--text-tokens','words');
+    if (s.w2v_init) p.push('--w2v-init');
+  }
   if (hasTab(s) && s.arch!=='listwise' && s.cat_encoding!=='embedding'){
     p.push('--cat-encoding', s.cat_encoding);
   }
@@ -911,6 +937,9 @@ function update(){
   $('buckets-wrap').style.display = (S.cat_encoding==='hashing' || catfeVals.includes('hashing')) ? '' : 'none';
   $('catpf-details').style.opacity = (S.arch==='listwise' || S.cat_encoding==='onehot' || !hasTab(S)) ? .45 : 1;
   $('cart-wrap').style.opacity = S.arch==='listwise' ? .45 : 1;
+  $('texttok-wrap').style.display = (hasText(S) && S.arch!=='listwise') ? '' : 'none';
+  $('w2v-wrap').style.opacity = S.text_tokens==='words' ? 1 : .45;
+  $('w2v_init').disabled = S.text_tokens!=='words';
   $('numpf-wrap').style.display = X.numenc_mixto ? '' : 'none';
   $('k-wrap').style.display = X.val==='gkfold' ? '' : 'none';
   const archHints = {
@@ -919,7 +948,8 @@ function update(){
     tower:'La mejor textual (0.775) — pero su embedding único NO recupera la señal del regex (sin_regex: −0.04).',
     text:'La familia cara. 0.652: redescubre el tier desde los chars (>> techo intrínseco 0.16) pero no alcanza al tabular. Ojo: paciencia 20 acá EMPEORA test.',
     hybrid:'0.705: los 256 chars diluyen lo tabular. Pero sin_regex ≈ full: recupera desde el texto lo que saca la regex.',
-    feat:'La base: 0.794 test PR (6 seeds). Mejor global: paciencia 20 + 1 cabeza = 0.816 (pac20_feat_h1).'};
+    feat:'La base: 0.794. Campeón global: ordinal + paciencia 20 = 0.824 (feat_ordinal); con embedding, 0.816 (pac20_feat_h1).',
+    fusion:'5B de la revisión externa: la torre resume el texto a UN token de la secuencia tabular — cruce texto↔features sin la dilución medida del híbrido (3ª tanda).'};
   const aid = Object.entries(ARCH2CODE).find(([id,c])=>c.arch===S.arch &&
     (c.arch!=='transformer'||c.formulation===S.formulation))[0];
   $('arch-hint').textContent = archHints[aid]||'';
@@ -980,6 +1010,8 @@ function syncUI(){
   document.querySelectorAll('select[name=catpf]').forEach(sel=>{ sel.value = catfeObj[sel.dataset.f]||''; });
   $('numenc').value = X.numenc_mixto ? 'mixto' : S.numeric_mode;
   $('pool-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.pooling||'cls')));
+  $('ttok-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.text_tokens||'chars')));
+  $('w2v_init').checked = !!S.w2v_init;
   $('clspos-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.cls_position||'first')));
   $('positional').checked = !!S.positional; $('causal').checked = !!S.causal;
   $('pos_weight').checked = !!S.pos_weight;
@@ -1017,6 +1049,8 @@ document.querySelectorAll('select[name=catpf]').forEach(sel=>sel.onchange = () =
 });
 $('clspos-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.cls_position = b.dataset.v; syncUI(); update(); });
 $('cart_aux').onchange = e => { S.cart_aux = parseFloat(e.target.value||0); update(); };
+$('ttok-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.text_tokens = b.dataset.v; syncUI(); update(); });
+$('w2v_init').onchange = e => { S.w2v_init = e.target.checked; update(); };
 $('hash_buckets').onchange = e => { S.hash_buckets = parseInt(e.target.value||8,10); update(); };
 $('numenc').onchange = e => {
   X.numenc_mixto = e.target.value==='mixto';

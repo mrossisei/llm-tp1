@@ -17,6 +17,7 @@ Implementa las decisiones de propuesta.md (secciones 2 y 6):
   (el titulo entra entero: el sufijo de estado esta al final y mide <= 81 chars).
 """
 
+import re as _re_mod
 from dataclasses import dataclass
 
 import numpy as np
@@ -38,13 +39,24 @@ EXTRA_FEATURES = {          # nombre -> tipo ('num'|'cat'); derivadas en load_da
     'pkg_qty': 'num',       # numero de package_size ("24 oz" -> 24)
     'pkg_unit': 'cat',      # unidad de package_size (oz / ct / ...)
     'n_ingredients': 'num', # cantidad de items en ingredients
+    'hour': 'num',          # hora del timestamp (EDA: ruido; verificable con feat_tiempo)
+    'dow': 'cat',           # dia de la semana del timestamp
 }
+# '--extra-features all' significa ESTOS cuatro, congelado: las corridas ya hechas
+# guardaron el literal 'all' en su config y su clave canonica no debe cambiar
+# aunque EXTRA_FEATURES crezca. Los extras nuevos se piden por nombre.
+EXTRA_ALL = ('n_ingredients', 'pkg_qty', 'pkg_unit', 'volume_in3')
 LOG_FEATURES = ['price', 'net_weight_oz', 'volume_in3', 'pkg_qty']  # sesgadas -> log1p antes del z-score
 TARGET = 'bought'
 TARGET_AUX = 'cart'  # target auxiliar para multi-task (--cart-aux); NUNCA es input
 PAD_IDX, UNK_IDX = 0, 1  # reservados del vocabulario de caracteres
 MAX_TEXT_LEN = 256       # p95 de title+description = 243 chars
 STATUS_SUFFIX_RE = r'\s*\([^)]+\)$'  # "(Best Seller)" etc. al final del titulo
+
+
+def _palabras(texto):
+    """Tokenizacion word-level: minusculas, secuencias alfanumericas."""
+    return _re_mod.findall(r'[a-z0-9]+', texto.lower())
 
 
 def strip_status_from_text(title, description):
@@ -75,6 +87,9 @@ def load_dataset(csv_path):
     df['pkg_qty'] = pkg[0].astype(float)
     df['pkg_unit'] = pkg[1].fillna('None')
     df['n_ingredients'] = df['ingredients'].str.count(',') + 1
+    ts = pd.to_datetime(df['timestamp'], errors='coerce', format='mixed')
+    df['hour'] = ts.dt.hour.fillna(0).astype(float)
+    df['dow'] = ts.dt.dayofweek.fillna(0).astype(int).astype(str)
     return df
 
 
@@ -107,6 +122,7 @@ class Preprocessor:
     char_vocab: dict      # caracter -> indice (PAD=0, UNK=1)
     max_text_len: int
     strip_status: bool = False  # True -> texto sin sufijo/oración de estado (modelo intrínseco)
+    text_tokens: str = 'chars'  # 'chars' (la demo) | 'words' (tokenización word-level)
     cat_features: list = None   # None -> CAT_FEATURES (instancias viejas)
     num_features: list = None   # None -> NUM_FEATURES
     include_cart: bool = False  # True -> y de shape (N, 2): [bought, cart] (--cart-aux)
@@ -121,7 +137,7 @@ class Preprocessor:
 
     @classmethod
     def fit(cls, train_df, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False):
+            extra_features=(), include_cart=False, text_tokens='chars'):
         desconocidos = set(extra_features) - set(EXTRA_FEATURES)
         if desconocidos:
             raise ValueError(f'extra_features desconocidos: {sorted(desconocidos)} '
@@ -133,11 +149,19 @@ class Preprocessor:
             for f in cats
         }
         num = cls._numeric_raw_static(train_df, nums)
-        chars = sorted(set('\n'.join(train_df['title']) + '\n'.join(train_df['description'])))
-        char_vocab = {c: i + 2 for i, c in enumerate(chars)}  # 0=PAD, 1=UNK
+        if text_tokens == 'words':
+            # vocabulario de PALABRAS de train (5b de la revision externa): minusculas,
+            # solo alfanumericos — "(Best Seller)" sobrevive como 'best','seller'
+            palabras = sorted({w for t, d in zip(train_df['title'], train_df['description'])
+                               for w in _palabras(t + ' ' + d)})
+            char_vocab = {w: i + 2 for i, w in enumerate(palabras)}  # 0=PAD, 1=UNK
+        else:
+            chars = sorted(set('\n'.join(train_df['title']) + '\n'.join(train_df['description'])))
+            char_vocab = {c: i + 2 for i, c in enumerate(chars)}  # 0=PAD, 1=UNK
         return cls(vocabs=vocabs, num_mean=num.mean(axis=0), num_std=num.std(axis=0) + 1e-8,
                    char_vocab=char_vocab, max_text_len=max_text_len, strip_status=strip_status,
-                   cat_features=cats, num_features=nums, include_cart=include_cart)
+                   cat_features=cats, num_features=nums, include_cart=include_cart,
+                   text_tokens=text_tokens)
 
     @property
     def char_vocab_size(self):
@@ -185,11 +209,14 @@ class Preprocessor:
         )
 
     def _encode_text(self, title, description):
-        """title + '\n' + description -> indices de caracteres, truncado y con PAD al final."""
+        """title + description -> indices (de chars o de palabras), truncado, PAD al final."""
         if self.strip_status:
             title, description = strip_status_from_text(title, description)
-        text = (title + '\n' + description)[:self.max_text_len]
-        ids = [self.char_vocab.get(c, UNK_IDX) for c in text]
+        if getattr(self, 'text_tokens', 'chars') == 'words':
+            toks = _palabras(title + ' ' + description)[:self.max_text_len]
+        else:
+            toks = (title + '\n' + description)[:self.max_text_len]
+        ids = [self.char_vocab.get(t, UNK_IDX) for t in toks]
         return np.array(ids + [PAD_IDX] * (self.max_text_len - len(ids)), dtype=np.int64)
 
     def bin_edges(self, train_df, n_bins=16):
@@ -201,12 +228,13 @@ class Preprocessor:
 
 
 def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False):
+            extra_features=(), include_cart=False, text_tokens='chars'):
     """Pipeline completo: carga -> split por query -> fit en train -> tensores."""
     df = load_dataset(csv_path)
     train_df, val_df, test_df = split_by_query(df, seed=seed)
     prep = Preprocessor.fit(train_df, max_text_len=max_text_len, strip_status=strip_status,
-                            extra_features=extra_features, include_cart=include_cart)
+                            extra_features=extra_features, include_cart=include_cart,
+                            text_tokens=text_tokens)
     return prep, train_df, {
         'train': prep.transform(train_df),
         'val': prep.transform(val_df),

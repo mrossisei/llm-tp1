@@ -1,6 +1,6 @@
 # Diagramas de las arquitecturas
 
-Referencia visual de las **seis arquitecturas** implementadas en `btr/model.py`, completas: de la
+Referencia visual de las **arquitecturas** implementadas en `btr/model.py`, completas: de la
 fila del CSV a `p(bought)`. Las dimensiones son las reales del código con la config base
 (`d_model=32`, 4 cabezas de dim 8, 2 bloques). GitHub renderiza los diagramas solo; las
 justificaciones de cada decisión están en `propuesta.md` (§4 formulaciones, §5 arquitectura) y la
@@ -106,6 +106,30 @@ flowchart TD
 La variante `hybrid_sin_regex` saca el token `listing_status` parseado y pregunta: ¿la atención
 recupera sola desde los caracteres lo que extrajimos con la regex?
 
+## 5B. Transformer fusión — el resumen del texto como un token (revisión externa)
+
+`--arch transformer --formulation fusion` · 15 tokens · 63.969 parámetros
+
+```mermaid
+flowchart TD
+    TXT["texto: 256 chars — o 64 PALABRAS (--text-tokens words)"]
+    TORRE["Torre de texto interna<br/>CLS + tokens + PE → bloques → LN<br/>CLS = resumen del texto (B, 32)<br/>opcional: inicializar con word2vec (--w2v-init)"]
+    TAB["x_cat (7) + x_num (6)"]
+    FT["FeatureTokenizer → 13 tokens"]
+    SEQ["secuencia: CLS + 13 features + 1 resumen = 15 tokens<br/>sin PE (sigue siendo un set)"]
+    BLK["Bloque Transformer ×2<br/>la atención cruza features ↔ RESUMEN del texto<br/>sin dilución: 1 token de texto en vez de 256"]
+    CLS["LayerNorm → token CLS → (B, 32)"]
+    HEAD["Linear 32 → 1"]
+    OUT(["σ → p(bought)"])
+    TXT --> TORRE --> SEQ
+    TAB --> FT --> SEQ
+    SEQ --> BLK --> CLS --> HEAD --> OUT
+```
+
+El punto medio entre el híbrido (cruce total pero diluido: −0.06 medido) y la torre (sin cruce,
+cuello de botella): el texto cruza con los features **al nivel del resumen**. Variantes: tokens
+de palabras y embeddings word2vec pre-entrenados vs end-to-end (clase 1 vs clase 2). 3ª tanda.
+
 ## C2. Torre de texto + MLP — el transformer solo hace embeddings
 
 `--arch tower` · 257 + 13 tokens · 96.225 parámetros
@@ -169,10 +193,11 @@ En la suite: `feat_intrinseco`, `text_intrinseco`, `hybrid_intrinseco`.
 | MLP (control) | — (sin atención) | 416 flat | — | 126.209 | 0.746 ± 0.036 | `--arch mlp` |
 | C · texto | un carácter | 257 | chars ↔ chars | 35.713 | 0.652 ± 0.039 | `--formulation text` |
 | A+C · híbrido | feature o carácter | 270 | texto ↔ tabular | 39.073 | 0.705 ± 0.062 | `--formulation hybrid` |
+| 5B · fusión | feature o RESUMEN del texto | 15 | features ↔ resumen | 63.969 | 3ª tanda | `--formulation fusion` |
 | C2 · torre | un carácter (en la torre) | 257 + 13 | solo chars ↔ chars | 96.225 | 0.775 ± 0.022 | `--arch tower` |
 | B · listwise | un producto entero | 8 | producto ↔ producto | 41.601 | 0.698 ± 0.044 | `--arch listwise` |
 
 Referencias sin red: GBM 0.762, regresión logística 0.660 (mismo split, `eda/verificaciones.py`).
-El transformer tabular supera al GBM y al MLP; el campeón (`pac20_feat_h1`, paciencia 20 + 1
-cabeza) llega a **0.816 ± 0.026**. Ninguna variante con texto supera al tabular puro — el
+El transformer tabular supera al GBM y al MLP; el campeón global es **`feat_ordinal` 0.824 ± 0.018**
+(categóricas como su rango de BTR de train; con embeddings, `pac20_feat_h1` 0.816). Ninguna variante con texto supera al tabular puro — el
 hallazgo textual es el contraste híbrido-recupera / torre-no. Lectura completa: `analisis.md`.

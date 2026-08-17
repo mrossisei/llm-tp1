@@ -29,22 +29,29 @@ def main():
     filas = sorted(((np.mean(v), np.std(v), k) for k, v in grupos.items()), reverse=True)
     fig, ax = plt.subplots(figsize=(8.5, 0.28 * len(filas) + 1.2))
     ys = np.arange(len(filas))[::-1]
+    # paleta validada (dataviz: CVD y contraste ok): teal/violeta/ambar/magenta
     for y, (m, s, k) in zip(ys, filas):
-        pac = k.startswith('pac20_')
-        color = '#1C8A76' if pac else '#5B6B85'
-        if 'intrinseco' in k or 'causal' in k.replace('causal_last', ''):
-            color = '#C22B5E' if 'causal' in k else '#B58117'
+        protocolo_largo = k.startswith('pac20_') or k.startswith('camp_') \
+            or k in ('feat_causal_last', 'feat_target', 'feat_freq', 'feat_hash8', 'mlp_onehot',
+                     'feat_extras', 'feat_ordinal', 'feat_status_ordinal', 'feat_status_target',
+                     'feat_tiempo', 'listwise_texto', 'feat_cartaux01', 'feat_cartaux03',
+                     'feat_cartaux05')
+        color = '#0E9B7E' if protocolo_largo else '#7052C9'
+        if 'intrinseco' in k:
+            color = '#C08312'
+        if 'causal' in k and 'last' not in k:
+            color = '#D42A63'
         ax.barh(y, m, xerr=s, color=color, height=0.72, error_kw=dict(lw=0.8))
         ax.text(0.005, y, k, va='center', ha='left', fontsize=6.5, color='white',
                 fontweight='bold')
-    ax.axvline(0.762, color='#C22B5E', ls='--', lw=1)
-    ax.text(0.762, len(filas) + 0.2, 'GBM 0.762', color='#C22B5E', fontsize=7, ha='center')
+    ax.axvline(0.762, color='#D42A63', ls='--', lw=1)
+    ax.text(0.762, len(filas) + 0.2, 'GBM 0.762', color='#D42A63', fontsize=7, ha='center')
     ax.axvline(0.131, color='#999', ls=':', lw=1)
     ax.text(0.131, len(filas) + 0.2, 'azar 0.131', color='#777', fontsize=7, ha='center')
     ax.set_yticks([])
     ax.set_xlabel('PR-AUC test (media ± desvío, 6 seeds)')
-    ax.set_title('Suite completa — verde: paciencia 20 · gris: paciencia 8 · '
-                 'ámbar: intrínseco · rojo: causal degenerado', fontsize=8.5)
+    ax.set_title('Suite completa — verde: protocolo paciencia 20 · violeta: paciencia 8 · '
+                 'ámbar: intrínseco · magenta: causal degenerado', fontsize=8.5)
     ax.set_xlim(0, 0.92)
     fig.tight_layout()
     out = REPO / 'graficos' / 'resumen_prauc.png'

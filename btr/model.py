@@ -61,6 +61,8 @@ class Head(nn.Module):
             # salida se descarta igual.
             wei = wei.masked_fill(~padding_mask[:, None, :], -1e9)
         wei = F.softmax(wei, dim=-1)
+        if getattr(self, 'guardar_atencion', False):  # para eda/atencion.py (solo eval)
+            self.ultima_atencion = wei.detach()
         wei = self.dropout(wei)
 
         v = self.value(x)
@@ -262,6 +264,39 @@ def _bce_multitask(logits, cart_logits, targets, pos_weight, cart_lambda):
     return loss
 
 
+class TextEncoder(nn.Module):
+    """Torre de caracteres reutilizable: [CLS] + chars + PE -> bloques -> (B, d_model).
+
+    Mismas piezas que TextTowerModel.encode_text, como modulo aparte para poder
+    meterla DENTRO de otra arquitectura (hoy: el token de producto del listwise
+    enriquecido con texto, propuesta #1 de junior_proposals.md).
+    """
+
+    def __init__(self, char_vocab_size, max_text_len, d_model, n_head=4, n_layer=2,
+                 dropout=0.1):
+        super().__init__()
+        self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
+        self.cls = nn.Parameter(torch.empty(1, 1, d_model))
+        nn.init.normal_(self.cls, mean=0.0, std=0.02)
+        seq_len = 1 + max_text_len
+        self.position_embedding_table = nn.Embedding(seq_len, d_model)
+        self.blocks = nn.ModuleList(
+            [Block(d_model, n_head, seq_len, dropout) for _ in range(n_layer)]
+        )
+        self.ln_f = nn.LayerNorm(d_model)
+
+    def forward(self, x_text):
+        batch_size = x_text.shape[0]
+        x = torch.cat([self.cls.expand(batch_size, -1, -1),
+                       self.char_embedding_table(x_text)], dim=1)
+        mask = torch.cat([torch.ones(batch_size, 1, dtype=torch.bool, device=x_text.device),
+                          x_text != PAD_IDX], dim=1)
+        x = x + self.position_embedding_table(torch.arange(x.shape[1], device=x.device))
+        for block in self.blocks:
+            x = block(x, mask)
+        return self.ln_f(x)[:, 0]
+
+
 class BTRTransformer(nn.Module):
     """Encoder-only transformer que estima p(bought) por impresion.
 
@@ -279,7 +314,7 @@ class BTRTransformer(nn.Module):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
-        assert formulation in ('features', 'text', 'hybrid')
+        assert formulation in ('features', 'text', 'hybrid', 'fusion')
         assert cls_position in ('first', 'last')
         # con mascara causal el CLS en posicion 0 solo se ve a si mismo y el modelo
         # degenera a predecir la tasa base (medido: ROC 0.500 exacto, p constante).
@@ -294,17 +329,27 @@ class BTRTransformer(nn.Module):
 
         seq_len = 1  # [CLS]
         self.tokenizer = None
-        if formulation in ('features', 'hybrid'):
+        if formulation in ('features', 'hybrid', 'fusion'):
             self.tokenizer = FeatureTokenizer(
                 cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges,
                 cat_encoding, cat_tables, hash_buckets, cat_modes
             )
             seq_len += self.tokenizer.n_tokens
         self.char_embedding_table = None
+        self.text_encoder = None
         if formulation in ('text', 'hybrid'):
             assert char_vocab_size and max_text_len, 'text/hybrid requieren vocabulario de chars'
             self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
             seq_len += max_text_len
+        elif formulation == 'fusion':
+            # 5b de la revision externa: una torre resume el texto a UN vector via su
+            # CLS, y ese vector entra como UN token mas de la secuencia tabular — la
+            # atencion cruza texto y features al nivel del RESUMEN, sin que 256 chars
+            # diluyan a los 13 tokens (el problema medido del hybrid)
+            assert char_vocab_size and max_text_len, 'fusion requiere vocabulario de texto'
+            self.text_encoder = TextEncoder(char_vocab_size, max_text_len, d_model,
+                                            n_head, n_layer, dropout)
+            seq_len += 1
         self.seq_len = seq_len
 
         # [CLS] aprendido, como BERT: agrega la informacion para clasificar
@@ -352,6 +397,9 @@ class BTRTransformer(nn.Module):
             feat = self.tokenizer(x_cat, x_num)
             parts.append(feat)
             masks.append(torch.ones(batch_size, feat.shape[1], dtype=torch.bool, device=device))
+        if self.text_encoder is not None:  # fusion: el resumen del texto como un token
+            parts.append(self.text_encoder(x_text).unsqueeze(1))
+            masks.append(torch.ones(batch_size, 1, dtype=torch.bool, device=device))
         if self.char_embedding_table is not None:
             parts.append(self.char_embedding_table(x_text))
             masks.append(x_text != PAD_IDX)  # el padding del texto no recibe atencion
@@ -527,39 +575,6 @@ class TextTowerModel(nn.Module):
             cart_logits = self.cart_head(h).squeeze(-1) if self.cart_head is not None else None
             loss = _bce_multitask(logits, cart_logits, targets, self.pos_weight, self.cart_lambda)
         return logits, loss
-
-
-class TextEncoder(nn.Module):
-    """Torre de caracteres reutilizable: [CLS] + chars + PE -> bloques -> (B, d_model).
-
-    Mismas piezas que TextTowerModel.encode_text, como modulo aparte para poder
-    meterla DENTRO de otra arquitectura (hoy: el token de producto del listwise
-    enriquecido con texto, propuesta #1 de junior_proposals.md).
-    """
-
-    def __init__(self, char_vocab_size, max_text_len, d_model, n_head=4, n_layer=2,
-                 dropout=0.1):
-        super().__init__()
-        self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
-        self.cls = nn.Parameter(torch.empty(1, 1, d_model))
-        nn.init.normal_(self.cls, mean=0.0, std=0.02)
-        seq_len = 1 + max_text_len
-        self.position_embedding_table = nn.Embedding(seq_len, d_model)
-        self.blocks = nn.ModuleList(
-            [Block(d_model, n_head, seq_len, dropout) for _ in range(n_layer)]
-        )
-        self.ln_f = nn.LayerNorm(d_model)
-
-    def forward(self, x_text):
-        batch_size = x_text.shape[0]
-        x = torch.cat([self.cls.expand(batch_size, -1, -1),
-                       self.char_embedding_table(x_text)], dim=1)
-        mask = torch.cat([torch.ones(batch_size, 1, dtype=torch.bool, device=x_text.device),
-                          x_text != PAD_IDX], dim=1)
-        x = x + self.position_embedding_table(torch.arange(x.shape[1], device=x.device))
-        for block in self.blocks:
-            x = block(x, mask)
-        return self.ln_f(x)[:, 0]
 
 
 class ListwiseTransformer(nn.Module):

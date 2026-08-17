@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (44 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (52 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -114,6 +114,27 @@ EXPERIMENTOS |= {
     'feat_ordinal':        (['--cat-encoding', 'ordinal', *PAC], 'tabular'),
     'feat_status_ordinal': (['--cat-feature-encoding', 'listing_status=ordinal', *PAC], 'tabular'),
     'feat_status_target':  (['--cat-feature-encoding', 'listing_status=target', *PAC], 'tabular'),
+
+    # ---- 3ra tanda (16/08): analisis de la 2da + revision externa (analisis.md 5-6) ----
+    # el campeon nuevo es ordinal GLOBAL (0.824): ¿se combina con los ganadores de capacidad?
+    'camp_ordinal_h1':      (['--cat-encoding', 'ordinal', '--n-head', '1', *PAC], 'tabular'),
+    'camp_ordinal_l4':      (['--cat-encoding', 'ordinal', '--n-layer', '4', *PAC], 'tabular'),
+    'camp_ordinal_d64h1l4': (['--cat-encoding', 'ordinal', '--d-model', '64', '--n-head', '1',
+                              '--n-layer', '4', *PAC], 'tabular'),
+    # hora/dia del timestamp (revision externa los sugirio; el EDA dice ruido -> verificar)
+    'feat_tiempo':          (['--extra-features', 'hour,dow', *PAC], 'tabular'),
+    # 5b de la revision externa: tokenizacion WORD-level (la que "recomendaron" en clase)
+    'text_words':           (['--formulation', 'text', '--text-tokens', 'words',
+                              '--max-text-len', '64'], 'texto'),
+    # ...y el resumen del texto como UN token de la secuencia tabular: la atencion cruza
+    # texto-features al nivel del resumen, sin que 256 chars diluyan (el mal del hybrid)
+    'fusion_base':          (['--formulation', 'fusion'], 'texto'),
+    'fusion_words':         (['--formulation', 'fusion', '--text-tokens', 'words',
+                              '--max-text-len', '64'], 'texto'),
+    # embeddings pre-entrenados (skipgram sobre el corpus de train) vs end-to-end:
+    # la comparacion clase 1 vs clase 2 que pedia la revision externa
+    'fusion_words_w2v':     (['--formulation', 'fusion', '--text-tokens', 'words',
+                              '--max-text-len', '64', '--w2v-init'], 'texto'),
 }
 
 

@@ -643,6 +643,11 @@ Cambios mínimos sobre nuestra arquitectura A:
 4. **Riesgos**: privacidad, feedback loops (recomendar lo ya comprado refuerza), y evaluación
    (haría falta split por usuario y por tiempo).
 
+
+> Nota (17/08, de la revisión externa): la versión con atención de esta personalización es
+> agregar tokens del historial del usuario que los ítems atienden por **cross-attention**
+> (estilo BST/SASRec) — la extensión natural de nuestro `listwise`/`fusion` al Ejercicio 3.
+
 ## 11. Temas abiertos / para preguntar a la cátedra
 
 - [ ] ¿Está bien leer "predecir BTR" como clasificación binaria por impresión + agregación por

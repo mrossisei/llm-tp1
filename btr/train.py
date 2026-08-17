@@ -38,8 +38,8 @@ from sklearn.metrics import (
     confusion_matrix, log_loss, matthews_corrcoef, precision_recall_curve, roc_auc_score,
 )
 
-from .data import (CAT_FEATURES, EXTRA_FEATURES, MAX_TEXT_LEN, NUM_FEATURES, TARGET,
-                   prepare, prepare_listwise)
+from .data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, MAX_TEXT_LEN, NUM_FEATURES,
+                   TARGET, _palabras, prepare, prepare_listwise)
 from .model import BTRTransformer, ListwiseTransformer, MLPBaseline, TextTowerModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -160,6 +160,56 @@ def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, v
     return history
 
 
+def pretrain_w2v(train_df, prep, d_model, device, epochs=3, window=2, k_neg=5, verbose=True):
+    """Skipgram con negative sampling sobre el corpus de TRAIN (--w2v-init).
+
+    La conexion clase 1 -> clase 2 de la revision externa: pre-entrenar los
+    embeddings de palabras de forma no supervisada (predecir el contexto) y
+    usarlos como INICIALIZACION del encoder de texto, que luego se ajusta
+    end-to-end. Comparar contra la inicializacion aleatoria mide cuanto vale el
+    pre-entrenamiento en un corpus tan chico (10k documentos).
+    """
+    import torch.nn as nn
+    from .data import strip_status_from_text
+    docs = []
+    for t, d in zip(train_df['title'], train_df['description']):
+        if prep.strip_status:
+            t, d = strip_status_from_text(t, d)
+        docs.append([prep.char_vocab.get(w, 1) for w in _palabras(t + ' ' + d)])
+    centros, contextos = [], []
+    for doc in docs:
+        for i, c in enumerate(doc):
+            for j in range(max(0, i - window), min(len(doc), i + window + 1)):
+                if j != i:
+                    centros.append(c)
+                    contextos.append(doc[j])
+    centros = torch.tensor(centros, device=device)
+    contextos = torch.tensor(contextos, device=device)
+    vocab = prep.char_vocab_size
+    emb_c = nn.Embedding(vocab, d_model).to(device)
+    emb_o = nn.Embedding(vocab, d_model).to(device)
+    opt = torch.optim.Adam(list(emb_c.parameters()) + list(emb_o.parameters()), lr=5e-3)
+    lote = 8192
+    for ep in range(epochs):
+        perm = torch.randperm(len(centros), device=device)
+        total = 0.0
+        for s in range(0, len(perm), lote):
+            idx = perm[s:s + lote]
+            c, o = emb_c(centros[idx]), emb_o(contextos[idx])
+            neg = emb_o(torch.randint(2, vocab, (len(idx), k_neg), device=device))
+            pos = torch.nn.functional.logsigmoid((c * o).sum(-1))
+            negs = torch.nn.functional.logsigmoid(-(neg @ c.unsqueeze(-1)).squeeze(-1)).sum(-1)
+            loss = -(pos + negs).mean()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item() * len(idx)
+        if verbose:
+            print(f"  w2v epoch {ep}: loss {total / len(centros):.4f} "
+                  f"({len(centros):,} pares, vocab {vocab})")
+    return emb_c.weight.detach()
+
+
 def resolve_device(arg):
     if arg == 'auto':
         return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -171,6 +221,8 @@ def run_name(args, seed):
     if args.arch == 'listwise' and args.listwise_texto:
         base = 'listwisetexto'
     parts = [base, f"d{args.d_model}", f"h{args.n_head}", f"l{args.n_layer}", args.numeric_mode]
+    if args.text_tokens != 'chars':
+        parts.append('words' + ('w2v' if args.w2v_init else ''))
     if args.cat_encoding != 'embedding':
         parts.append(f"cat{args.cat_encoding}"
                      + (str(args.hash_buckets) if args.cat_encoding == 'hashing' else ''))
@@ -339,6 +391,10 @@ def run(csv_path, seed, args, device):
         raise SystemExit('cat-encoding onehot es solo para --arch mlp: para el transformer, '
                          'one-hot + proyeccion lineal aprende la misma matriz que el '
                          'embedding (propuesta 6.1) — no hay experimento que correr')
+    if args.w2v_init and args.text_tokens != 'words':
+        raise SystemExit('--w2v-init requiere --text-tokens words')
+    if args.text_tokens == 'words' and listwise:
+        raise SystemExit('text-tokens words no implementado para listwise')
     if args.cat_encoding != 'embedding' and listwise:
         raise SystemExit('cat-encoding alternativo no implementado para listwise')
     if args.cat_feature_encoding and listwise:
@@ -347,7 +403,7 @@ def run(csv_path, seed, args, device):
         raise SystemExit('cat-feature-encoding no se combina con onehot (que es global del MLP)')
     extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
     if extras == ('all',):
-        extras = tuple(sorted(EXTRA_FEATURES))
+        extras = EXTRA_ALL  # congelado: ver data.EXTRA_ALL
     if listwise:
         if args.cart_aux:
             raise SystemExit('--cart-aux no implementado para listwise')
@@ -362,7 +418,8 @@ def run(csv_path, seed, args, device):
             raise SystemExit('--listwise-texto requiere --arch listwise')
         prep, train_df, splits = prepare(csv_path, seed=seed, max_text_len=args.max_text_len,
                                          strip_status=args.strip_status,
-                                         extra_features=extras, include_cart=args.cart_aux > 0)
+                                         extra_features=extras, include_cart=args.cart_aux > 0,
+                                         text_tokens=args.text_tokens)
         max_products = None
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
@@ -403,6 +460,17 @@ def run(csv_path, seed, args, device):
                                       bin_edges, pos_weight, max_products, cat_tables,
                                       cat_modes)
     model = model.to(device)
+    if args.w2v_init:
+        tabla = None
+        if getattr(model, 'text_encoder', None) is not None:
+            tabla = model.text_encoder.char_embedding_table
+        elif getattr(model, 'char_embedding_table', None) is not None:
+            tabla = model.char_embedding_table
+        if tabla is None:
+            raise SystemExit('--w2v-init requiere una arquitectura que vea el texto')
+        pesos_w2v = pretrain_w2v(train_df, prep, args.d_model, device, verbose=not args.quiet)
+        with torch.no_grad():
+            tabla.weight.copy_(pesos_w2v)
     n_params = sum(p.numel() for p in model.parameters())
     name = run_name(args, seed)
     print(f"\n=== {name} | {n_params:,} parametros | device {device} ===")
@@ -460,7 +528,8 @@ def build_parser():
     parser.add_argument('--tag', default='', help='prefijo para el nombre de la corrida')
     parser.add_argument('--arch', choices=['transformer', 'mlp', 'tower', 'listwise'],
                         default='transformer')
-    parser.add_argument('--formulation', choices=['features', 'text', 'hybrid'], default='features',
+    parser.add_argument('--formulation', choices=['features', 'text', 'hybrid', 'fusion'],
+                        default='features',
                         help='que es un token (solo aplica a --arch transformer)')
     parser.add_argument('--max-text-len', type=int, default=MAX_TEXT_LEN)
     parser.add_argument('--strip-status', action='store_true',
@@ -484,6 +553,11 @@ def build_parser():
                         help='multi-task: peso de la BCE auxiliar sobre cart (0 = apagado)')
     parser.add_argument('--listwise-texto', action='store_true',
                         help='listwise: enriquecer el token de producto con la torre de texto')
+    parser.add_argument('--text-tokens', default='chars', choices=['chars', 'words'],
+                        help='tokenizacion del texto: caracteres (demo) o palabras (5b)')
+    parser.add_argument('--w2v-init', action='store_true',
+                        help='pre-entrenar los embeddings de palabras con skipgram sobre el '
+                             'corpus de train (requiere --text-tokens words)')
     parser.add_argument('--d-model', type=int, default=32)
     parser.add_argument('--n-head', type=int, default=4)
     parser.add_argument('--n-layer', type=int, default=2)

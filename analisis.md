@@ -1,4 +1,4 @@
-# Análisis de la primera tanda GPU (16/08) y diseño de la segunda
+# Análisis de las tandas GPU (16/08)
 
 Primera tanda corrida por Matias en la RTX 3070: las 24 configs de la suite con el protocolo
 original (paciencia 8, tope 60 épocas) **y** una variante `pac20_` (paciencia 20, tope 300) para
@@ -187,8 +187,118 @@ panel.html` y push. Estimado: las 13 tabulares son segundos por corrida; `listwi
 `text_len96` son la parte con texto (la más pesada es listwise_texto; `text_len96` es ~7× más
 liviana que `text_base`).
 
-## 5. Pendientes analíticos (con los checkpoints ya disponibles)
+## 5. Segunda tanda: resultados (116 corridas)
 
-- Mapas de atención del campeón (¿el CLS mira al token de estado? ¿price_rel × tier?).
+18 configs × 6 seeds + `listwise_texto` × 2 (la pesada; los 4 seeds restantes corren en la 3ª
+tanda por resume automático). Todas con las 16 métricas. Lo importante, apareado por seed:
+
+### 5.1 Campeón nuevo: `feat_ordinal` 0.824 ± 0.018 — la idea del orden, aplicada globalmente
+La hipótesis de §4.1 (embedding ≥ target ≥ ordinal) quedó **invertida**: ordinal global
+(TODAS las categóricas como su rango de BTR de train) da **0.8239 ± 0.018**, arriba de target
+global (0.8134), del mejor embedding (`camp_d64h1l4` 0.8178) y de `pac20_feat_h1` (0.8157) —
+además con el desvío más chico. Lectura: el rango inyecta como *prior* el orden que el embedding
+tendría que aprender, con muchísimos menos parámetros → menos overfit; y los rangos
+equiespaciados en [0,1] están mejor condicionados que las magnitudes de target (0.65/0.03/0.000,
+apelmazadas en los extremos). Las versiones solo-status (`feat_status_ordinal/target`) son ≈
+neutras: la ganancia viene de simplificar TODAS las categóricas, no solo el estado.
+La 3ª tanda combina ordinal con los ganadores de capacidad (`camp_ordinal_*`).
+
+### 5.2 Los contraejemplos de encoding, según lo esperado
+`feat_freq` **0.218** (la frecuencia no correlaciona con el BTR: destruye la señal) y
+`feat_hash8` **0.498** (las colisiones del módulo mezclan tiers). Moraleja presentable: el
+encoding debe *preservar la relación nivel→propensión*; freq y hashing la rompen a propósito.
+
+### 5.3 one-hot le gana al embedding en el MLP (+0.047, 6/6) — matiz honesto al "atención aporta"
+`mlp_onehot` 0.797 ≈ `pac20_feat_base` 0.798. El déficit del MLP era en buena parte su
+**entrada** (los 416 dims de embeddings entrelazados sobreajustan; el one-hot ralo deja que la
+primera capa aprenda pesos por nivel, casi logístico). El enunciado fino pasa a ser: con la misma
+representación, la atención aporta +0.048 (5/6); contra el MEJOR MLP posible, el mejor
+transformer aporta ~+0.027 (0.824 vs 0.797). La atención sigue ganando, con la vara más alta.
+
+### 5.4 El 2×2 del estado (idea de Fer): el canal doble era ruido para el híbrido
+`hybrid_status_campo` (texto limpio + estado como campo) **0.733 > hybrid_full 0.705**
+(+0.027, 4/6): el sufijo duplicado adentro del texto diluía. En tower no cambia nada (−0.003)
+— su cuello de botella ya aislaba el texto. Y aun limpio, el híbrido queda −0.065 (0/6) bajo el
+tabular puro: el texto no suma cuando el estado ya está parseado. El 2×2 queda completo:
+full 0.705 · sin_regex 0.711 · **status_campo 0.733** · intrinseco 0.150.
+
+### 5.5 Las propuestas de Junior, medidas
+- **listwise_texto (#1)**: +0.016 en 2/2 seeds (0.753 ± 0.005 vs 0.740). El texto ayuda a
+  listwise de forma consistente → estaba parcialmente ciego, no mal concebido. Pero sigue ~0.05
+  abajo del tabular: la competencia de página es débil (EDA §2.5, re-confirmado).
+- **cart-aux (#2)**: U invertida sobre λ (0.1: −0.003 · **0.3: +0.011** · 0.5: −0.007), todo
+  dentro del ruido (3/6). Veredicto: no ayuda significativamente — `cart` es casi la misma señal
+  que `bought` (bought ⟹ cart), no agrega información nueva al encoder.
+
+### 5.6 Otros
+- **Bidireccionalidad: no importa** — `feat_causal_last` 0.795 ≈ base (−0.003, 3/6). El arco
+  completo del causal: catástrofe (1ª tanda) → diagnóstico (CLS en pos 0) → fix (CLS al final)
+  → respuesta: *da igual*, con 13 tokens de features el orden de lectura no aporta ni quita.
+- **Grilla campeón**: los ganadores individuales NO son aditivos (d64+h1 0.800 < h1 solo 0.816);
+  solo el combo completo `camp_d64h1l4` empata arriba (0.8178, +0.002, 4/6). Meseta en ~0.82.
+- **feat_extras: Δ=−0.006 (3/6)** — volumen/package/ingredientes no aportan: el descarte del
+  EDA queda verificado empíricamente, como pidió Fer.
+- **text_len96: −0.027 (2/6)** — truncar al título EMPEORA pese a que la señal vive ahí: la
+  última oración de la descripción (la copia redundante del estado) ayudaba al modelo chico.
+  La redundancia es amiga de los modelos de 36k parámetros.
+
+## 6. Revisión externa (16/08): qué confirma, qué corrige, qué faltaba
+
+Fer trajo la lectura de un agente externo que analizó el enunciado y las clases sin ver nuestro
+código. Veredicto punto por punto:
+
+- **Ya lo teníamos** (y ahora con números): FT-Transformer (= formulación A), el menú completo
+  de encodings (§5.1–5.3), CLS + su ablación, las tres trampas (cart, split por query, PR-AUC),
+  su "5a" (= feat) y su "5c" (la de dos niveles = nuestro listwise; su versión con encoder de
+  ítem que incluye texto = exactamente `listwise_texto`, la propuesta #1 de Junior).
+- **Corrección conceptual que adoptamos** (va a la presentación): la atención no requiere tokens
+  "del mismo tipo", requiere que vivan en el **mismo espacio ℝ^d** — el FeatureTokenizer es lo
+  que los proyecta ahí, igual que el embedding en un LLM o los parches en un multimodal.
+- **Conexión que no habíamos escrito**: el "column embedding" de TabTransformer (vector
+  identificador por columna) es exactamente nuestro `feat_pos` — y su Δ ≈ 0 **confirma
+  empíricamente** que en FT-Transformer la identidad de columna ya viene implícita en los
+  parámetros propios de cada feature.
+- **Su sugerencia de split temporal**: rechazada con evidencia — los timestamps están rotos
+  (spans de 2 años dentro de una misma query, EDA §2.6). Sí adoptamos verificar hora/día como
+  extras (`feat_tiempo`, 3ª tanda): el EDA dice ruido; que lo diga también un modelo.
+- **Lo que sí nos faltaba — su "5b", implementado en la 3ª tanda**:
+  1. **Tokenización word-level** (`--text-tokens words`): la clase recomendaba palabras; nuestra
+     torre era char-level (la demo). Con palabras, "(Best Seller)" son 2 tokens en vez de 13
+     caracteres, y la secuencia baja de 257 a 64 (`text_words`).
+  2. **El resumen del texto como UN token del transformer tabular** (`--formulation fusion`):
+     la torre comprime el texto a su CLS y ese vector entra como token 15 de la secuencia de
+     features — la atención cruza texto↔features al nivel del resumen, **sin que 256 chars
+     diluyan** (el mal medido del híbrido, §5.4). Es el punto medio exacto entre hybrid (cruce
+     total, diluido) y tower (sin cruce, cuello de botella).
+  3. **word2vec pre-entrenado vs end-to-end** (`--w2v-init`): skipgram con negative sampling
+     sobre el corpus de train como inicialización del encoder de palabras — la comparación
+     clase 1 (embeddings no supervisados) vs clase 2 (end-to-end) que pedía la materia.
+- **Su "MLM sobre features"** (enmascarar una columna y predecirla como pre-training): anotado
+  como opcional en el panel; el propio agente advierte el scope, y la conexión "pre-entrenar →
+  ajustar" ya queda cubierta por w2v-init. Si sobra tiempo, se implementa.
+- **Mapas de atención** (insistió, y tenía razón): hechos — `eda/atencion.py`:
+
+![Atención del campeón](graficos/atencion_pac20_feat_h1_features_d32_h1_l2_linear_seed45.png)
+
+**La capa 1 rutea las dos señales del EDA**: el CLS pone el 51% de su atención en `status`
+(columna encendida: casi todos los tokens lo consultan) y la familia de precio se consulta entre
+sí (la columna `p_rel` brilla para `price` y `f_min` — la señal relacional "¿dónde caigo en el
+rango pedido?"). La capa 2 mezcla en forma pareja. Es el gráfico de interpretabilidad del TP:
+el modelo mira exactamente donde el EDA dijo que había que mirar.
+
+## 7. Tercera tanda (ya en la suite)
+
+| config | pregunta |
+|---|---|
+| `camp_ordinal_h1` / `_l4` / `_d64h1l4` | ¿el campeón ordinal se combina con los ganadores de capacidad? |
+| `feat_tiempo` | hora/día del timestamp como features: ¿el EDA tenía razón en que es ruido? |
+| `text_words` | tokenización word-level (64 tokens) vs chars (257): la que "recomendaron" |
+| `fusion_base` / `fusion_words` | el resumen del texto como token 15: ¿arregla la dilución del híbrido? |
+| `fusion_words_w2v` | embeddings skipgram pre-entrenados vs end-to-end (clase 1 vs clase 2) |
+| (`listwise_texto` seeds 44–47) | completa los 6 seeds por resume automático |
+
+## 8. Pendientes analíticos (con los checkpoints ya disponibles)
+
+- ~~Mapas de atención del campeón~~ → hechos (§6).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.
 - GroupKFold si queremos intervalos más finos para la presentación.

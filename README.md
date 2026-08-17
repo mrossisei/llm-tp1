@@ -12,7 +12,9 @@ En particular §5.1 tiene el recorrido de punta a punta (qué entra, qué sale) 
 ```
 ├── propuesta.md               # documento de diseño: análisis del problema y plan (leer primero)
 ├── bitacora.md                # registro cronológico de discusiones y decisiones
-├── diagramas.md               # diagramas de las 6 arquitecturas (GitHub los renderiza)
+├── diagramas.md               # diagramas de las arquitecturas (GitHub los renderiza)
+├── analisis.md                # análisis de las tandas GPU: hallazgos y decisiones, con evidencia
+├── zoo.py / zoo.html          # genera el Zoo (los diagramas SVG, publicable como artifact)
 ├── supermarket_products.csv   # dataset de eventos de búsqueda
 ├── btr/
 │   ├── data.py                # carga, features derivados, split por query, tensores
@@ -50,7 +52,7 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ### La suite de experimentos (correr en la máquina con GPU)
 
 Todas las arquitecturas y ablaciones del TP están codificadas en `experimentos.py`
-(44 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**
+(52 configuraciones, ver `--list`). En la máquina con la RTX 3070, **estas dos líneas hacen todo**
 (resume automático: solo corre lo que falte):
 
 ```bash
@@ -89,8 +91,9 @@ probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 ```
 
 Referencia rápida (PR-AUC test, 6 seeds — análisis completo en [`analisis.md`](analisis.md)):
-**campeón `pac20_feat_h1` 0.816 ± 0.026** · transformer tabular base 0.794 · GBM 0.762 ·
-tower 0.775 · MLP 0.746 · listwise 0.740 (pac20) · hybrid 0.735 (pac20) · logística 0.660 ·
+**campeón `feat_ordinal` 0.824 ± 0.018** (categóricas como su rango de BTR de train) ·
+`pac20_feat_h1` 0.816 · transformer tabular base 0.794 · mlp_onehot 0.797 · GBM 0.762 ·
+tower 0.775 · listwise_texto 0.753 · listwise 0.740 · hybrid 0.705–0.735 · logística 0.660 ·
 text 0.652 · sin información de estado el techo se desploma a ~0.16 (familia intrínseca ≈ GBM
 sin estado 0.162, §2.3.1). Baselines reproducibles con `eda/verificaciones.py`.
 

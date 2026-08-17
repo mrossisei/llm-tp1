@@ -221,6 +221,36 @@ esto además volvió real el eje "encoding por feature categórica" del panel. 5
 `feat_ordinal`, `feat_status_ordinal`, `feat_status_target`. Round-trip de checkpoints con
 encoding mixto verificado (ROC idéntico al recargar). → `analisis.md §4.1`
 
+## 17/08 — Segunda tanda: campeón ordinal, y la revisión externa
+
+**Resultados 2ª tanda** (116 corridas; lectura completa en `analisis.md §5`). Lo grande:
+**campeón nuevo `feat_ordinal` 0.824 ± 0.018** — la idea del ORDEN de Fer aplicada globalmente
+(nuestra hipótesis "embedding ≥ target ≥ ordinal" quedó invertida: el rango como prior regulariza).
+Sorpresas honestas: one-hot > embeddings en el MLP (6/6; parte del déficit del MLP era la entrada,
+no la falta de atención — el enunciado fino queda +0.048 misma representación / +0.027 contra el
+mejor MLP); el 2×2 del estado confirmó que el canal doble diluía al híbrido (status_campo 0.733 >
+full 0.705); listwise_texto +0.016 (2/2) — Junior #1 validada; cart-aux dentro del ruido — Junior
+#2 respondida en negativo; bidireccionalidad da igual (causal_last ≈ base, cierre del arco del
+bug del CLS); freq/hashing destruyen la señal (contraejemplos pedagógicos); extras y text_len96
+confirman al EDA.
+
+**Revisión externa** (conversación de Fer con otro agente; veredicto punto por punto en
+`analisis.md §6`). Casi todo ya estaba implementado y medido; lo valioso que faltaba quedó hecho:
+(1) **tokenización word-level** (`--text-tokens words`, la que la clase recomendaba — éramos
+char-level por la demo); (2) **fusión** (`--formulation fusion`): el CLS de la torre de texto como
+token 15 de la secuencia tabular — el punto medio entre hybrid (diluido) y tower (sin cruce);
+(3) **word2vec pre-entrenado vs end-to-end** (`--w2v-init`, skipgram sobre train — la conexión
+clase 1 ↔ clase 2); (4) `feat_tiempo` (hora/día, para verificar el descarte del EDA);
+(5) **mapas de atención** (`eda/atencion.py`): la capa 1 pone el 51% de la atención del CLS en
+`status` y la familia de precio se consulta entre sí — el modelo mira donde el EDA dijo.
+Adoptamos también su corrección conceptual (la atención no pide tokens "del mismo tipo" sino el
+mismo espacio ℝ^d) y su conexión column-embedding ≈ nuestro `feat_pos` (Δ≈0 la confirma). Su
+split temporal: rechazado con evidencia (timestamps rotos). Su MLM-sobre-features: anotado como
+opcional (él mismo advierte el scope). 3ª tanda en la suite: 8 configs (`camp_ordinal_*`,
+`feat_tiempo`, `text_words`, `fusion_*`). El generador del Zoo ahora vive en el repo (`zoo.py`) —
+antes estaba en un scratchpad de sesión y se perdió en una limpieza; reconstruido con la figura
+de fusión.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
