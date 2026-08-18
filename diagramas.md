@@ -126,9 +126,11 @@ flowchart TD
     SEQ --> BLK --> CLS --> HEAD --> OUT
 ```
 
-El punto medio entre el híbrido (cruce total pero diluido: −0.06 medido) y la torre (sin cruce,
-cuello de botella): el texto cruza con los features **al nivel del resumen**. Variantes: tokens
-de palabras y embeddings word2vec pre-entrenados vs end-to-end (clase 1 vs clase 2). 3ª tanda.
+El punto medio entre el híbrido y la torre. Resultado (3ª tanda): **0.775 ± 0.036** — **+0.069
+sobre el híbrido (6/6)**: comprimir cura la dilución; pero **empata exacto con la torre
+(Δ −0.0002)**: una vez comprimido el texto, cruzar por atención o por concat da igual. Palabras
+sobreajustan su tabla de embeddings (−0.028 vs chars) y w2v-init la regulariza (+0.010) sin
+alcanzar a chars: el tokenizador chico de la demo era el correcto a esta escala.
 
 ## C2. Torre de texto + MLP — el transformer solo hace embeddings
 
@@ -193,11 +195,12 @@ En la suite: `feat_intrinseco`, `text_intrinseco`, `hybrid_intrinseco`.
 | MLP (control) | — (sin atención) | 416 flat | — | 126.209 | 0.746 ± 0.036 | `--arch mlp` |
 | C · texto | un carácter | 257 | chars ↔ chars | 35.713 | 0.652 ± 0.039 | `--formulation text` |
 | A+C · híbrido | feature o carácter | 270 | texto ↔ tabular | 39.073 | 0.705 ± 0.062 | `--formulation hybrid` |
-| 5B · fusión | feature o RESUMEN del texto | 15 | features ↔ resumen | 63.969 | 3ª tanda | `--formulation fusion` |
+| 5B · fusión | feature o RESUMEN del texto | 15 | features ↔ resumen | 63.969 | 0.775 ± 0.036 | `--formulation fusion` |
 | C2 · torre | un carácter (en la torre) | 257 + 13 | solo chars ↔ chars | 96.225 | 0.775 ± 0.022 | `--arch tower` |
 | B · listwise | un producto entero | 8 | producto ↔ producto | 41.601 | 0.698 ± 0.044 | `--arch listwise` |
 
 Referencias sin red: GBM 0.762, regresión logística 0.660 (mismo split, `eda/verificaciones.py`).
-El transformer tabular supera al GBM y al MLP; el campeón global es **`feat_ordinal` 0.824 ± 0.018**
-(categóricas como su rango de BTR de train; con embeddings, `pac20_feat_h1` 0.816). Ninguna variante con texto supera al tabular puro — el
+El transformer tabular supera al GBM y al MLP; el **modelo final del TP es `feat_ordinal`
+0.824 ± 0.018** (categóricas como su rango de BTR de train, 26k parámetros — elegido por empate
+técnico en validación + parsimonia, confirmado por test; `analisis.md §8.2`). Ninguna variante con texto supera al tabular puro — el
 hallazgo textual es el contraste híbrido-recupera / torre-no. Lectura completa: `analisis.md`.

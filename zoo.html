@@ -203,9 +203,11 @@ footer code{font:11.5px var(--mono)}
     identidad propia (su tabla de embedding); la atención aprende interacciones entre ellos — p. ej.
     <em>price_rel × categoría</em>, la U invertida del precio — y el [CLS] junta todo para clasificar.
     Sin positional encoding porque un conjunto de features no tiene orden (medido: Δ ≈ 0).
-    Resultado: <strong>0.794 ± 0.033</strong> (6 seeds); 0.816 con 1 cabeza — y el <strong>campeón global
-    es este mismo modelo con encoding ORDINAL</strong> de categóricas: <strong>0.824 ± 0.018</strong>
-    (<code>feat_ordinal</code>: cada nivel entra como su rango de BTR en train).</p>
+    Resultado: <strong>0.794 ± 0.033</strong> (6 seeds); 0.816 con 1 cabeza — y el <strong>MODELO FINAL del TP
+    es este mismo esqueleto con encoding ORDINAL</strong> de categóricas: <strong>0.824 ± 0.018</strong>
+    (<code>feat_ordinal</code>, 26k parámetros). La 3ª tanda cerró la búsqueda: sumarle capacidad al ordinal
+    EMPEORA (−0.02 a −0.05) — el prior simple era el punto. Su mapa de atención: el CLS pone 0.75 de su
+    atención en <code>status</code> (ver <code>graficos/</code>).</p>
 </section>
 <section class="card" id="mlp">
   <div class="eyebrow">BASELINE SIN ATENCIÓN · EL CONTROL DEL EXPERIMENTO</div>
@@ -231,7 +233,8 @@ footer code{font:11.5px var(--mono)}
     intrínseco 0.16) pero leer chars crudos con 36k parámetros no alcanza al tabular. Curiosidades medidas:
     MÁS paciencia lo empeora (sobreajuste de selección por val) y truncar al título también
     (<code>text_len96</code> −0.027: la copia redundante de la descripción ayudaba). La variante
-    <code>text_words</code> (tokenización por palabras, 64 tokens) corre en la 3ª tanda.</p>
+    <code>text_words</code> (palabras, 64 tokens) empata con chars (−0.006): la secuencia corta no compensa
+    la tabla de embeddings grande.</p>
 </section>
 <section class="card" id="hybrid">
   <div class="eyebrow">FORMULACIÓN A + C · TODO EN UNA SECUENCIA</div>
@@ -256,9 +259,12 @@ footer code{font:11.5px var(--mono)}
     la torre comprime el texto a su [CLS] y ese vector entra como <strong>token 15</strong> de la secuencia
     tabular. La atención puede cruzar texto ↔ features (lo que a la torre le falta) pero al nivel del
     <strong>resumen</strong>, sin que 256 caracteres diluyan a los 13 features (lo que al híbrido lo mata,
-    medido: −0.06). Variantes: tokenización por <strong>palabras</strong> (64 tokens; "(Best Seller)" son 2
-    palabras) y embeddings <strong>pre-entrenados con word2vec</strong> sobre train vs end-to-end — la
-    comparación clase 1 vs clase 2. Resultados: 3ª tanda en la 3070.</p>
+    medido: −0.06). Resultado (3ª tanda): <strong>0.775 ± 0.036</strong> —
+    <strong>+0.069 sobre el híbrido (gana 6/6)</strong>: la compresión cura la dilución por completo. Pero
+    <strong>empata EXACTO con la torre (Δ −0.0002)</strong>: cruzar por atención o por concat da igual una vez
+    que el texto llega comprimido. Palabras: peor que chars (la tabla de embeddings grande sobreajusta);
+    <strong>w2v-init la mejora +0.010</strong> (el pre-entrenamiento regulariza — clase 1 → clase 2) sin
+    alcanzar a chars: a esta escala, el tokenizador chico de la demo era el correcto.</p>
 </section>
 <section class="card" id="tower">
   <div class="eyebrow">FORMULACIÓN C2 · TORRE DE TEXTO · PROPUESTA DE FER</div>
@@ -279,8 +285,8 @@ footer code{font:11.5px var(--mono)}
   <p class="caption">La única formulación que ve la <strong>página completa</strong>: colapsa cada producto a un vector y la
     atención corre entre los productos que compiten en la misma búsqueda. Resultado: <strong>0.698 ± 0.044</strong>,
     y <strong>0.740</strong> con paciencia 20 (el grupo MÁS beneficiado por entrenar más: +0.041). Con el texto
-    adentro del token de producto (<code>listwise_texto</code>, propuesta de Junior): <strong>0.753</strong>
-    (+0.016 en 2/2 seeds) — estaba parcialmente ciego, no mal concebido; pero sigue lejos del tabular: la
+    adentro del token de producto (<code>listwise_texto</code>, propuesta de Junior): <strong>0.749 ± 0.060</strong>
+    (+0.005, gana 3/4 seeds) — el texto lo ayuda *algo*, pero la formulación queda lejos del tabular: la
     competencia de página es débil, como dijo el EDA (§2.5).</p>
 </section>
 <section class="card" id="familias">
@@ -314,7 +320,7 @@ footer code{font:11.5px var(--mono)}
   <tr><td>A+C · híbrido</td><td>feature o carácter</td><td class="n">270</td><td>texto ↔ tabular</td>
       <td class="n">39.073</td><td class="n">0.705 ± 0.062</td><td class="c">--formulation hybrid</td></tr>
   <tr><td>5B · fusión</td><td>feature o RESUMEN del texto</td><td class="n">15</td><td>features ↔ resumen</td>
-      <td class="n">63.969</td><td class="n">3ª tanda</td><td class="c">--formulation fusion</td></tr>
+      <td class="n">63.969</td><td class="n">0.775 ± 0.036</td><td class="c">--formulation fusion</td></tr>
   <tr><td>C2 · torre</td><td>un carácter (en la torre)</td><td class="n">257 + 13</td><td>solo chars ↔ chars</td>
       <td class="n">96.225</td><td class="n">0.775 ± 0.022</td><td class="c">--arch tower</td></tr>
   <tr><td>B · listwise</td><td>un producto entero</td><td class="n">8</td><td>producto ↔ producto</td>
@@ -325,15 +331,16 @@ footer code{font:11.5px var(--mono)}
       <td class="n">—</td><td class="n">0.660</td><td class="c">eda/verificaciones.py</td></tr>
   </tbody></table></div>
   <p class="caption">Números de la suite en la 3070 (test PR-AUC, 6 seeds, protocolo base). El transformer tabular
-  <strong>supera al GBM y al MLP</strong> (atención: +0.048 apareado, gana 5/6 seeds) y el campeón global es
-  <strong>0.824 ± 0.018</strong> (<code>feat_ordinal</code>: categóricas como su rango de BTR en train, paciencia
-  20; con embeddings, <code>pac20_feat_h1</code> 0.816). Ninguna variante con texto supera al tabular puro; el
+  <strong>supera al GBM y al MLP</strong> (atención: +0.048 apareado, gana 5/6 seeds) y el <strong>modelo final del TP</strong> es
+  <strong><code>feat_ordinal</code> 0.824 ± 0.018</strong> (categóricas como su rango de BTR en train; elegido por
+  empate técnico en validación + parsimonia — 26k parámetros — y confirmado por test; ver
+  <code>analisis.md §8.2</code>). Ninguna variante con texto supera al tabular puro; el
   hallazgo textual es otro: el híbrido <strong>recupera desde los chars</strong> la señal del regex (sin_regex ≈
   full) y la torre no (−0.04). Análisis completo: <code>analisis.md</code>.</p>
 </section>
 
 <footer>Generado desde el código real del repo con <code>zoo.py</code>: <code>btr/model.py</code> ·
-<code>btr/data.py</code> · <code>experimentos.py</code> — actualizado tras la 2ª tanda GPU (17/08/2026).
+<code>btr/data.py</code> · <code>experimentos.py</code> — actualizado tras la 3ª tanda GPU (18/08/2026).
 La versión para el repo (mermaid, la renderiza GitHub) está en <code>diagramas.md</code>; el análisis con
 todos los números, en <code>analisis.md</code>.</footer>
 </div>

@@ -286,7 +286,7 @@ sí (la columna `p_rel` brilla para `price` y `f_min` — la señal relacional "
 rango pedido?"). La capa 2 mezcla en forma pareja. Es el gráfico de interpretabilidad del TP:
 el modelo mira exactamente donde el EDA dijo que había que mirar.
 
-## 7. Tercera tanda (ya en la suite)
+## 7. Tercera tanda: diseño
 
 | config | pregunta |
 |---|---|
@@ -297,8 +297,65 @@ el modelo mira exactamente donde el EDA dijo que había que mirar.
 | `fusion_words_w2v` | embeddings skipgram pre-entrenados vs end-to-end (clase 1 vs clase 2) |
 | (`listwise_texto` seeds 44–47) | completa los 6 seeds por resume automático |
 
-## 8. Pendientes analíticos (con los checkpoints ya disponibles)
+## 8. Tercera tanda: convergencia — y modelo final
 
-- ~~Mapas de atención del campeón~~ → hechos (§6).
+50 corridas (8 configs × 6 seeds + 2 seeds más de `listwise_texto`, que quedó en 4/6). La
+búsqueda **convergió**: ninguna dirección nueva mejora al campeón.
+
+### 8.1 Ordinal no se combina: la simpleza era el punto
+Sumarle capacidad al campeón ordinal **empeora todo**: +h1 −0.024 (1/6), +l4 −0.013 (3/6),
++d64h1l4 −0.051 (1/6, desvío enorme 0.066). Coherente con el porqué de su victoria: ordinal gana
+por ser un *prior* fuerte con pocos parámetros; agregarle capacidad reintroduce el overfit que
+ordinal había eliminado. La grilla cierra: **el mejor modelo es el más simple en los dos ejes**
+(capacidad base d32/h4/l2 + encoding escalar).
+
+### 8.2 La elección del modelo final, con disciplina
+Por **validación** (la métrica de decisión) hay un empate técnico entre cuatro configs
+(Δ < 0.002): `pac20_feat_h1` 0.8364, `camp_d64h1l4` 0.8346, `feat_ordinal` 0.8345,
+`camp_d64l4` 0.8343. Val no puede distinguirlas → desempatamos por **parsimonia**: `feat_ordinal`
+tiene los menos parámetros (26.177, vs 28k–174k de las otras), el menor desvío entre seeds y el
+menor gap val→test (0.011 vs 0.021 de `pac20_feat_h1` — menos sobreajuste de selección). Recién
+después miramos test, que lo confirma. **Modelo final del TP:**
+
+> **`feat_ordinal`** — transformer tabular d32 / 4 cabezas / 2 bloques, categóricas con encoding
+> ordinal (rango por BTR de train), numéricas lineales, CLS, sin PE, paciencia 20.
+> **Test (6 seeds): PR-AUC 0.824 ± 0.018 · ROC-AUC 0.975 ± 0.003 · F1 máx 0.784 (umbral ≈ 0.40)
+> · Brier 0.042 · ~64 épocas · 26.177 parámetros.** (GBM: 0.762 · MLP mejor: 0.797.)
+
+Su mapa de atención es todavía más nítido que el del campeón anterior — **capa 1: el CLS pone
+0.75 de su atención en `status`** (el escalar ordinal ES la propensión, y el modelo lo sabe);
+capa 2 diversifica entre los features secundarios:
+
+![Atención del modelo final](graficos/atencion_feat_ordinal_features_d32_h4_l2_linear_catordinal_seed46.png)
+
+### 8.3 El veredicto del 5B: comprimir importa, dónde cruzar no
+El resultado más elegante de la tanda. `fusion_base` (chars) **0.775 ± 0.036**:
+- vs **híbrido**: **+0.069, gana 6/6** — comprimir el texto a un token elimina por completo la
+  dilución; el diagnóstico de la 2ª tanda era correcto y la cura funciona.
+- vs **torre**: **Δ = −0.0002** — empate exacto. La atención cruzada al nivel del resumen no
+  agrega nada sobre un simple concat. Conclusión de diseño: lo que importa es que el texto llegue
+  **comprimido**; *dónde* se encuentra con lo tabular (atención vs concatenación) es indiferente.
+- vs **tabular puro**: −0.019 (2/6) — se mantiene la conclusión estructural: con el estado ya
+  parseado como feature, el texto no suma. El texto importa solo en el mundo sin regex.
+
+### 8.4 Words y w2v: el vocabulario grande se paga
+- Texto puro: palabras ≈ caracteres (−0.006, 3/6) — la secuencia 4× más corta no mejora nada.
+- En fusión: palabras **peor** que chars (−0.028, 1/6) — la tabla de embeddings de palabras
+  (~vocab 3k × 32) mete 3× más parámetros que todo el resto del modelo, y sobreajusta.
+- **w2v-init ayuda a words** (+0.010, 4/6): el pre-entrenamiento skipgram regulariza esa tabla
+  grande — la conexión clase 1 → clase 2 funciona en la dirección esperada, aunque no alcanza
+  para superar a chars. Moraleja: a esta escala de corpus, el tokenizador chico (chars, vocab 67)
+  es el correcto — un punto a favor de la demo de la cátedra.
+
+### 8.5 Cierres menores
+- `feat_tiempo` −0.022 (2/6): hora/día no solo no aportan — agregan varianza. Cuarta
+  vindicación empírica del EDA (extras, text_len96, tiempo, y la propia familia intrínseca).
+- `listwise_texto` con 4 seeds: +0.005 (3/4) — más modesto que con 2 seeds (+0.016); el texto
+  ayuda a listwise *algo*, pero la formulación queda lejos del tabular (competencia débil).
+  Los seeds 46–47 quedan pendientes por resume si la suite vuelve a correr; no cambian nada.
+
+## 9. Pendientes analíticos
+
+- ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.
 - GroupKFold si queremos intervalos más finos para la presentación.

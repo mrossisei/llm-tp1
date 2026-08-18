@@ -91,11 +91,12 @@ probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 ```
 
 Referencia rápida (PR-AUC test, 6 seeds — análisis completo en [`analisis.md`](analisis.md)):
-**campeón `feat_ordinal` 0.824 ± 0.018** (categóricas como su rango de BTR de train) ·
-`pac20_feat_h1` 0.816 · transformer tabular base 0.794 · mlp_onehot 0.797 · GBM 0.762 ·
-tower 0.775 · listwise_texto 0.753 · listwise 0.740 · hybrid 0.705–0.735 · logística 0.660 ·
-text 0.652 · sin información de estado el techo se desploma a ~0.16 (familia intrínseca ≈ GBM
-sin estado 0.162, §2.3.1). Baselines reproducibles con `eda/verificaciones.py`.
+**MODELO FINAL: `feat_ordinal` 0.824 ± 0.018** (transformer tabular d32/h4/l2 + categóricas como
+su rango de BTR de train, 26k parámetros; elegido por empate en validación + parsimonia, §8.2) ·
+`pac20_feat_h1` 0.816 · mlp_onehot 0.797 · tabular base 0.794 · fusión = tower 0.775 · GBM 0.762 ·
+listwise_texto 0.749 · listwise 0.740 · hybrid 0.705–0.735 · logística 0.660 · text 0.652 ·
+sin información de estado el techo se desploma a ~0.16 (familia intrínseca, §2.3.1). Baselines
+reproducibles con `eda/verificaciones.py`.
 
 ## El laboratorio interactivo (`panel.html`)
 

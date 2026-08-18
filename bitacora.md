@@ -251,6 +251,27 @@ opcional (él mismo advierte el scope). 3ª tanda en la suite: 8 configs (`camp_
 antes estaba en un scratchpad de sesión y se perdió en una limpieza; reconstruido con la figura
 de fusión.
 
+## 18/08 — Tercera tanda: convergencia. Modelo final: `feat_ordinal`
+
+**Resultados** (50 corridas; lectura completa en `analisis.md §8`). La búsqueda **convergió**:
+sumarle capacidad al campeón ordinal empeora todo (−0.02 a −0.05) — ordinal gana por ser un prior
+simple, y la capacidad extra reintroduce el overfit que ordinal eliminaba. **Elección del modelo
+final con disciplina**: en validación hay empate técnico entre 4 configs (Δ<0.002) → desempate
+por parsimonia (26.177 parámetros, menor desvío, menor gap val→test), NO por test; test lo
+confirma después. **Modelo final: `feat_ordinal` — PR-AUC test 0.824 ± 0.018, ROC 0.975, F1 máx
+0.784 @ umbral ~0.40, Brier 0.042.** Su mapa de atención: el CLS pone **0.75** de su atención en
+`status` en capa 1 (el escalar ordinal ES la propensión y el modelo lo sabe).
+
+**El veredicto del 5B** (lo más elegante de la tanda): fusión **+0.069 sobre el híbrido (6/6)** —
+comprimir el texto a un token cura la dilución por completo — pero **empata exacto con la torre
+(Δ −0.0002)**: una vez comprimido, cruzar por atención o por concat da igual. Y sigue sin superar
+al tabular puro: el texto solo importa en el mundo sin regex. Words ≈ chars en texto puro; en
+fusión words sobreajusta su tabla de embeddings y **w2v-init la regulariza (+0.010, 4/6)** — la
+conexión clase 1→2 funciona en la dirección esperada, sin alcanzar a chars: el tokenizador chico
+de la demo era el correcto a esta escala. Cierres: `feat_tiempo` −0.022 (cuarta vindicación del
+EDA), `listwise_texto` a 4 seeds +0.005 (más modesto que con 2). No hay 4ª tanda: no queda
+dirección abierta que prometa; lo que sigue es análisis y presentación.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
