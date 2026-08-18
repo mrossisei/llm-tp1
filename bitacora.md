@@ -272,6 +272,28 @@ de la demo era el correcto a esta escala. Cierres: `feat_tiempo` −0.022 (cuart
 EDA), `listwise_texto` a 4 seeds +0.005 (más modesto que con 2). No hay 4ª tanda: no queda
 dirección abierta que prometa; lo que sigue es análisis y presentación.
 
+## 18/08 — Ideas post-convergencia: tres gratis, ejecutadas en el momento
+
+**Pedido.** "¿Alguna otra idea para probar?" Respuesta: tres que no requieren GPU (corren sobre
+los 454 checkpoints) se implementaron y corrieron en el acto; el resto quedó propuesto con costo.
+
+1. **Ensemble de configs** (`eda/ensemble.py`): promediar p(bought) de varias configs del mismo
+   seed (comparten split → apareado válido), composición elegida por VAL. Resultado:
+   **0.834 ± 0.021, +0.0099 sobre feat_ordinal, gana 6/6 seeds** — la mejora más consistente del
+   proyecto. Val eligió h1+target+d64h1l4 (sin ordinal: prefiere diversidad de representación).
+   El TP queda con dos números finales: modelo único 0.824 / ensemble 0.834.
+2. **Importancia por permutación** (`eda/importancia.py`): status +0.68, price_rel +0.14,
+   allergens +0.05, resto ≈0 — converge con los mapas de atención y con el EDA. Respuesta
+   preparada a "attention is not explanation": dos diagnósticos independientes, misma historia.
+3. **Métricas por página** (`eda/metricas_pagina.py`): top-1 0.912 (azar 0.267), MRR 0.954,
+   NDCG 0.964 — la traducción del modelo al uso de negocio (elegir qué promocionar por página).
+
+Propuestas restantes (si se quiere seguir): curva de aprendizaje (25/50/75/100% de train, barata
+en GPU, slide clásica); --init-seed para separar varianza de split vs inicialización (habilita
+deep-ensembles puros); logística + cross manual price_rel×tier (¿cuánto del aporte de la
+atención es esa única interacción?); MLM sobre features (el "guiño" de la revisión externa,
+scope medio); GroupKFold para intervalos más finos.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

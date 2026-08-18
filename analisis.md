@@ -354,7 +354,37 @@ El resultado más elegante de la tanda. `fusion_base` (chars) **0.775 ± 0.036**
   ayuda a listwise *algo*, pero la formulación queda lejos del tabular (competencia débil).
   Los seeds 46–47 quedan pendientes por resume si la suite vuelve a correr; no cambian nada.
 
-## 9. Pendientes analíticos
+## 9. Exprimidos post-convergencia (cero GPU: sobre checkpoints existentes)
+
+Tres análisis que no requieren entrenar nada — corren en CPU sobre los 454 checkpoints:
+
+### 9.1 Ensemble de configuraciones: +0.010, gana 6/6 — el número final reportable
+Los checkpoints de un mismo seed comparten split, así que se pueden promediar probabilidades y
+comparar apareado (`eda/ensemble.py`). Composición elegida por **validación** (disciplina):
+`pac20_feat_h1 + feat_target + camp_d64h1l4`. Test: **0.834 ± 0.021**, Δ apareado **+0.0099 ±
+0.006, gana 6/6 seeds** — la mejora más consistente de todo el proyecto. Detalle lindo: val NO
+eligió a `feat_ordinal` para el ensemble (ordinal y target son escalares correlacionados; el
+ensemble prefiere diversidad de representaciones). Resultado final del TP, en dos sabores:
+**modelo único `feat_ordinal` 0.824** (despliegue simple, 26k params) · **ensemble de 3: 0.834**
+(si solo importa el número).
+
+### 9.2 Importancia por permutación: atención e importancia cuentan LA MISMA historia
+`eda/importancia.py` (caída de PR-AUC test al permutar cada columna, media 6 seeds):
+`listing_status` **+0.68** · `price_rel` **+0.14** · `allergens` **+0.05** · `nutrition_score`
+y `price` ~+0.007 · el resto ≈ 0. Converge exactamente con el mapa de atención del §8.2
+(CLS→status 0.75; la familia de precio consulta a p_rel) y con el EDA. Es la respuesta
+preparada a la objeción "attention is not explanation": acá tenemos las dos evidencias —
+a quién mira (atención) y cuánto duele sacarlo (outcome) — y coinciden.
+![Importancia](graficos/importancia.png)
+
+### 9.3 Métricas por página: el modelo elige bien el producto a promocionar
+`eda/metricas_pagina.py`, sobre las ~141 páginas de test con ≥2 productos y ≥1 compra
+(media de 6 seeds): **top-1 = 0.912 ± 0.013** (el producto más rankeado fue efectivamente
+comprado en el 91% de las páginas; azar esperado: 0.267) · **MRR 0.954** · **NDCG 0.964**.
+Es la traducción directa de la PR-AUC al uso de negocio (¿a quién promociono?): elegir el
+ganador de la página casi siempre sale bien.
+
+## 10. Pendientes analíticos
 
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.
