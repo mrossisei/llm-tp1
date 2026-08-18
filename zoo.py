@@ -409,6 +409,36 @@ def fig_listwise():
     return f.render()
 
 
+def fig_listwise_texto():
+    f = Fig('flt')
+    y = 20
+    b = f.box(y, title='UNA búsqueda completa', w=560, cls='bx-data',
+              lines=('los 1–8 productos que compiten en la misma página de resultados',))
+    y = f.arrow(b['bot'], 40, labels=('por producto: x_cat (7) + x_num (6) + su TEXTO (256 chars)',))
+    b = f.box(y, title='Colapsar cada producto: tabular + resumen de su texto', w=580, cls='bx-tok',
+              lines=('FeatureTokenizer → 13 tokens de 32 → flatten (416)',
+                     'TextEncoder (torre de chars ×2) → CLS = resumen del texto (32)',
+                     'concat (448) → Linear 448 → 32: el producto entero, CON su texto, en un vector'))
+    y = f.arrow(b['bot'], 40, labels=('(Q, 8, 32) · máscara derivada: slot vacío = texto todo-PAD',))
+    row = f.tokens(y, [(f'p+t {i}', 'k-prod', 62) for i in range(1, 7)]
+                   + [('PAD', 'k-pad', 62), ('PAD', 'k-pad', 62)])
+    f.bracket(row['x'], row['x'] + row['w'], row['bot'] + 5,
+              'cada token de producto ahora VE su título y descripción · sin positional')
+    y = f.arrow(row['bot'] + 26, 36)
+    b = f.box(y, title='Bloque Transformer', w=560, cls='bx-blk', badge='×2', lines=(
+        'la atención corre ENTRE los productos de la página, como en listwise',
+        'pero ahora nadie compite "ciego" a la señal del sufijo del título'))
+    y = f.arrow(b['bot'], labels=('(Q, 8, 32)',))
+    b = f.box(y, w=440, cls='bx-mlp',
+              lines=('LayerNorm → Linear 32 → 1 aplicado a CADA producto',))
+    y = f.arrow(b['bot'], 36, labels=('8 logits por página → σ',))
+    orow = f.tokens(y, [(f'p{s}', 'k-out', 46) for s in '₁₂₃₄₅₆']
+                    + [('–', 'k-pad', 46), ('–', 'k-pad', 46)], h=28)
+    f.bracket(orow['x'], orow['x'] + orow['w'], orow['bot'] + 5,
+              'un p(bought) por producto · BCE solo sobre los slots reales')
+    return f.render()
+
+
 def fig_familias():
     f = Fig('ff', w=840)
     y = 26
@@ -433,7 +463,8 @@ def fig_familias():
 FIGS = {
     'p0': fig_preproc(), 'feat': fig_feat(), 'mlp': fig_mlp(), 'text': fig_text(),
     'hybrid': fig_hybrid(), 'fusion': fig_fusion(), 'tower': fig_tower(),
-    'listwise': fig_listwise(), 'familias': fig_familias(),
+    'listwise': fig_listwise(), 'listwise_texto': fig_listwise_texto(),
+    'familias': fig_familias(),
 }
 
 for name, svg in FIGS.items():
@@ -499,6 +530,7 @@ a:focus-visible,summary:focus-visible{outline:2px solid var(--mlp-br);outline-of
 .chips span{font:10.5px var(--mono);color:var(--ink2);border:1px solid var(--line);
   background:var(--figbg);border-radius:999px;padding:3px 9px;font-variant-numeric:tabular-nums}
 .chips span.cmd{color:var(--mlp-tx);border-color:var(--mlp-br)}
+.chips span.rank{background:var(--tab-br);border-color:var(--tab-br);color:#fff;font-weight:700}
 .figpanel{background:var(--figbg);border:1px solid var(--line);border-radius:10px;
   background-image:radial-gradient(var(--grid) 1px,transparent 1.3px);
   background-size:18px 18px;padding:12px 10px;overflow-x:auto}
@@ -609,7 +641,8 @@ SECTIONS.append(f'''
 SECTIONS.append(arch_section(
     'feat', 'FORMULACIÓN A · FEATURES COMO TOKENS · ESTILO FT-TRANSFORMER',
     'Transformer tabular', 'cada feature es un token',
-    [('--arch transformer --formulation features', 'cmd'), '14 tokens', 'd=32 · 4 cabezas · 2 bloques',
+    [('#1 · mejor 0.824 (feat_ordinal — MODELO FINAL)', 'rank'),
+     ('--arch transformer --formulation features', 'cmd'), '14 tokens', 'd=32 · 4 cabezas · 2 bloques',
      '28.289 params', 'suite: feat_base + variantes'],
     FIGS['feat'],
     '''La pregunta que responde: <strong>¿la atención entre features aporta algo?</strong> Cada feature entra con
@@ -625,7 +658,8 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'mlp', 'BASELINE SIN ATENCIÓN · EL CONTROL DEL EXPERIMENTO',
     'MLP denso', 'mismos embeddings, sin atención',
-    [('--arch mlp', 'cmd'), 'flatten 416', '126.209 params (4,5× el transformer)',
+    [('#2 · mejor 0.797 (mlp_onehot)', 'rank'),
+     ('--arch mlp', 'cmd'), 'flatten 416', '126.209 params (4,5× el transformer)',
      'suite: mlp_base · mlp_onehot'],
     FIGS['mlp'],
     '''El control que le da sentido a A: usa <strong>exactamente los mismos tokens de entrada</strong> pero los
@@ -637,7 +671,8 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'text', 'FORMULACIÓN C · CARACTERES COMO TOKENS · LA DEMO DE LA CÁTEDRA',
     'Transformer de texto', 'cada carácter es un token',
-    [('--arch transformer --formulation text', 'cmd'), '257 tokens', '35.713 params',
+    [('#8 · mejor 0.652 (text_base)', 'rank'),
+     ('--arch transformer --formulation text', 'cmd'), '257 tokens', '35.713 params',
      'PE obligatorio', 'suite: text_base · text_d64 · text_len96 · text_words · text_intrinseco'],
     FIGS['text'],
     '''La adaptación directa de la demo (chars como tokens), pasada de <em>decoder que genera</em> a
@@ -654,7 +689,8 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'hybrid', 'FORMULACIÓN A + C · TODO EN UNA SECUENCIA',
     'Transformer híbrido', 'features y caracteres juntos',
-    [('--arch transformer --formulation hybrid', 'cmd'), '270 tokens', '39.073 params',
+    [('#7 · mejor 0.736 (sin_regex, paciencia 20)', 'rank'),
+     ('--arch transformer --formulation hybrid', 'cmd'), '270 tokens', '39.073 params',
      'suite: hybrid_full · hybrid_sin_regex · hybrid_status_campo · hybrid_intrinseco'],
     FIGS['hybrid'],
     '''Los 13 feature-tokens y los 256 char-tokens conviven en <strong>una misma secuencia</strong>, así que la
@@ -669,7 +705,8 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'fusion', 'FORMULACIÓN 5B · REVISIÓN EXTERNA · EL RESUMEN COMO TOKEN',
     'Transformer fusión', 'el texto, comprimido a un token',
-    [('--arch transformer --formulation fusion', 'cmd'), '15 tokens', '63.969 params',
+    [('#4 · mejor 0.775 (fusion_base — empate con la torre)', 'rank'),
+     ('--arch transformer --formulation fusion', 'cmd'), '15 tokens', '63.969 params',
      'suite: fusion_base · fusion_words · fusion_words_w2v'],
     FIGS['fusion'],
     '''El punto medio exacto que faltaba entre el híbrido y la torre, sugerido por la revisión externa:
@@ -686,7 +723,8 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'tower', 'FORMULACIÓN C2 · TORRE DE TEXTO · PROPUESTA DE FER',
     'Torre de texto + MLP', 'el transformer solo hace embeddings',
-    [('--arch tower', 'cmd'), '257 + 13 tokens', '96.225 params',
+    [('#3 · mejor 0.775 (tower_base)', 'rank'),
+     ('--arch tower', 'cmd'), '257 + 13 tokens', '96.225 params',
      'suite: tower_base · tower_sin_regex · tower_status_campo'],
     FIGS['tower'],
     '''La idea original de Fer: el transformer trabaja <strong>solo como encoder de texto</strong> (estilo
@@ -698,8 +736,9 @@ SECTIONS.append(arch_section(
 SECTIONS.append(arch_section(
     'listwise', 'FORMULACIÓN B · PRODUCTOS COMO TOKENS · LISTWISE',
     'Transformer de página', 'cada producto de la query es un token',
-    [('--arch listwise', 'cmd'), '8 tokens (batch en queries)', '41.601 params',
-     'suite: listwise_base · listwise_texto'],
+    [('#6 · mejor 0.740 (paciencia 20)', 'rank'),
+     ('--arch listwise', 'cmd'), '8 tokens (batch en queries)', '41.601 params',
+     'suite: listwise_base'],
     FIGS['listwise'],
     '''La única formulación que ve la <strong>página completa</strong>: colapsa cada producto a un vector y la
     atención corre entre los productos que compiten en la misma búsqueda. Resultado: <strong>0.698 ± 0.044</strong>,
@@ -707,6 +746,26 @@ SECTIONS.append(arch_section(
     adentro del token de producto (<code>listwise_texto</code>, propuesta de Junior): <strong>0.749 ± 0.060</strong>
     (+0.005, gana 3/4 seeds) — el texto lo ayuda *algo*, pero la formulación queda lejos del tabular: la
     competencia de página es débil, como dijo el EDA (§2.5).'''))
+
+SECTIONS.append(arch_section(
+    'listwise_texto', 'FORMULACIÓN B+ · PROPUESTA #1 DE JUNIOR · EL PRODUCTO LEE SU TEXTO',
+    'Listwise + texto', 'la página, sin productos ciegos',
+    [('#5 · mejor 0.749 (4 seeds)', 'rank'),
+     ('--arch listwise --listwise-texto', 'cmd'), '8 tokens (c/u con su texto)', '78.305 params',
+     'suite: listwise_texto'],
+    FIGS['listwise_texto'],
+    '''La propuesta #1 de Junior, respondida: el listwise original competía <strong>ciego</strong> a la señal
+    más fuerte (el sufijo del título); acá cada producto colapsa tabular + el resumen de su texto (una
+    TextEncoder por producto) antes de que la página compita. Resultado: <strong>0.749 ± 0.060</strong>
+    (+0.005 sobre listwise con paciencia 20, gana 3/4 seeds; con 2 seeds daba +0.016). El texto lo ayuda
+    <em>algo</em> — estaba parcialmente ciego, no mal concebido — pero el techo de la formulación es la
+    competencia débil del dataset (EDA §2.5). Seeds 46–47 pendientes por resume; no cambian la lectura.'''))
+
+# orden de la página = ranking (mejor → peor); p0 primero, familias al final
+RANKING = ['p0', 'feat', 'mlp', 'tower', 'fusion', 'listwise_texto', 'listwise',
+           'hybrid', 'text', 'familias']
+import re as _re_orden
+SECTIONS.sort(key=lambda s: RANKING.index(_re_orden.search(r'id="(\w+)"', s).group(1)))
 
 SECTIONS.append(f'''
 <section class="card" id="familias">
@@ -725,31 +784,33 @@ SECTIONS.append(f'''
 
 TABLE = '''
 <section class="card" id="tabla">
-  <div class="eyebrow">RESUMEN</div>
+  <div class="eyebrow">RESUMEN · ORDEN = RANKING POR MEJOR VARIANTE</div>
   <h2>Todas, lado a lado</h2>
   <div class="chips"><span>d_model 32 · 4 cabezas · 2 bloques · AdamW 1e-3 · early stopping por PR-AUC de val · 6 seeds</span></div>
   <div class="tablewrap"><table>
-  <thead><tr><th>arquitectura</th><th>un token es…</th><th>secuencia</th><th>la atención cruza</th>
-  <th>parámetros</th><th>PR-AUC test (6 seeds)</th><th>comando</th></tr></thead>
+  <thead><tr><th>#</th><th>arquitectura</th><th>un token es…</th><th>secuencia</th><th>la atención cruza</th>
+  <th>parámetros</th><th>base (6 seeds)</th><th>mejor variante</th><th>comando</th></tr></thead>
   <tbody>
-  <tr><td>A · tabular</td><td>un feature</td><td class="n">14</td><td>features ↔ features</td>
-      <td class="n">28.289</td><td class="n">0.794 ± 0.033</td><td class="c">--formulation features</td></tr>
-  <tr><td>MLP (control)</td><td>— (sin atención)</td><td class="n">416 flat</td><td>—</td>
-      <td class="n">126.209</td><td class="n">0.746 ± 0.036</td><td class="c">--arch mlp</td></tr>
-  <tr><td>C · texto</td><td>un carácter</td><td class="n">257</td><td>chars ↔ chars</td>
-      <td class="n">35.713</td><td class="n">0.652 ± 0.039</td><td class="c">--formulation text</td></tr>
-  <tr><td>A+C · híbrido</td><td>feature o carácter</td><td class="n">270</td><td>texto ↔ tabular</td>
-      <td class="n">39.073</td><td class="n">0.705 ± 0.062</td><td class="c">--formulation hybrid</td></tr>
-  <tr><td>5B · fusión</td><td>feature o RESUMEN del texto</td><td class="n">15</td><td>features ↔ resumen</td>
-      <td class="n">63.969</td><td class="n">0.775 ± 0.036</td><td class="c">--formulation fusion</td></tr>
-  <tr><td>C2 · torre</td><td>un carácter (en la torre)</td><td class="n">257 + 13</td><td>solo chars ↔ chars</td>
-      <td class="n">96.225</td><td class="n">0.775 ± 0.022</td><td class="c">--arch tower</td></tr>
-  <tr><td>B · listwise</td><td>un producto entero</td><td class="n">8</td><td>producto ↔ producto</td>
-      <td class="n">41.601</td><td class="n">0.698 ± 0.044</td><td class="c">--arch listwise</td></tr>
-  <tr class="ref"><td>GBM (referencia)</td><td>árboles, sin red</td><td class="n">—</td><td>—</td>
-      <td class="n">—</td><td class="n">0.762</td><td class="c">eda/verificaciones.py</td></tr>
-  <tr class="ref"><td>logística (referencia)</td><td>lineal</td><td class="n">—</td><td>—</td>
-      <td class="n">—</td><td class="n">0.660</td><td class="c">eda/verificaciones.py</td></tr>
+  <tr><td>1</td><td>A · tabular</td><td>un feature</td><td class="n">14</td><td>features ↔ features</td>
+      <td class="n">28.289</td><td class="n">0.794 ± 0.033</td><td class="n">0.824 (ordinal) ★</td><td class="c">--formulation features</td></tr>
+  <tr><td>2</td><td>MLP (control)</td><td>— (sin atención)</td><td class="n">416 flat</td><td>—</td>
+      <td class="n">126.209</td><td class="n">0.746 ± 0.036</td><td class="n">0.797 (one-hot)</td><td class="c">--arch mlp</td></tr>
+  <tr><td>3</td><td>C2 · torre</td><td>un carácter (en la torre)</td><td class="n">257 + 13</td><td>solo chars ↔ chars</td>
+      <td class="n">96.225</td><td class="n">0.775 ± 0.022</td><td class="n">0.775 (base)</td><td class="c">--arch tower</td></tr>
+  <tr><td>4</td><td>5B · fusión</td><td>feature o RESUMEN del texto</td><td class="n">15</td><td>features ↔ resumen</td>
+      <td class="n">63.969</td><td class="n">0.775 ± 0.036</td><td class="n">0.775 (base)</td><td class="c">--formulation fusion</td></tr>
+  <tr><td>5</td><td>B+ · listwise + texto</td><td>un producto CON su texto</td><td class="n">8</td><td>producto ↔ producto</td>
+      <td class="n">78.305</td><td class="n">0.749 ± 0.060 (4 seeds)</td><td class="n">—</td><td class="c">--arch listwise --listwise-texto</td></tr>
+  <tr><td>6</td><td>B · listwise</td><td>un producto entero</td><td class="n">8</td><td>producto ↔ producto</td>
+      <td class="n">41.601</td><td class="n">0.698 ± 0.044</td><td class="n">0.740 (paciencia 20)</td><td class="c">--arch listwise</td></tr>
+  <tr><td>7</td><td>A+C · híbrido</td><td>feature o carácter</td><td class="n">270</td><td>texto ↔ tabular</td>
+      <td class="n">39.073</td><td class="n">0.705 ± 0.062</td><td class="n">0.736 (sin_regex, p20)</td><td class="c">--formulation hybrid</td></tr>
+  <tr><td>8</td><td>C · texto</td><td>un carácter</td><td class="n">257</td><td>chars ↔ chars</td>
+      <td class="n">35.713</td><td class="n">0.652 ± 0.039</td><td class="n">0.652 (base)</td><td class="c">--formulation text</td></tr>
+  <tr class="ref"><td>—</td><td>GBM (referencia)</td><td>árboles, sin red</td><td class="n">—</td><td>—</td>
+      <td class="n">—</td><td class="n">0.762</td><td class="n">—</td><td class="c">eda/verificaciones.py</td></tr>
+  <tr class="ref"><td>—</td><td>logística (referencia)</td><td>lineal</td><td class="n">—</td><td>—</td>
+      <td class="n">—</td><td class="n">0.660</td><td class="n">—</td><td class="c">eda/verificaciones.py</td></tr>
   </tbody></table></div>
   <p class="caption">Números de la suite en la 3070 (test PR-AUC, 6 seeds, protocolo base). El transformer tabular
   <strong>supera al GBM y al MLP</strong> (atención: +0.048 apareado, gana 5/6 seeds) y el <strong>modelo final del TP</strong> es
@@ -767,13 +828,15 @@ HTML = f'''<title>Zoo de arquitecturas BTR</title>
   <div class="eyebrow">TP1 · 73.69 LLM · REFERENCIA VISUAL</div>
   <h1>Zoo de arquitecturas BTR</h1>
   <p class="lede">Las maneras implementadas de estimar <code>p(bought)</code> por impresión, dibujadas
-  completas: de la fila del CSV a la probabilidad. Todos los diagramas usan las dimensiones reales del código
-  (<code>btr/model.py</code>) y comparten el mismo código de color, así que las diferencias entre arquitecturas
-  son exactamente lo que cambia de figura a figura.</p>
+  completas y <strong>ordenadas por ranking</strong> (de la que mejor dio a la que peor, por la mejor variante
+  de cada una — PR-AUC test, 6 seeds). Todos los diagramas usan las dimensiones reales del código
+  (<code>btr/model.py</code>) y comparten el mismo código de color, así que las diferencias entre
+  arquitecturas son exactamente lo que cambia de figura a figura.</p>
   <nav class="jump">
-    <a href="#p0">0 · preprocesamiento</a><a href="#feat">A · tabular</a><a href="#mlp">MLP control</a>
-    <a href="#text">C · texto</a><a href="#hybrid">A+C · híbrido</a><a href="#fusion">5B · fusión</a><a href="#tower">C2 · torre</a>
-    <a href="#listwise">B · listwise</a><a href="#familias">familias</a><a href="#tabla">tabla</a>
+    <a href="#p0">0 · preprocesamiento</a><a href="#feat">#1 tabular</a><a href="#mlp">#2 MLP</a>
+    <a href="#tower">#3 torre</a><a href="#fusion">#4 fusión</a><a href="#listwise_texto">#5 listwise+texto</a>
+    <a href="#listwise">#6 listwise</a><a href="#hybrid">#7 híbrido</a><a href="#text">#8 texto</a>
+    <a href="#familias">familias</a><a href="#tabla">tabla</a>
   </nav>
 </header>
 
