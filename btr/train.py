@@ -210,6 +210,70 @@ def pretrain_w2v(train_df, prep, d_model, device, epochs=3, window=2, k_neg=5, v
     return emb_c.weight.detach()
 
 
+def pretrain_mlm(model, split_train, cardinalities, epochs, batch_size, lr, device,
+                 verbose=True):
+    """Pre-entrenamiento "MLM sobre features" (revision externa, opcional).
+
+    Analogia con el MLM de BERT llevada a lo tabular: en cada fila se enmascara
+    UNA columna al azar (su token se reemplaza por un vector [MASK] aprendido) y
+    el modelo debe predecirla mirando las demas — clasificacion para categoricas
+    (nivel original), regresion para numericas (valor z-scoreado). Se entrena el
+    tronco (tokenizer + bloques) con cabezas temporarias que luego se descartan;
+    despues arranca el entrenamiento supervisado normal con ese tronco ya
+    "conocedor" de las correlaciones entre features.
+    """
+    import torch.nn as nn
+    x_cat, x_num, _, _ = split_train
+    tok = model.tokenizer
+    n_tok, n_cat = tok.n_tokens, tok.n_cat
+    d = model.cls.shape[-1]
+    mask_vec = nn.Parameter(torch.empty(1, d, device=device))
+    nn.init.normal_(mask_vec, mean=0.0, std=0.02)
+    heads = nn.ModuleList(
+        [nn.Linear(d, c) for c in cardinalities]
+        + [nn.Linear(d, 1) for _ in range(n_tok - n_cat)]
+    ).to(device)
+    opt = torch.optim.AdamW(list(model.parameters()) + [mask_vec] + list(heads.parameters()),
+                            lr=lr)
+    n = x_cat.shape[0]
+    for ep in range(epochs):
+        model.train()
+        perm = torch.randperm(n, device=device)
+        total, cuenta = 0.0, 0
+        for s in range(0, n, batch_size):
+            idx = perm[s:s + batch_size]
+            xc, xn = x_cat[idx], x_num[idx]
+            b = xc.shape[0]
+            tokens = tok(xc, xn)                                   # (b, T, d)
+            pos = torch.randint(0, n_tok, (b,), device=device)
+            tokens[torch.arange(b, device=device), pos] = mask_vec
+            x = torch.cat([model.cls.expand(b, -1, -1), tokens], dim=1)
+            if model.position_embedding_table is not None:
+                x = x + model.position_embedding_table(torch.arange(x.shape[1], device=device))
+            for blk in model.blocks:
+                x = blk(x)
+            h = model.ln_f(x)[torch.arange(b, device=device), pos + 1]  # +1 por el CLS
+            loss = x.new_zeros(())
+            for f in range(n_tok):
+                filas = pos == f
+                if not filas.any():
+                    continue
+                if f < n_cat:
+                    loss = loss + torch.nn.functional.cross_entropy(
+                        heads[f](h[filas]), xc[filas, f])
+                else:
+                    loss = loss + torch.nn.functional.mse_loss(
+                        heads[f](h[filas]).squeeze(-1), xn[filas, f - n_cat])
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item() * b
+            cuenta += b
+        if verbose:
+            print(f"  mlm epoch {ep}: loss {total / cuenta:.4f}")
+    # las cabezas y el [MASK] se descartan; queda el tronco pre-entrenado
+
+
 def resolve_device(arg):
     if arg == 'auto':
         return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -226,6 +290,14 @@ def run_name(args, seed):
     if args.cat_encoding != 'embedding':
         parts.append(f"cat{args.cat_encoding}"
                      + (str(args.hash_buckets) if args.cat_encoding == 'hashing' else ''))
+    if args.train_frac < 1.0:
+        parts.append(f"frac{args.train_frac:g}")
+    if args.init_seed is not None:
+        parts.append(f"init{args.init_seed}")
+    if args.pretrain_mlm:
+        parts.append(f"mlm{args.pretrain_mlm}")
+    if args.cv_k:
+        parts.append(f"cv{args.cv_k}f{args.cv_fold}")
     if args.cat_feature_encoding:
         pares = sorted(p.strip().replace('_', '').replace('=', '-')
                        for p in args.cat_feature_encoding.split(',') if p.strip())
@@ -385,8 +457,13 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
 
 def run(csv_path, seed, args, device):
     """Una corrida completa: prepara datos, entrena, guarda resultados/pesos."""
-    torch.manual_seed(seed)
+    torch.manual_seed(seed if args.init_seed is None else args.init_seed)
     listwise = args.arch == 'listwise'
+    if args.pretrain_mlm and (args.arch != 'transformer' or args.formulation != 'features'
+                              or args.cls_position != 'first'):
+        raise SystemExit('--pretrain-mlm es solo para transformer features con CLS al inicio')
+    if (args.cv_k or args.train_frac < 1.0) and listwise:
+        raise SystemExit('cv / train-frac no implementados para listwise')
     if args.cat_encoding == 'onehot' and args.arch != 'mlp':
         raise SystemExit('cat-encoding onehot es solo para --arch mlp: para el transformer, '
                          'one-hot + proyeccion lineal aprende la misma matriz que el '
@@ -419,7 +496,9 @@ def run(csv_path, seed, args, device):
         prep, train_df, splits = prepare(csv_path, seed=seed, max_text_len=args.max_text_len,
                                          strip_status=args.strip_status,
                                          extra_features=extras, include_cart=args.cart_aux > 0,
-                                         text_tokens=args.text_tokens)
+                                         text_tokens=args.text_tokens,
+                                         train_frac=args.train_frac,
+                                         cv_k=args.cv_k, cv_fold=args.cv_fold)
         max_products = None
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
@@ -475,6 +554,10 @@ def run(csv_path, seed, args, device):
     name = run_name(args, seed)
     print(f"\n=== {name} | {n_params:,} parametros | device {device} ===")
 
+    if args.pretrain_mlm:
+        pretrain_mlm(model, splits['train'], cardinalities, epochs=args.pretrain_mlm,
+                     batch_size=args.batch_size, lr=args.lr, device=device,
+                     verbose=not args.quiet)
     history = train_model(model, splits, epochs=args.epochs, batch_size=args.batch_size,
                           lr=args.lr, patience=args.patience, verbose=not args.quiet)
     val_m = evaluate(model, splits['val'])
@@ -558,6 +641,16 @@ def build_parser():
     parser.add_argument('--w2v-init', action='store_true',
                         help='pre-entrenar los embeddings de palabras con skipgram sobre el '
                              'corpus de train (requiere --text-tokens words)')
+    parser.add_argument('--train-frac', type=float, default=1.0, metavar='F',
+                        help='curva de aprendizaje: fraccion de las QUERIES de train (val/test intactos)')
+    parser.add_argument('--init-seed', type=int, default=None, metavar='N',
+                        help='seed de inicializacion/entrenamiento independiente del split '
+                             '(default: la misma seed; sirve para separar varianza y deep-ensembles)')
+    parser.add_argument('--pretrain-mlm', type=int, default=0, metavar='EPOCHS',
+                        help='pre-entrenar el tronco enmascarando una feature por fila '
+                             '(solo transformer features, CLS al inicio)')
+    parser.add_argument('--cv-k', type=int, default=0, help='GroupKFold por query: cantidad de folds')
+    parser.add_argument('--cv-fold', type=int, default=0, help='que fold es test (0..k-1)')
     parser.add_argument('--d-model', type=int, default=32)
     parser.add_argument('--n-head', type=int, default=4)
     parser.add_argument('--n-layer', type=int, default=2)

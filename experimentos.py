@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (52 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (67 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -135,6 +135,36 @@ EXPERIMENTOS |= {
     # la comparacion clase 1 vs clase 2 que pedia la revision externa
     'fusion_words_w2v':     (['--formulation', 'fusion', '--text-tokens', 'words',
                               '--max-text-len', '64', '--w2v-init'], 'texto'),
+}
+
+# ---- 4ta tanda (18/08): robustez y caracterizacion del MODELO FINAL ----
+# La busqueda de arquitectura ya convergio (feat_ordinal, analisis.md 8.2); esta
+# tanda no intenta superarlo (salvo MLM): lo interroga. Todo tabular = barato.
+ORD = ['--cat-encoding', 'ordinal', *PAC]  # la config exacta del modelo final
+EXPERIMENTOS |= {
+    # curva de aprendizaje: ¿el 0.824 esta saturado o mas datos ayudarian?
+    # (100% = feat_ordinal, ya corrido)
+    'curva_frac25': ([*ORD, '--train-frac', '0.25'], 'tabular'),
+    'curva_frac50': ([*ORD, '--train-frac', '0.5'], 'tabular'),
+    'curva_frac75': ([*ORD, '--train-frac', '0.75'], 'tabular'),
+    # varianza: mismo split, otra inicializacion -> ¿cuanto del ±0.018 es del
+    # split y cuanto del modelo? Ademas habilita el deep-ensemble puro (promediar
+    # las 6 inits de cada split). Grilla: 6 splits x (init original + estas 5).
+    'robu_init43': ([*ORD, '--init-seed', '43'], 'tabular'),
+    'robu_init44': ([*ORD, '--init-seed', '44'], 'tabular'),
+    'robu_init45': ([*ORD, '--init-seed', '45'], 'tabular'),
+    'robu_init46': ([*ORD, '--init-seed', '46'], 'tabular'),
+    'robu_init47': ([*ORD, '--init-seed', '47'], 'tabular'),
+    # MLM sobre features (revision externa): pre-entrenar el tronco enmascarando
+    # una columna por fila. ¿El pre-training regulariza como el ordinal?
+    'feat_mlm20':         (['--pretrain-mlm', '20', *PAC], 'tabular'),
+    'feat_ordinal_mlm20': ([*ORD, '--pretrain-mlm', '20'], 'tabular'),
+    # GroupKFold 5: cada query pasa por test una vez por seed -> intervalos finos
+    'cv5_fold0': ([*ORD, '--cv-k', '5', '--cv-fold', '0'], 'tabular'),
+    'cv5_fold1': ([*ORD, '--cv-k', '5', '--cv-fold', '1'], 'tabular'),
+    'cv5_fold2': ([*ORD, '--cv-k', '5', '--cv-fold', '2'], 'tabular'),
+    'cv5_fold3': ([*ORD, '--cv-k', '5', '--cv-fold', '3'], 'tabular'),
+    'cv5_fold4': ([*ORD, '--cv-k', '5', '--cv-fold', '4'], 'tabular'),
 }
 
 

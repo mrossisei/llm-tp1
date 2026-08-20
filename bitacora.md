@@ -294,6 +294,19 @@ deep-ensembles puros); logística + cross manual price_rel×tier (¿cuánto del 
 atención es esa única interacción?); MLM sobre features (el "guiño" de la revisión externa,
 scope medio); GroupKFold para intervalos más finos.
 
+## 18/08 — Cuarta tanda preparada (las 5 ideas, sin tocar nada de lo existente)
+
+**Pedido de Fer**: preparar las cinco ideas para mandarlas a correr a la noche. La quinta
+(logística + cross manual) no necesita GPU y se corrió en el acto: **+0.015 (6/6) pero explica
+solo ~12% del gap** logística→transformer — la atención aprende más que "el" cruce del EDA
+(`eda/cross_manual.py`, analisis §9.4). Las otras cuatro quedaron implementadas y en la suite
+(15 configs nuevas, 67 totales; analisis §10): `--train-frac` (curva de aprendizaje),
+`--init-seed` (varianza split vs init + deep-ensemble puro), `--pretrain-mlm` (MLM sobre
+features, con [MASK] aprendido y cabezas temporarias por feature), `--cv-k/--cv-fold`
+(GroupKFold por query con val recortada del resto). Todo smoke-testeado; claves canónicas
+únicas (67) y espejo JS verificado en node (143/143). El eje "GroupKFold" del panel dejó de
+ser "a pedir".
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

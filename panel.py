@@ -99,6 +99,11 @@ def canon(c):
     ttok = '-' if not has_text else ('chars' if arch == 'listwise'
                                      else c.get('text_tokens', 'chars'))
     w2v = '-' if not has_text else ('1' if (ttok == 'words' and c.get('w2v_init')) else '0')
+    frac = ffloat(c.get('train_frac', 1.0) or 1.0)
+    init = '-' if c.get('init_seed') is None else str(int(c['init_seed']))
+    mlm = str(int(c.get('pretrain_mlm', 0) or 0))
+    cvk = int(c.get('cv_k', 0) or 0)
+    cv = f"{cvk}.{int(c.get('cv_fold', 0) or 0)}" if cvk else '-'
     nh = '-' if arch == 'mlp' else str(int(c.get('n_head', 4)))
     nl = '-' if arch == 'mlp' else str(int(c.get('n_layer', 2)))
     return '|'.join([
@@ -107,6 +112,7 @@ def canon(c):
         str(int(c.get('epochs', 60))), str(int(c.get('batch_size', 256))),
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
+        frac, init, mlm, cv,
     ])
 
 
@@ -115,11 +121,13 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'pooling', 'positional', 'causal', 'pos_weight', 'epochs', 'batch_size',
               'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
               'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding',
-              'text_tokens', 'w2v_init']
+              'text_tokens', 'w2v_init', 'train_frac', 'init_seed', 'pretrain_mlm',
+              'cv_k', 'cv_fold']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
-                'text_tokens': 'chars', 'w2v_init': False}
+                'text_tokens': 'chars', 'w2v_init': False, 'train_frac': 1.0,
+                'init_seed': None, 'pretrain_mlm': 0, 'cv_k': 0, 'cv_fold': 0}
 
 
 def cfg_dict(c):
@@ -477,7 +485,7 @@ def controles(features):
     <label class="opt on" data-val="holdout"><input type="radio" name="val" value="holdout" checked>
       <span class="t">holdout por query</span><span class="d">70/15/15 × N seeds (actual)</span></label>
     <label class="opt" data-val="gkfold"><input type="radio" name="val" value="gkfold">
-      <span class="t">GroupKFold por query</span><span class="d">k folds agrupados (pedir)</span></label>
+      <span class="t">GroupKFold por query</span><span class="d">k folds agrupados (--cv-k; suite cv5_fold*)</span></label>
     <label class="opt" data-val="producto"><input type="radio" name="val" value="producto">
       <span class="t">split por producto</span><span class="d">verificado: da igual (§7.1) (pedir)</span></label>
   </fieldset>
@@ -490,11 +498,20 @@ def controles(features):
     <label class="inl">patience <input type="number" id="patience" value="8" min="1"></label>
     <label class="inl" id="cart-wrap">λ cart (multi-task) <input type="number" id="cart_aux" value="0" min="0" max="1" step="0.1"></label>
   </div>
+  <div class="rowc">
+    <label class="inl">fracción de train <input type="number" id="train_frac" value="1" min="0.05" max="1" step="0.05"></label>
+    <label class="inl">init-seed <input type="number" id="init_seed" placeholder="= seed" min="0"></label>
+    <label class="inl">épocas MLM (pre-training) <input type="number" id="pretrain_mlm" value="0" min="0" max="100"></label>
+  </div>
   <p class="hint">La decisión de parar y de elegir configs se toma SIEMPRE con la validación
   (PR-AUC); test solo se reporta. El protocolo vigente tras la 1ª tanda: <b>6 seeds</b>, y para
   tabulares <b>patience 20 / tope 300</b> (ganó en 21/24; en texto puro empeora el test).
   <b>λ cart</b> &gt; 0 agrega la BCE auxiliar sobre <code>cart</code> como segunda tarea
-  (nunca como input — propuesta #2 de Junior; suite <code>feat_cartaux01/03/05</code>).</p>
+  (nunca como input — propuesta #2 de Junior; suite <code>feat_cartaux01/03/05</code>).
+  <b>Fracción de train</b> = curva de aprendizaje (suite <code>curva_frac*</code>);
+  <b>init-seed</b> separa la seed del modelo de la del split (varianza y deep-ensembles, suite
+  <code>robu_init*</code>); <b>MLM</b> pre-entrena el tronco enmascarando una feature por fila
+  (suite <code>feat_mlm20</code>, <code>feat_ordinal_mlm20</code>); GroupKFold: <code>cv5_fold0..4</code>.</p>
 </section>
 
 <section class="card"><h2><span class="n">6</span>Métricas — se calculan SIEMPRE todas</h2>
@@ -659,13 +676,19 @@ function canonKey(c){
   const cart = arch==='listwise' ? '-' : ffloat(c.cart_aux||0);
   const ttok = !htext ? '-' : (arch==='listwise' ? 'chars' : (c.text_tokens||'chars'));
   const w2v = !htext ? '-' : ((ttok==='words' && c.w2v_init) ? '1' : '0');
+  const frac = ffloat(c.train_frac||1.0);
+  const init = (c.init_seed===null||c.init_seed===undefined) ? '-' : String(Math.trunc(c.init_seed));
+  const mlm = String(Math.trunc(c.pretrain_mlm||0));
+  const cvk = Math.trunc(c.cv_k||0);
+  const cv = cvk ? `${cvk}.${Math.trunc(c.cv_fold||0)}` : '-';
   const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
   const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
     ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
-    catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v].join('|');
+    catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
+    frac, init, mlm, cv].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -711,6 +734,10 @@ function coerciones(s){
     out.push('listwise-texto es char-level (words no implementado ahí) → chars');
   if (s.arch==='transformer' && s.formulation==='fusion')
     out.push('fusion: el texto entra como UN token-resumen (torre interna); sin PE (sigue siendo un set)');
+  if (Number(s.pretrain_mlm)>0 && !(s.arch==='transformer' && s.formulation==='features' && s.cls_position==='first'))
+    out.push('⚠ pretrain-mlm es solo para transformer features con CLS al inicio (el comando fallaría)');
+  if ((Number(s.cv_k)>0 || Number(s.train_frac)<1) && s.arch==='listwise')
+    out.push('cv / train-frac no implementados para listwise — el comando fallaría');
   return out;
 }
 
@@ -722,8 +749,6 @@ function pendientes(s){
     out.push({k:'encoding_numericas_por_feature', v:Object.fromEntries(Object.entries(X.numpf)),
       n:'modo por feature: hoy --numeric-mode es global ('+(mix.map(([f,m])=>f+'→'+m).join(', ')||'todo lineal')+')'});
   }
-  if (X.val==='gkfold') out.push({k:'validacion', v:'GroupKFold k='+X.kfold,
-    n:'k-fold agrupado por query en lugar del holdout'});
   if (X.val==='producto') out.push({k:'validacion', v:'split por producto',
     n:'agrupar por producto en vez de query (ya verificado que no cambia métricas)'});
   if (X.mq) out.push({k:'metricas_por_pagina', v:true,
@@ -770,6 +795,10 @@ function comando(s){
   if ((s.arch==='transformer'||s.arch==='tower') && s.causal) p.push('--causal');
   if (s.pos_weight) p.push('--pos-weight');
   if (s.arch!=='listwise' && Number(s.cart_aux)>0) p.push('--cart-aux', ffloat(s.cart_aux));
+  if (Number(s.train_frac)>0 && Number(s.train_frac)<1) p.push('--train-frac', ffloat(s.train_frac));
+  if (s.init_seed!==null && s.init_seed!==undefined && s.init_seed!=='') p.push('--init-seed', String(s.init_seed));
+  if (Number(s.pretrain_mlm)>0) p.push('--pretrain-mlm', String(s.pretrain_mlm));
+  if (Number(s.cv_k)>0){ p.push('--cv-k', String(s.cv_k)); p.push('--cv-fold', String(s.cv_fold||0)); }
   if (s.epochs!==60) p.push('--epochs', String(s.epochs));
   if (s.batch_size!==256) p.push('--batch-size', String(s.batch_size));
   if (Number(s.lr)!==0.001) p.push('--lr', ffloat(s.lr));
@@ -1004,7 +1033,8 @@ function syncUI(){
   $('strip').checked = !!S.strip_status;
   $('listwise_texto').checked = !!S.listwise_texto;
   ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins',
-   'hash_buckets','cart_aux'].forEach(k=>{ $(k).value = S[k]; });
+   'hash_buckets','cart_aux','train_frac','pretrain_mlm'].forEach(k=>{ $(k).value = S[k]; });
+  $('init_seed').value = (S.init_seed===null||S.init_seed===undefined) ? '' : S.init_seed;
   $('catenc').value = S.cat_encoding||'embedding';
   const catfeObj = catfeRaw(S.cat_feature_encoding);
   document.querySelectorAll('select[name=catpf]').forEach(sel=>{ sel.value = catfeObj[sel.dataset.f]||''; });
@@ -1065,16 +1095,22 @@ document.querySelectorAll('select[name=numpf]').forEach(s=>s.onchange = e => {
   $(k).onchange = e => { S[k] = isInt ? parseInt(e.target.value||0,10) : parseFloat(e.target.value||0); update(); };
 });
 $('seeds').onchange = e => { X.seeds = parseInt(e.target.value||1,10); update(); };
-$('kfold').onchange = e => { X.kfold = parseInt(e.target.value||5,10); update(); };
+$('kfold').onchange = e => { X.kfold = parseInt(e.target.value||5,10);
+  if (X.val==='gkfold') S.cv_k = X.kfold; update(); };
 $('pool-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.pooling = b.dataset.v; syncUI(); update(); });
 $('positional').onchange = e => { S.positional = e.target.checked; update(); };
 $('causal').onchange = e => { S.causal = e.target.checked; update(); };
 $('pos_weight').onchange = e => { S.pos_weight = e.target.checked; update(); };
 document.querySelectorAll('input[name=val]').forEach(r=>r.onchange = () => {
   X.val = r.value;
+  S.cv_k = r.value==='gkfold' ? (X.kfold||5) : 0;
+  S.cv_fold = 0;
   document.querySelectorAll('[data-val]').forEach(el=>el.classList.toggle('on', el.dataset.val===X.val));
   update();
 });
+$('train_frac').onchange = e => { S.train_frac = parseFloat(e.target.value||1); update(); };
+$('init_seed').onchange = e => { S.init_seed = e.target.value==='' ? null : parseInt(e.target.value,10); update(); };
+$('pretrain_mlm').onchange = e => { S.pretrain_mlm = parseInt(e.target.value||0,10); update(); };
 $('mq').onchange = e => { X.mq = e.target.checked; update(); };
 const copiar = (btn, src) => {
   const txt = $(src).textContent;

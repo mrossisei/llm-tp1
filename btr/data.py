@@ -93,16 +93,29 @@ def load_dataset(csv_path):
     return df
 
 
-def split_by_query(df, seed=42, val_frac=0.15, test_frac=0.15):
-    """Particiona por query_id para que una misma busqueda no cruce splits."""
+def split_by_query(df, seed=42, val_frac=0.15, test_frac=0.15, cv_k=0, cv_fold=0):
+    """Particiona por query_id para que una misma busqueda no cruce splits.
+
+    Modo por defecto: holdout 70/15/15. Con cv_k > 0: GroupKFold manual — las
+    queries (barajadas con seed) se parten en cv_k folds; test = el fold cv_fold
+    y la validacion (para el early stopping) se recorta del resto. Corriendo los
+    cv_k folds con la misma seed, cada query pasa por test exactamente una vez.
+    """
     rng = np.random.default_rng(seed)
     # a numpy: shufflear el ExtensionArray de pandas no esta garantizado (warning de pandas 3)
     queries = df['query_id'].unique().to_numpy()
     rng.shuffle(queries)
-    n_test = int(len(queries) * test_frac)
-    n_val = int(len(queries) * val_frac)
-    test_q = set(queries[:n_test])
-    val_q = set(queries[n_test:n_test + n_val])
+    if cv_k:
+        assert 0 <= cv_fold < cv_k, 'cv_fold fuera de rango'
+        folds = np.array_split(queries, cv_k)
+        test_q = set(folds[cv_fold])
+        resto = np.concatenate([f for i, f in enumerate(folds) if i != cv_fold])
+        val_q = set(resto[:int(len(resto) * val_frac)])
+    else:
+        n_test = int(len(queries) * test_frac)
+        n_val = int(len(queries) * val_frac)
+        test_q = set(queries[:n_test])
+        val_q = set(queries[n_test:n_test + n_val])
     assert not (test_q & val_q), 'splits no disjuntos: bug en el particionado'
     is_test = df['query_id'].isin(test_q)
     is_val = df['query_id'].isin(val_q)
@@ -228,10 +241,20 @@ class Preprocessor:
 
 
 def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False, text_tokens='chars'):
-    """Pipeline completo: carga -> split por query -> fit en train -> tensores."""
+            extra_features=(), include_cart=False, text_tokens='chars',
+            train_frac=1.0, cv_k=0, cv_fold=0):
+    """Pipeline completo: carga -> split por query -> fit en train -> tensores.
+
+    train_frac < 1 submuestrea las QUERIES de train (curva de aprendizaje; val y
+    test quedan intactos para que las curvas sean comparables). El Preprocessor
+    se ajusta sobre el train reducido, como corresponde.
+    """
     df = load_dataset(csv_path)
-    train_df, val_df, test_df = split_by_query(df, seed=seed)
+    train_df, val_df, test_df = split_by_query(df, seed=seed, cv_k=cv_k, cv_fold=cv_fold)
+    if train_frac < 1.0:
+        qs = train_df['query_id'].unique().to_numpy()
+        np.random.default_rng(seed + 1000).shuffle(qs)
+        train_df = train_df[train_df['query_id'].isin(set(qs[:int(len(qs) * train_frac)]))]
     prep = Preprocessor.fit(train_df, max_text_len=max_text_len, strip_status=strip_status,
                             extra_features=extra_features, include_cart=include_cart,
                             text_tokens=text_tokens)

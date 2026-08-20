@@ -384,7 +384,32 @@ comprado en el 91% de las páginas; azar esperado: 0.267) · **MRR 0.954** · **
 Es la traducción directa de la PR-AUC al uso de negocio (¿a quién promociono?): elegir el
 ganador de la página casi siempre sale bien.
 
-## 10. Pendientes analíticos
+### 9.4 Logística + cross manual: la atención aprende más que "la" interacción
+Darle a la regresión logística la interacción del EDA hecha a mano
+(one-hot(status) × [price_rel, price_rel²]) la mejora **+0.015 (gana 6/6)**: 0.698 → 0.714
+(6 seeds; el 0.660 citado antes era solo seed 42). Pero eso **explica apenas el ~12% del gap**
+logística → transformer final (0.126). Conclusión para el informe: la ventaja de la atención no
+es "descubrió el cruce precio×tier" — ese cruce existe y suma, pero lo grueso viene de la
+composición de muchas no-linealidades chicas. (`eda/cross_manual.py`)
+
+## 10. Cuarta tanda (diseño): robustez y caracterización del modelo final
+
+Preparada el 18/08 (15 configs nuevas, todas tabulares = baratas; 67 totales en la suite).
+No busca superar a `feat_ordinal` (la búsqueda convergió) — lo interroga:
+
+| configs | pregunta |
+|---|---|
+| `curva_frac25/50/75` | curva de aprendizaje: ¿0.824 está saturado en datos? (100% = feat_ordinal) |
+| `robu_init43..47` | mismo modelo, otra seed de init: ¿cuánto del ±0.018 es split y cuánto init? Habilita el deep-ensemble puro (6 inits × split) |
+| `feat_mlm20`, `feat_ordinal_mlm20` | MLM sobre features (revisión externa): ¿el pre-training regulariza como ordinal? La única con chance de superar al final |
+| `cv5_fold0..4` | GroupKFold 5 por query: cada query pasa por test una vez por seed → intervalos finos (5 folds × 6 seeds = 30 mediciones) |
+
+Notas de implementación: `--train-frac` submuestrea QUERIES de train (val/test intactos);
+`--init-seed` separa la seed del modelo de la del split; `--pretrain-mlm N` enmascara una
+feature por fila y la predice (cabezas temporarias que se descartan); `--cv-k/--cv-fold`
+parten las queries en k folds con val recortada del resto (early stopping intacto).
+
+## 11. Pendientes analíticos
 
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.
