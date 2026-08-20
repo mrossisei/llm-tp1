@@ -320,6 +320,26 @@ el intervalo fino de cabecera. Bug corregido en el camino: los globs de checkpoi
 scripts de eda matcheaban también `feat_ordinal_mlm20` (no existía cuando se escribieron) —
 precisados a `{tag}_features_*`. No queda nada por correr en GPU.
 
+## 20/08 — La carpeta /entrega: lo que efectivamente se entrega
+
+**Pedido de Fer**: una carpeta `entrega/` con el modelo final y su código (solo esa
+arquitectura), los experimentos/resultados/análisis, y la presentación completa con guión —
+narrada limpia (base FT-Transformer → experimentos de a un aspecto), no la maraña cronológica
+real. Verificado al final contra los transcripts (sobre todo clase2b) y el Enunciado.pdf.
+
+**Hecho.** `entrega/modelo/` (data/model/train/predecir + 6 checkpoints en formato plano sin
+pickles de clases; equivalencia verificada: tensores idénticos al pipeline del repo y
+predicciones allclose 1e-6), `entrega/experimentos/` (analisis.md adaptado + CSV de las 91
+configs + 7 figuras), `entrega/presentacion/` (21 diapositivas autocontenidas — 20 + backup —
+con guión de ~27 min y apéndice para preguntas), `entrega/README.md` con la tabla de cobertura
+del enunciado punto por punto. La auditoría contra clase2b encontró y corrigió dos cosas:
+(1) la corrida de sanidad había pisado el checkpoint del seed 42 con un modelo CPU de la cola
+mala (0.694) — re-convertido del GPU (0.8042 ✓); (2) faltaba la VISUALIZACIÓN de
+overfitting/underfitting que el enunciado pide explícitamente — nueva figura
+`curvas_entrenamiento.png` + diapositiva de backup. Nota de reproducibilidad documentada: la
+varianza de entrenamiento tiene cola izquierda (grilla: 0.718–0.870) — por eso el protocolo
+promedia 6 seeds y los pesos entregados son los de la suite.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
