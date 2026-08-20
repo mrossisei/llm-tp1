@@ -392,22 +392,46 @@ logística → transformer final (0.126). Conclusión para el informe: la ventaj
 es "descubrió el cruce precio×tier" — ese cruce existe y suma, pero lo grueso viene de la
 composición de muchas no-linealidades chicas. (`eda/cross_manual.py`)
 
-## 10. Cuarta tanda (diseño): robustez y caracterización del modelo final
+## 10. Cuarta tanda: robustez del modelo final — resultados (90 corridas, 18/08)
 
-Preparada el 18/08 (15 configs nuevas, todas tabulares = baratas; 67 totales en la suite).
-No busca superar a `feat_ordinal` (la búsqueda convergió) — lo interroga:
+15 configs × 6 seeds, todas tabulares. No buscaba superar a `feat_ordinal` (salvo MLM) — lo
+interrogaba. Implementación: `--train-frac` (submuestrea queries de train, val/test intactos),
+`--init-seed` (separa la seed del modelo de la del split), `--pretrain-mlm` (enmascara una
+feature por fila y la predice, cabezas temporarias), `--cv-k/--cv-fold` (GroupKFold por query).
 
-| configs | pregunta |
-|---|---|
-| `curva_frac25/50/75` | curva de aprendizaje: ¿0.824 está saturado en datos? (100% = feat_ordinal) |
-| `robu_init43..47` | mismo modelo, otra seed de init: ¿cuánto del ±0.018 es split y cuánto init? Habilita el deep-ensemble puro (6 inits × split) |
-| `feat_mlm20`, `feat_ordinal_mlm20` | MLM sobre features (revisión externa): ¿el pre-training regulariza como ordinal? La única con chance de superar al final |
-| `cv5_fold0..4` | GroupKFold 5 por query: cada query pasa por test una vez por seed → intervalos finos (5 folds × 6 seeds = 30 mediciones) |
+### 10.1 Curva de aprendizaje: casi saturada
+25% → 0.758 ± 0.047 · 50% → 0.780 ± 0.027 · 75% → 0.817 ± 0.036 · 100% → **0.824 ± 0.018**.
+El último 25% de los datos aporta solo +0.007: la curva está aplanándose — más datos ayudarían
+*algo*, pero el gap dominante ya no es de datos. Bonus: con el **75%** de los datos el
+transformer ya está en 0.817, arriba del GBM entrenado con el 100% (0.762).
 
-Notas de implementación: `--train-frac` submuestrea QUERIES de train (val/test intactos);
-`--init-seed` separa la seed del modelo de la del split; `--pretrain-mlm N` enmascara una
-feature por fila y la predice (cabezas temporarias que se descartan); `--cv-k/--cv-fold`
-parten las queries en k folds con val recortada del resto (early stopping intacto).
+![Curva de aprendizaje](graficos/curva_aprendizaje.png)
+
+### 10.2 La varianza es mitad split, mitad modelo
+Grilla completa 5 inits × 6 splits (`robu_init43..47`): desvío ENTRE splits 0.0233, desvío
+entre inits DENTRO de cada split 0.0209 → **~55% de la varianza viene del split, ~45% de la
+inicialización**. Dos lecturas: (a) la barra de error del proyecto no es "inestabilidad del
+modelo" a secas — la mitad es lotería del split, lo que valida el protocolo de promediar seeds;
+(b) la mitad init es exactamente lo que un ensemble puede eliminar → §10.4.
+
+### 10.3 MLM: regulariza a los embeddings, no le agrega nada a ordinal
+`feat_mlm20` (embeddings + pre-training): **+0.011 (4/6)** sobre su base → el MLM sobre
+features funciona como regularizador, en la dirección esperada. Pero `feat_ordinal_mlm20`:
+−0.007 (3/6) — sobre ordinal no hay nada que regularizar que ordinal no regularice ya, más
+barato. La hipótesis quedó confirmada: **MLM y ordinal son regularizadores alternativos, y
+ordinal es mejor y más simple**. El modelo final no cambia. (El "guiño clase 2" queda hecho y
+medido, como pedía la revisión externa.)
+
+### 10.4 Deep-ensemble puro: +0.0095, y el techo se confirma en ~0.834
+Promediando las ~6 inits de cada split (`eda/deep_ensemble.py`): **0.8334 ± 0.022, Δ +0.0095
+(gana 5/6)**. Convergencia notable: el ensemble de 3 configs distintas (§9.1) dio 0.8339 y el
+de 6 inits idénticas da 0.8334 — **dos rutas de ensemble independientes aterrizan en el mismo
+~0.834**, que queda como el techo práctico de este esqueleto sobre este dataset.
+
+### 10.5 GroupKFold: el número final, con intervalo fino
+5 folds × 6 seeds = 30 mediciones de test: **0.8207 ± 0.0119** (media de las 6 CV completas;
+las 30 mediciones crudas: ± 0.027). Consistente con el holdout (0.824 ± 0.018) y con intervalo
+más angosto. Número de cabecera para el informe: **PR-AUC ≈ 0.82 (CV5×6), 0.834 en ensemble**.
 
 ## 11. Pendientes analíticos
 

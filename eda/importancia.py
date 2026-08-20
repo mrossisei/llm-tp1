@@ -33,7 +33,7 @@ def main():
     feats = CAT_FEATURES + NUM_FEATURES
     deltas = {f: [] for f in feats}
     for seed in SEEDS:
-        ckpt = next((REPO / 'pesos').glob(f'{TAG}_*seed{seed}.pt'))
+        ckpt = next((REPO / 'pesos').glob(f'{TAG}_features_*seed{seed}.pt'))
         model, _ = load_checkpoint(ckpt)
         _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=seed)
         x_cat, x_num, x_text, y = splits['test']

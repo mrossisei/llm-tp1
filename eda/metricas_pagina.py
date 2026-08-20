@@ -40,7 +40,7 @@ def main():
     res = {k: [] for k in ('top1', 'mrr', 'ndcg', 'azar', 'paginas')}
     for seed in SEEDS:
         _, _, test_df = split_by_query(df, seed=seed)
-        ckpt = next((REPO / 'pesos').glob(f'{TAG}_*seed{seed}.pt'))
+        ckpt = next((REPO / 'pesos').glob(f'{TAG}_features_*seed{seed}.pt'))
         model, prep = load_checkpoint(ckpt)
         x_cat, x_num, x_text, y = prep.transform(test_df)
         with torch.no_grad():

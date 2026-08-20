@@ -34,7 +34,7 @@ MEJOR_SOLO = 'feat_ordinal'
 
 
 def probs_de(tag, seed, splits):
-    ckpt = next((REPO / 'pesos').glob(f'{tag}_*seed{seed}.pt'))
+    ckpt = next((REPO / 'pesos').glob(f'{tag}_features_*seed{seed}.pt'))
     model, _ = load_checkpoint(ckpt)
     out = {}
     with torch.no_grad():

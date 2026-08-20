@@ -307,6 +307,19 @@ features, con [MASK] aprendido y cabezas temporarias por feature), `--cv-k/--cv-
 únicas (67) y espejo JS verificado en node (143/143). El eje "GroupKFold" del panel dejó de
 ser "a pedir".
 
+## 18/08 — Cuarta tanda corrida: el capítulo experimental queda sellado
+
+**Todo completo** (90/90; `listwise_texto` queda en 4 seeds por decisión de costo — no cambia
+conclusiones). Resultados (analisis §10): curva de aprendizaje **casi saturada** (el último 25%
+de datos aporta +0.007; con 75% ya se supera al GBM-100%); la varianza es **~55% split / ~45%
+init** (grilla 5×6 — valida promediar seeds y explica por qué el ensemble ayuda); **MLM
+regulariza a los embeddings (+0.011) pero no aporta sobre ordinal** (−0.007): regularizadores
+alternativos, gana el más simple; **deep-ensemble puro +0.0095 → 0.8334**, convergiendo con el
+ensemble de configs (0.8339) en el mismo techo **~0.834**; GroupKFold 5×6: **0.8207 ± 0.0119**,
+el intervalo fino de cabecera. Bug corregido en el camino: los globs de checkpoints de los
+scripts de eda matcheaban también `feat_ordinal_mlm20` (no existía cuando se escribieron) —
+precisados a `{tag}_features_*`. No queda nada por correr en GPU.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
