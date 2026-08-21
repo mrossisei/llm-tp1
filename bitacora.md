@@ -340,6 +340,23 @@ overfitting/underfitting que el enunciado pide explícitamente — nueva figura
 varianza de entrenamiento tiene cola izquierda (grilla: 0.718–0.870) — por eso el protocolo
 promedia 6 seeds y los pesos entregados son los de la suite.
 
+## 21/08 — Idea de Fer: pesos por feature dentro del transformer (5ª tanda)
+
+**Pedido.** "Cada feature con sus parámetros específicos: su propio W_q (y W_k y demás) y su
+propia MLP por token." Evaluación: la idea es *principled* — el weight-tying entre posiciones es
+un sesgo pensado para posiciones intercambiables, y acá la posición ES el feature; ya hacemos
+identidad-por-parámetros en la entrada (tokenizador), esto la extiende a los bloques. No es el
+estándar de los transformers tabulares → ablación fresca y defendible. Hipótesis honesta
+registrada ANTES de correr: multiplica parámetros ×4–12 y este TP viene demostrando que el prior
+simple le gana a la capacidad → lo esperable es que no supere a 0.824; correrlo cierra la
+pregunta del sesgo inductivo en cualquier caso.
+
+**Hecho.** `HeadPorFeature` (W_q/W_k/W_v de shape (T,d,h) por posición, einsum) y
+`FeedForwardPorFeature` (14 MLPs) en `btr/model.py`, flag `--per-feature {qkv,ffn,both}` con
+guardias (solo transformer features, sin causal); checkpoints viejos intactos. 4 configs nuevas
+(71 totales): pf_qkv / pf_ffn / pf_full sobre el campeón ordinal + pf_full_emb sobre embeddings.
+Panel con el eje nuevo (canon 162/162 verificado en node). La entrega NO se toca salvo que gane.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

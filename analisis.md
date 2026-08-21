@@ -433,7 +433,30 @@ de 6 inits idénticas da 0.8334 — **dos rutas de ensemble independientes aterr
 las 30 mediciones crudas: ± 0.027). Consistente con el holdout (0.824 ± 0.018) y con intervalo
 más angosto. Número de cabecera para el informe: **PR-AUC ≈ 0.82 (CV5×6), 0.834 en ensemble**.
 
-## 11. Pendientes analíticos
+## 11. Quinta tanda (diseño): pesos por feature dentro del transformer — idea de Fer
+
+Pregunta: en un transformer estándar, W_q/W_k/W_v y la FFN se **comparten entre posiciones** —
+el sesgo inductivo correcto para texto, donde una posición no significa nada fijo. Pero en
+nuestra formulación **la posición ES el feature** (token 1 = status, siempre). ¿Hace falta el
+weight-tying cuando el conjunto es fijo? La idea de Fer: desatarlos — cada feature con su propio
+W_q/W_k/W_v (hace sus propias "preguntas") y/o su propia FFN (13+1 MLPs, una por posición). Es
+la extensión natural de la identidad-por-parámetros que ya usamos en la ENTRADA (el
+FeatureTokenizer) hacia adentro de los bloques. No es el estándar de ningún transformer tabular
+que conozcamos (FT-Transformer/TabTransformer/SAINT comparten): como mínimo, una ablación fresca.
+
+Implementación: `--per-feature {qkv,ffn,both}` (`HeadPorFeature` y `FeedForwardPorFeature` en
+`btr/model.py`, vía einsum con pesos (T, d, ·); solo formulation features, sin causal). Costos:
+26k → 106k (qkv) / 245k (ffn) / 323k (both) parámetros.
+
+**Hipótesis registrada antes de correr**: todo este TP dice que en 10k filas gana el prior
+simple sobre la capacidad (ordinal > embeddings; la grilla de capacidad en meseta; MLM sin
+efecto sobre ordinal) → lo esperable es que **no supere a 0.824 por overfitting**, quizá con
+la variante qkv (la más barata) como la menos mala. Si gana, es un hallazgo de verdad; si
+pierde, cierra la pregunta del sesgo inductivo con evidencia. Configs: `pf_qkv`, `pf_ffn`,
+`pf_full` (sobre el campeón ordinal) y `pf_full_emb` (sobre embeddings: ¿el desatado suple la
+identidad que ordinal inyecta?).
+
+## 12. Pendientes analíticos
 
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.

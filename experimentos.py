@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (67 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (71 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -165,6 +165,23 @@ EXPERIMENTOS |= {
     'cv5_fold2': ([*ORD, '--cv-k', '5', '--cv-fold', '2'], 'tabular'),
     'cv5_fold3': ([*ORD, '--cv-k', '5', '--cv-fold', '3'], 'tabular'),
     'cv5_fold4': ([*ORD, '--cv-k', '5', '--cv-fold', '4'], 'tabular'),
+}
+
+# ---- 5ta tanda (21/08): pesos POR FEATURE dentro del transformer (idea de Fer) ----
+# En texto, compartir W_q/W_k/W_v y la FFN entre posiciones es el sesgo inductivo
+# correcto (posiciones intercambiables). Aca la posicion ES el feature: desatar
+# los pesos (cada feature con su propio W_q/W_k/W_v y/o su propia FFN) es la
+# extension natural de la identidad-por-parametros que ya usamos en la ENTRADA.
+# Hipotesis registrada ANTES de correr: multiplica parametros (26k -> 106k/245k/
+# 323k) y todo el TP dice que en 10k filas gana el prior simple -> lo esperable
+# es que NO supere a feat_ordinal por overfitting; correrlo cierra la pregunta
+# "¿hace falta el weight-tying del transformer cuando el conjunto es fijo?".
+EXPERIMENTOS |= {
+    'pf_qkv':      ([*ORD, '--per-feature', 'qkv'], 'tabular'),
+    'pf_ffn':      ([*ORD, '--per-feature', 'ffn'], 'tabular'),
+    'pf_full':     ([*ORD, '--per-feature', 'both'], 'tabular'),
+    # sobre embeddings: ¿el desatado suple la identidad que el ordinal ya inyecta?
+    'pf_full_emb': (['--per-feature', 'both', *PAC], 'tabular'),
 }
 
 

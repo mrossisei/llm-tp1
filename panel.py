@@ -104,6 +104,7 @@ def canon(c):
     mlm = str(int(c.get('pretrain_mlm', 0) or 0))
     cvk = int(c.get('cv_k', 0) or 0)
     cv = f"{cvk}.{int(c.get('cv_fold', 0) or 0)}" if cvk else '-'
+    pf = c.get('per_feature', 'none') if (arch == 'transformer' and form == 'features') else '-'
     nh = '-' if arch == 'mlp' else str(int(c.get('n_head', 4)))
     nl = '-' if arch == 'mlp' else str(int(c.get('n_layer', 2)))
     return '|'.join([
@@ -112,7 +113,7 @@ def canon(c):
         str(int(c.get('epochs', 60))), str(int(c.get('batch_size', 256))),
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
-        frac, init, mlm, cv,
+        frac, init, mlm, cv, pf,
     ])
 
 
@@ -122,12 +123,13 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
               'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding',
               'text_tokens', 'w2v_init', 'train_frac', 'init_seed', 'pretrain_mlm',
-              'cv_k', 'cv_fold']
+              'cv_k', 'cv_fold', 'per_feature']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
                 'text_tokens': 'chars', 'w2v_init': False, 'train_frac': 1.0,
-                'init_seed': None, 'pretrain_mlm': 0, 'cv_k': 0, 'cv_fold': 0}
+                'init_seed': None, 'pretrain_mlm': 0, 'cv_k': 0, 'cv_fold': 0,
+                'per_feature': 'none'}
 
 
 def cfg_dict(c):
@@ -466,6 +468,11 @@ def controles(features):
     <label class="inl" id="pool-wrap">pooling <span class="seg" id="pool-seg">
       <button type="button" data-v="cls" class="on">[CLS]</button>
       <button type="button" data-v="mean">promedio</button></span></label>
+    <label class="inl" id="pf-wrap">pesos por feature <span class="seg" id="pf-seg">
+      <button type="button" data-v="none" class="on">no</button>
+      <button type="button" data-v="qkv">QKV</button>
+      <button type="button" data-v="ffn">FFN</button>
+      <button type="button" data-v="both">ambos</button></span></label>
     <label class="inl" id="clspos-wrap">CLS <span class="seg" id="clspos-seg">
       <button type="button" data-v="first" class="on">al inicio</button>
       <button type="button" data-v="last">al final</button></span></label>
@@ -681,6 +688,7 @@ function canonKey(c){
   const mlm = String(Math.trunc(c.pretrain_mlm||0));
   const cvk = Math.trunc(c.cv_k||0);
   const cv = cvk ? `${cvk}.${Math.trunc(c.cv_fold||0)}` : '-';
+  const pf = (arch==='transformer' && form==='features') ? (c.per_feature||'none') : '-';
   const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
   const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
@@ -688,7 +696,7 @@ function canonKey(c){
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
     ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
     catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
-    frac, init, mlm, cv].join('|');
+    frac, init, mlm, cv, pf].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -736,6 +744,8 @@ function coerciones(s){
     out.push('fusion: el texto entra como UN token-resumen (torre interna); sin PE (sigue siendo un set)');
   if (Number(s.pretrain_mlm)>0 && !(s.arch==='transformer' && s.formulation==='features' && s.cls_position==='first'))
     out.push('⚠ pretrain-mlm es solo para transformer features con CLS al inicio (el comando fallaría)');
+  if ((s.per_feature||'none')!=='none' && s.arch==='transformer' && s.formulation==='features' && s.causal)
+    out.push('⚠ per-feature no se combina con causal — el comando fallaría');
   if ((Number(s.cv_k)>0 || Number(s.train_frac)<1) && s.arch==='listwise')
     out.push('cv / train-frac no implementados para listwise — el comando fallaría');
   return out;
@@ -799,6 +809,8 @@ function comando(s){
   if (s.init_seed!==null && s.init_seed!==undefined && s.init_seed!=='') p.push('--init-seed', String(s.init_seed));
   if (Number(s.pretrain_mlm)>0) p.push('--pretrain-mlm', String(s.pretrain_mlm));
   if (Number(s.cv_k)>0){ p.push('--cv-k', String(s.cv_k)); p.push('--cv-fold', String(s.cv_fold||0)); }
+  if (s.arch==='transformer' && s.formulation==='features' && (s.per_feature||'none')!=='none')
+    p.push('--per-feature', s.per_feature);
   if (s.epochs!==60) p.push('--epochs', String(s.epochs));
   if (s.batch_size!==256) p.push('--batch-size', String(s.batch_size));
   if (Number(s.lr)!==0.001) p.push('--lr', ffloat(s.lr));
@@ -959,6 +971,7 @@ function update(){
   $('nh-wrap').style.opacity = $('nl-wrap').style.opacity = S.arch==='mlp' ? .45 : 1;
   $('pool-wrap').style.display = S.arch==='transformer' ? '' : 'none';
   $('clspos-wrap').style.display = S.arch==='transformer' ? '' : 'none';
+  $('pf-wrap').style.display = (S.arch==='transformer' && S.formulation==='features') ? '' : 'none';
   $('pos-wrap').style.display = (S.arch==='transformer' && S.formulation==='features') ? '' : 'none';
   $('caus-wrap').style.display = (S.arch==='transformer'||S.arch==='tower') ? '' : 'none';
   $('nbins-wrap').style.display = S.numeric_mode==='bins' ? '' : 'none';
@@ -1043,6 +1056,7 @@ function syncUI(){
   $('ttok-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.text_tokens||'chars')));
   $('w2v_init').checked = !!S.w2v_init;
   $('clspos-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.cls_position||'first')));
+  $('pf-seg').querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.v===(S.per_feature||'none')));
   $('positional').checked = !!S.positional; $('causal').checked = !!S.causal;
   $('pos_weight').checked = !!S.pos_weight;
   $('seeds').value = X.seeds;
@@ -1078,6 +1092,7 @@ document.querySelectorAll('select[name=catpf]').forEach(sel=>sel.onchange = () =
   update();
 });
 $('clspos-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.cls_position = b.dataset.v; syncUI(); update(); });
+$('pf-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.per_feature = b.dataset.v; syncUI(); update(); });
 $('cart_aux').onchange = e => { S.cart_aux = parseFloat(e.target.value||0); update(); };
 $('ttok-seg').querySelectorAll('button').forEach(b=>b.onclick = () => { S.text_tokens = b.dataset.v; syncUI(); update(); });
 $('w2v_init').onchange = e => { S.w2v_init = e.target.checked; update(); };

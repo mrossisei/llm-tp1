@@ -69,14 +69,76 @@ class Head(nn.Module):
         return wei @ v  # (batch, seq, head_size)
 
 
+class HeadPorFeature(nn.Module):
+    """Cabeza de self-attention con W_q/W_k/W_v PROPIOS POR POSICION (idea de Fer).
+
+    En texto las posiciones son intercambiables y compartir W_q/W_k/W_v es el
+    sesgo inductivo correcto. Aca la posicion ES el feature (token 1 = status,
+    token 8 = price, siempre): desatar los pesos deja que cada feature haga sus
+    propias preguntas/claves/valores. q_t = x_t @ Wq[t], via einsum. Solo tiene
+    sentido con secuencia de identidad fija (formulation features, T=14).
+    """
+
+    def __init__(self, head_size, n_embd, context_length, dropout):
+        super().__init__()
+        def par():
+            w = nn.Parameter(torch.empty(context_length, n_embd, head_size))
+            nn.init.normal_(w, mean=0.0, std=0.02)
+            return w
+        self.wq, self.wk, self.wv = par(), par(), par()
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, padding_mask=None):
+        # x: (batch, T, d); W*: (T, d, hs) -> por posicion
+        q = torch.einsum('btd,tdh->bth', x, self.wq)
+        k = torch.einsum('btd,tdh->bth', x, self.wk)
+        v = torch.einsum('btd,tdh->bth', x, self.wv)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5
+        if padding_mask is not None:
+            wei = wei.masked_fill(~padding_mask[:, None, :], -1e9)
+        wei = F.softmax(wei, dim=-1)
+        if getattr(self, 'guardar_atencion', False):
+            self.ultima_atencion = wei.detach()
+        wei = self.dropout(wei)
+        return wei @ v
+
+
+class FeedForwardPorFeature(nn.Module):
+    """FFN con parametros PROPIOS POR POSICION: 14 MLPs, una por feature (+CLS)."""
+
+    def __init__(self, n_embd, context_length, dropout):
+        super().__init__()
+        def par(*shape):
+            w = nn.Parameter(torch.empty(*shape))
+            nn.init.normal_(w, mean=0.0, std=0.02)
+            return w
+        self.w1 = par(context_length, n_embd, 4 * n_embd)
+        self.b1 = nn.Parameter(torch.zeros(context_length, 4 * n_embd))
+        self.w2 = par(context_length, 4 * n_embd, n_embd)
+        self.b2 = nn.Parameter(torch.zeros(context_length, n_embd))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        h = torch.relu(torch.einsum('btd,tdh->bth', x, self.w1) + self.b1)
+        return self.dropout(torch.einsum('bth,thd->btd', h, self.w2) + self.b2)
+
+
 class MultiHeadAttention(nn.Module):
     """Varias cabezas en paralelo + proyeccion (igual que la demo)."""
 
-    def __init__(self, num_heads, head_size, n_embd, context_length, dropout, causal=False):
+    def __init__(self, num_heads, head_size, n_embd, context_length, dropout, causal=False,
+                 por_feature=False):
         super().__init__()
-        self.heads = nn.ModuleList(
-            [Head(head_size, n_embd, context_length, dropout, causal) for _ in range(num_heads)]
-        )
+        if por_feature:  # W_q/W_k/W_v propios por posicion (sin causal: solo features)
+            self.heads = nn.ModuleList(
+                [HeadPorFeature(head_size, n_embd, context_length, dropout)
+                 for _ in range(num_heads)]
+            )
+        else:
+            self.heads = nn.ModuleList(
+                [Head(head_size, n_embd, context_length, dropout, causal)
+                 for _ in range(num_heads)]
+            )
         self.proj = nn.Linear(head_size * num_heads, n_embd)
         self.dropout = nn.Dropout(dropout)
 
@@ -104,11 +166,16 @@ class FeedForward(nn.Module):
 class Block(nn.Module):
     """Bloque transformer pre-LN con conexiones residuales (igual que la demo)."""
 
-    def __init__(self, n_embd, n_head, context_length, dropout, causal=False):
+    def __init__(self, n_embd, n_head, context_length, dropout, causal=False,
+                 per_feature='none'):
         super().__init__()
         head_size = n_embd // n_head
-        self.sa = MultiHeadAttention(n_head, head_size, n_embd, context_length, dropout, causal)
-        self.ffwd = FeedForward(n_embd, dropout)
+        self.sa = MultiHeadAttention(n_head, head_size, n_embd, context_length, dropout, causal,
+                                     por_feature=per_feature in ('qkv', 'both'))
+        if per_feature in ('ffn', 'both'):
+            self.ffwd = FeedForwardPorFeature(n_embd, context_length, dropout)
+        else:
+            self.ffwd = FeedForward(n_embd, dropout)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
@@ -310,7 +377,8 @@ class BTRTransformer(nn.Module):
                  n_layer=2, dropout=0.1, causal=False, pooling='cls',
                  use_positional=False, numeric_mode='linear', bin_edges=None,
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
-                 cat_tables=None, hash_buckets=8, cart_lambda=0.0, cat_modes=None):
+                 cat_tables=None, hash_buckets=8, cart_lambda=0.0, cat_modes=None,
+                 per_feature='none'):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
@@ -364,8 +432,14 @@ class BTRTransformer(nn.Module):
             nn.Embedding(seq_len, d_model) if use_positional else None
         )
 
+        assert per_feature in ('none', 'qkv', 'ffn', 'both')
+        if per_feature != 'none':
+            # pesos por posicion: solo con secuencia de identidad fija (features)
+            assert formulation == 'features' and not causal, \
+                'per-feature requiere formulation=features sin causal'
         self.blocks = nn.ModuleList(
-            [Block(d_model, n_head, seq_len, dropout, causal) for _ in range(n_layer)]
+            [Block(d_model, n_head, seq_len, dropout, causal, per_feature)
+             for _ in range(n_layer)]
         )
         self.ln_f = nn.LayerNorm(d_model)
         self.cls_head = nn.Linear(d_model, 1)

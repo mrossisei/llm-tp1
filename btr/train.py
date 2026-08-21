@@ -298,6 +298,8 @@ def run_name(args, seed):
         parts.append(f"mlm{args.pretrain_mlm}")
     if args.cv_k:
         parts.append(f"cv{args.cv_k}f{args.cv_fold}")
+    if args.per_feature != 'none':
+        parts.append(f"pf{args.per_feature}")
     if args.cat_feature_encoding:
         pares = sorted(p.strip().replace('_', '').replace('=', '-')
                        for p in args.cat_feature_encoding.split(',') if p.strip())
@@ -431,7 +433,8 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
                       max_text_len=prep.max_text_len, n_head=args.n_head,
                       n_layer=args.n_layer, causal=args.causal, pooling=args.pooling,
                       use_positional=args.positional, cls_position=args.cls_position,
-                      cart_lambda=args.cart_aux, **encod, **common)
+                      cart_lambda=args.cart_aux, per_feature=args.per_feature,
+                      **encod, **common)
         model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
         config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
@@ -462,6 +465,10 @@ def run(csv_path, seed, args, device):
     if args.pretrain_mlm and (args.arch != 'transformer' or args.formulation != 'features'
                               or args.cls_position != 'first'):
         raise SystemExit('--pretrain-mlm es solo para transformer features con CLS al inicio')
+    if args.per_feature != 'none' and (args.arch != 'transformer'
+                                       or args.formulation != 'features' or args.causal):
+        raise SystemExit('--per-feature es solo para transformer formulation features '
+                         '(la posicion tiene que SER el feature) y sin mascara causal')
     if (args.cv_k or args.train_frac < 1.0) and listwise:
         raise SystemExit('cv / train-frac no implementados para listwise')
     if args.cat_encoding == 'onehot' and args.arch != 'mlp':
@@ -650,6 +657,9 @@ def build_parser():
                         help='pre-entrenar el tronco enmascarando una feature por fila '
                              '(solo transformer features, CLS al inicio)')
     parser.add_argument('--cv-k', type=int, default=0, help='GroupKFold por query: cantidad de folds')
+    parser.add_argument('--per-feature', default='none', choices=['none', 'qkv', 'ffn', 'both'],
+                        help='parametros PROPIOS por posicion/feature dentro del transformer: '
+                             'W_q/W_k/W_v y/o la FFN (solo formulation features)')
     parser.add_argument('--cv-fold', type=int, default=0, help='que fold es test (0..k-1)')
     parser.add_argument('--d-model', type=int, default=32)
     parser.add_argument('--n-head', type=int, default=4)
