@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (71 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (77 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -182,6 +182,22 @@ EXPERIMENTOS |= {
     'pf_full':     ([*ORD, '--per-feature', 'both'], 'tabular'),
     # sobre embeddings: ¿el desatado suple la identidad que el ordinal ya inyecta?
     'pf_full_emb': (['--per-feature', 'both', *PAC], 'tabular'),
+
+    # ---- el contrapeso (idea de Fer, 21/08): reducir complejidad ----
+    # (a) minimalismo sobre el campeon: nunca probamos ACHICAR sobre ordinal
+    # (la grilla d8/d16 vieja era sobre embeddings). ¿Hasta donde aguanta el
+    # prior simple? min_d16 tiene 6.945 parametros.
+    'min_d16':    ([*ORD, '--d-model', '16'], 'tabular'),
+    'min_d8':     ([*ORD, '--d-model', '8'], 'tabular'),
+    'min_l1':     ([*ORD, '--n-layer', '1'], 'tabular'),
+    'min_d16l1':  ([*ORD, '--d-model', '16', '--n-layer', '1'], 'tabular'),
+    # (b) especializacion BARATA: compuertas diagonales por posicion sobre los
+    # W compartidos (init=1 -> arranca siendo exactamente el campeon); ~+11k params
+    'pf_gate':    ([*ORD, '--per-feature', 'gate'], 'tabular'),
+    # (c) desatado COMPENSADO: per-feature qkv pero d16 -> 26.913 parametros,
+    # la misma escala que el campeon (26.177). Comparacion controlada:
+    # misma cantidad de parametros, ¿especializar o compartir?
+    'pf_qkv_d16': ([*ORD, '--per-feature', 'qkv', '--d-model', '16'], 'tabular'),
 }
 
 

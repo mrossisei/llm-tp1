@@ -472,7 +472,8 @@ def controles(features):
       <button type="button" data-v="none" class="on">no</button>
       <button type="button" data-v="qkv">QKV</button>
       <button type="button" data-v="ffn">FFN</button>
-      <button type="button" data-v="both">ambos</button></span></label>
+      <button type="button" data-v="both">ambos</button>
+      <button type="button" data-v="gate">gate</button></span></label>
     <label class="inl" id="clspos-wrap">CLS <span class="seg" id="clspos-seg">
       <button type="button" data-v="first" class="on">al inicio</button>
       <button type="button" data-v="last">al final</button></span></label>

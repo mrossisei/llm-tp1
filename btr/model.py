@@ -103,6 +103,38 @@ class HeadPorFeature(nn.Module):
         return wei @ v
 
 
+class HeadPorFeatureGate(nn.Module):
+    """Especializacion POR FEATURE con presupuesto minimo (contrapeso de la idea
+    de los pesos desatados): en vez de un W_q/W_k/W_v entero por posicion, cada
+    posicion tiene un vector de COMPUERTAS diagonal que modula la entrada a los
+    W compartidos:  q_t = (x_t * g_q[t]) @ W_q. ~1% de los parametros del
+    desatado completo; con g inicializado en 1, el modelo arranca siendo
+    EXACTAMENTE el compartido y aprende solo la desviacion por feature.
+    """
+
+    def __init__(self, head_size, n_embd, context_length, dropout):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.gq = nn.Parameter(torch.ones(context_length, n_embd))
+        self.gk = nn.Parameter(torch.ones(context_length, n_embd))
+        self.gv = nn.Parameter(torch.ones(context_length, n_embd))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, padding_mask=None):
+        q = self.query(x * self.gq)
+        k = self.key(x * self.gk)
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5
+        if padding_mask is not None:
+            wei = wei.masked_fill(~padding_mask[:, None, :], -1e9)
+        wei = F.softmax(wei, dim=-1)
+        if getattr(self, 'guardar_atencion', False):
+            self.ultima_atencion = wei.detach()
+        wei = self.dropout(wei)
+        return wei @ self.value(x * self.gv)
+
+
 class FeedForwardPorFeature(nn.Module):
     """FFN con parametros PROPIOS POR POSICION: 14 MLPs, una por feature (+CLS)."""
 
@@ -129,9 +161,14 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size, n_embd, context_length, dropout, causal=False,
                  por_feature=False):
         super().__init__()
-        if por_feature:  # W_q/W_k/W_v propios por posicion (sin causal: solo features)
+        if por_feature == 'full':  # W_q/W_k/W_v propios por posicion
             self.heads = nn.ModuleList(
                 [HeadPorFeature(head_size, n_embd, context_length, dropout)
+                 for _ in range(num_heads)]
+            )
+        elif por_feature == 'gate':  # compuertas diagonales por posicion (barato)
+            self.heads = nn.ModuleList(
+                [HeadPorFeatureGate(head_size, n_embd, context_length, dropout)
                  for _ in range(num_heads)]
             )
         else:
@@ -170,8 +207,10 @@ class Block(nn.Module):
                  per_feature='none'):
         super().__init__()
         head_size = n_embd // n_head
+        pf_sa = 'full' if per_feature in ('qkv', 'both') else \
+            ('gate' if per_feature == 'gate' else None)
         self.sa = MultiHeadAttention(n_head, head_size, n_embd, context_length, dropout, causal,
-                                     por_feature=per_feature in ('qkv', 'both'))
+                                     por_feature=pf_sa)
         if per_feature in ('ffn', 'both'):
             self.ffwd = FeedForwardPorFeature(n_embd, context_length, dropout)
         else:
@@ -432,7 +471,7 @@ class BTRTransformer(nn.Module):
             nn.Embedding(seq_len, d_model) if use_positional else None
         )
 
-        assert per_feature in ('none', 'qkv', 'ffn', 'both')
+        assert per_feature in ('none', 'qkv', 'ffn', 'both', 'gate')
         if per_feature != 'none':
             # pesos por posicion: solo con secuencia de identidad fija (features)
             assert formulation == 'features' and not causal, \

@@ -357,6 +357,20 @@ guardias (solo transformer features, sin causal); checkpoints viejos intactos. 4
 (71 totales): pf_qkv / pf_ffn / pf_full sobre el campeón ordinal + pf_full_emb sobre embeddings.
 Panel con el eje nuevo (canon 162/162 verificado en node). La entrega NO se toca salvo que gane.
 
+## 21/08 — El contrapeso: reducir complejidad (idea de Fer) — la 5ª tanda queda en 10 configs
+
+**Pedido.** Junto al per-feature (que agrega capacidad), probar lo opuesto: reducir la
+complejidad para contrarrestar el overfitting esperado, sobre la mejor base actual
+(feat_ordinal, con "(Best Seller)" parseado a categórica ordinal — confirmado).
+
+**Diseño (3 patas + lo ya preparado = un espectro alrededor del campeón).** (a) Minimalismo:
+min_d16/d8/l1/d16l1 — achicar SOBRE ordinal nunca se había probado; min_d16 = 6.945 params.
+(b) `pf_gate`: especialización barata — compuertas diagonales por posición sobre los W
+compartidos, init=1 ⇒ arranca idéntico al campeón (VERIFICADO con predicciones) y aprende solo
+la desviación. (c) `pf_qkv_d16`: desatado compensado — 26.913 params ≈ los 26.177 del campeón:
+misma escala, ¿especializar o compartir? Espectro completo: 6.9k → 323k parámetros. 6 configs
+nuevas (77 totales en la suite); panel con la opción gate (canon 168/168 en node).
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

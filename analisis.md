@@ -456,6 +456,25 @@ pierde, cierra la pregunta del sesgo inductivo con evidencia. Configs: `pf_qkv`,
 `pf_full` (sobre el campeón ordinal) y `pf_full_emb` (sobre embeddings: ¿el desatado suple la
 identidad que ordinal inyecta?).
 
+### 11.1 El contrapeso (idea de Fer, 21/08): reducir la complejidad
+
+La tanda se completa con la dirección opuesta, para que el contraste alrededor del campeón sea
+un espectro y no un solo lado:
+
+- **Minimalismo** (`min_d16/d8/l1/d16l1`): achicar SOBRE ordinal — nunca lo probamos (la grilla
+  d8/d16 de la 1ª tanda era sobre embeddings). `min_d16` tiene **6.945 parámetros**; si empata
+  al campeón, la historia "el prior simple gana" llega a su versión final.
+- **Especialización barata** (`pf_gate`): compuertas diagonales por posición sobre los W
+  compartidos — `q_t = (x_t ⊙ g_t)·W_q` — con init en 1: **arranca siendo exactamente el
+  campeón** (verificado: predicciones idénticas en la inicialización) y aprende solo la
+  desviación por feature. +11k parámetros (vs +80k del desatado).
+- **Desatado compensado** (`pf_qkv_d16`): per-feature completo pero en d16 → **26.913
+  parámetros ≈ los 26.177 del campeón**. La comparación controlada de la tanda: misma cantidad
+  de parámetros, ¿conviene *especializar* o *compartir*?
+
+Espectro final de la tanda (parámetros): 6.9k (min_d16) · 26k (campeón) · 27k (pf_qkv_d16) ·
+37k (pf_gate) · 106k (pf_qkv) · 245k (pf_ffn) · 323k (pf_full).
+
 ## 12. Pendientes analíticos
 
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).

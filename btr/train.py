@@ -657,7 +657,8 @@ def build_parser():
                         help='pre-entrenar el tronco enmascarando una feature por fila '
                              '(solo transformer features, CLS al inicio)')
     parser.add_argument('--cv-k', type=int, default=0, help='GroupKFold por query: cantidad de folds')
-    parser.add_argument('--per-feature', default='none', choices=['none', 'qkv', 'ffn', 'both'],
+    parser.add_argument('--per-feature', default='none',
+                        choices=['none', 'qkv', 'ffn', 'both', 'gate'],
                         help='parametros PROPIOS por posicion/feature dentro del transformer: '
                              'W_q/W_k/W_v y/o la FFN (solo formulation features)')
     parser.add_argument('--cv-fold', type=int, default=0, help='que fold es test (0..k-1)')
