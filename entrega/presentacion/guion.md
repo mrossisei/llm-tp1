@@ -345,5 +345,12 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   cualquier modelo (61% de filas en tiers de BTR = 0). Es información de estado del catálogo,
   válida al predecir, circular para promover — por eso las dos familias.
 - **¿Multi-task con cart?** Probado (λ ∈ {0.1, 0.3, 0.5} como label auxiliar): dentro del ruido.
-- **¿Cuántas corridas hay detrás?** 544 (67 configuraciones × 6 seeds + grillas), todas con las
+- **¿Probaron especializar los pesos por feature? ¿O achicar más?** Sí (5ª tanda, exploratoria,
+  posterior al cierre de la selección): desatar W_q/W_k/W_v/FFN por posición empata con el
+  campeón (y SÍ ayuda +0.02, 6/6, sobre embeddings — el beneficio existe pero es redundante con
+  el prior ordinal); y el modelo admite compresión 7×: `min_d16l1` (d16, 1 bloque, **3.713
+  parámetros**) empata al final. Bonus metodológico: la config con mejor validación de todo el
+  proyecto (pf_ffn, 245k params) NO es mejor en test — sobreajuste de selección en vivo, la
+  razón por la que la selección se cerró con procedimiento pre-registrado.
+- **¿Cuántas corridas hay detrás?** 604 (77 configuraciones × 6 seeds + grillas), todas con las
   16 métricas por época, reproducibles con la suite del repo.

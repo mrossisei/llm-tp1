@@ -475,6 +475,38 @@ un espectro y no un solo lado:
 Espectro final de la tanda (parámetros): 6.9k (min_d16) · 26k (campeón) · 27k (pf_qkv_d16) ·
 37k (pf_gate) · 106k (pf_qkv) · 245k (pf_ffn) · 323k (pf_full).
 
+### 11.2 Resultados (60 corridas, 21/08): la hipótesis, corregida en ambas direcciones
+
+**El desatado NO destrona al campeón — pero tampoco colapsa por overfitting** (la hipótesis
+pre-registrada era demasiado pesimista: early stopping + weight decay lo contuvieron):
+`pf_qkv` 0.8284 (+0.0045, 3/6), `pf_full` 0.8262 (+0.0023, 3/6) — empates dentro del ruido;
+solo `pf_ffn` (el de más parámetros por lejos) queda abajo (−0.0061, 2/6).
+
+**El hallazgo real está en `pf_full_emb`: +0.0205, gana 6/6** sobre los embeddings compartidos.
+La idea de Fer FUNCIONA — desatar los pesos aporta identidad/especialización por feature — pero
+su beneficio es **redundante con el prior ordinal**: sobre embeddings (que no traen ese prior)
+ayuda consistentemente; sobre ordinal, no queda nada que aportar. Misma estructura lógica que
+el MLM de la 4ª tanda: otro regularizador/especializador alternativo, y el prior simple ya
+ocupaba ese lugar. Refuerzo de la comparación controlada: a d16 fijo, especializar > compartir
+(`pf_qkv_d16` vs `min_d16`: +0.0094, 4/6).
+
+**El contrapeso minimalista dejó el titular de la tanda: `min_d16l1` — d16, UN bloque,
+3.713 parámetros — EMPATA al campeón** (val 0.8350 vs 0.8345; test 0.8254 ± 0.026 vs
+0.8239 ± 0.018; +0.0015 apareado, 3/6). El modelo final admite compresión **7×** sin pérdida
+medible; la historia "el prior simple gana" llega a su forma final: un transformer de 4k
+parámetros con encoding ordinal iguala todo lo que probamos. (`min_d16` solo pierde −0.0085 con
+6.9k; `min_l1` muestra que la profundidad se extraña más que el ancho: −0.023 con varianza alta.
+`pf_gate`: las compuertas no encuentran desviación que valga: −0.0036.)
+
+**Lección metodológica para la defensa — el sobreajuste de selección, ilustrado en vivo**:
+`pf_ffn` tiene la MEJOR validación de todo el proyecto (0.8435) y NO es mejor en test (0.8179);
+su gap val→test (0.026) es 2,5× el del campeón (0.011). Con 100+ configuraciones probadas, "la
+mejor val" degrada como criterio — exactamente por eso la selección del modelo final se cerró
+en la 4ª tanda con su procedimiento pre-registrado (empate en val → parsimonia), y las tandas
+5 en adelante son **exploratorias**: prueban hipótesis, no re-abren la selección. **El modelo
+final NO cambia** (`feat_ordinal`); `min_d16l1` queda registrado como su versión comprimida
+equivalente — utilizable como respuesta si preguntan "¿es lo más chico posible?".
+
 ## 12. Pendientes analíticos
 
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).

@@ -371,6 +371,24 @@ la desviación. (c) `pf_qkv_d16`: desatado compensado — 26.913 params ≈ los 
 misma escala, ¿especializar o compartir? Espectro completo: 6.9k → 323k parámetros. 6 configs
 nuevas (77 totales en la suite); panel con la opción gate (canon 168/168 en node).
 
+## 21/08 — 5ª tanda corrida: la idea per-feature, medida — y el modelo de 3.713 parámetros
+
+**Resultados** (60 corridas; lectura completa en `analisis.md §11.2`). La hipótesis
+pre-registrada se corrigió en las dos direcciones. El desatado NO colapsa por overfitting
+(early stopping + weight decay lo contienen): pf_qkv 0.8284 y pf_full 0.8262 EMPATAN con el
+campeón dentro del ruido (3/6); solo pf_ffn (245k params) queda abajo. **El hallazgo real:
+`pf_full_emb` +0.0205, gana 6/6 sobre embeddings compartidos** — la idea de Fer funciona (la
+especialización por feature aporta identidad), pero su beneficio es redundante con el prior
+ordinal, que ya la da más barata. A presupuesto fijo d16: especializar > compartir (+0.0094,
+4/6). **Titular del contrapeso: `min_d16l1` (d16, 1 bloque, 3.713 parámetros) EMPATA al
+campeón** (val 0.8350 vs 0.8345; test 0.8254 vs 0.8239) — compresión 7× gratis; "el prior
+simple gana" en su forma final. **Lección metodológica en vivo**: pf_ffn tiene la MEJOR val del
+proyecto (0.8435) y no es mejor en test (gap 0.026, 2,5× el del campeón) — sobreajuste de
+selección con 100+ configs probadas; por eso la selección del modelo final quedó CERRADA en la
+4ª tanda y estas tandas son exploratorias. **El modelo final no cambia** (feat_ordinal);
+min_d16l1 queda registrado como su versión comprimida equivalente. Entrega: solo se actualizó
+el apéndice del guión (respuesta preparada), la copia del análisis y el CSV (101 configs).
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
