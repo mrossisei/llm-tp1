@@ -389,6 +389,28 @@ selección con 100+ configs probadas; por eso la selección del modelo final que
 min_d16l1 queda registrado como su versión comprimida equivalente. Entrega: solo se actualizó
 el apéndice del guión (respuesta preparada), la copia del análisis y el CSV (101 configs).
 
+## 22/08 — 6ª tanda preparada: regularización + transfer learning (clase 3) + SIA
+
+Disparador: dos preguntas de Fer con la clase 3 recién subida (transcript + PPT de transfer
+learning & fine-tuning, leídos completos). (1) ¿Hubo pruebas de regularización? Respuesta
+honesta: la regularización efectiva fue early stopping + capacidad + 6 seeds + el prior
+ordinal; **weight decay quedó en 1e-2 (default de AdamW, nunca fue una decisión), dropout fijo
+en 0.1, y residuales/LayerNorm jamás se ablacionaron** → tanda `reg_*`/`abl_*` (11 configs).
+(2) ¿Transfer learning / Kohonen / PCA / autoencoders? La clase 3 da el marco exacto y las
+TRES técnicas son implementables con nuestros checkpoints como teachers: `tl_probe` (feature
+extraction: tronco congelado + probe lineal — el smoke de 1 época ya da 0.8055), `tl_mlm_*`
+(¿cuánto del 0.82 se alcanza SIN labels? + fine-tuning anclado L2-SP, la "KL penalty" de la
+clase), `tl_distill_*` (**la apuesta: destilar el deep-ensemble 0.833 del mismo split en UN
+d32 — y en el min de 3.713 params**; soft labels > labels duras, dixit clase 3), `tl_emb_mlp`
+("el embedding más un montón de cosas"). SIA: `sia_som*` (celda BMU de Kohonen como categórica
+extra), `sia_ae_cls*` (AE con cuello en el CLS, hermano del MLM), `sia_pca_mlp`/`sia_ae_mlp`
+(representación no supervisada como única entrada del MLP — PCA ≙ Oja/Sanger). Hipótesis
+pre-registradas en `analisis.md §13`; la selección del modelo final SIGUE cerrada (todo
+exploratorio). Infra nueva en `btr/train.py` (16 flags), `experimentos.py` (27 configs, total
+104), panel con sección 5b + clave canónica extendida (test de paridad Python↔JS ahora
+versionado: `eda/test_canon_panel.js`, 205 claves OK). Smokes CPU de TODOS los caminos nuevos:
+OK. Teachers verificados en `pesos/` (git): campeón + robu_init43..47 por seed.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

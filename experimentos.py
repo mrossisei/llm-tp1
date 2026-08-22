@@ -200,6 +200,78 @@ EXPERIMENTOS |= {
     'pf_qkv_d16': ([*ORD, '--per-feature', 'qkv', '--d-model', '16'], 'tabular'),
 }
 
+# ---- 6ta tanda (22/08): regularizacion + transfer learning (clase 3) + SIA ----
+# La regularizacion EFECTIVA del TP hasta aca fue early stopping + capacidad
+# (min_*) + el prior del ordinal: weight decay (1e-2, default de AdamW) y
+# dropout (0.1) quedaron FIJOS en todas las corridas y nunca se barrieron;
+# residuales y LayerNorm vienen de los bloques de la demo y nunca se
+# ablacionaron. La parte de transfer implementa las TRES tecnicas de la clase 3
+# (feature extraction / fine-tuning / knowledge distillation) con NUESTROS
+# propios modelos como base (el enunciado pide entrenar el transformer, no
+# bajar uno preentrenado). Hipotesis registradas ANTES de correr: analisis.md §13.
+CH = 'pesos/feat_ordinal_features_d32_h4_l2_linear_catordinal_seed{seed}.pt'
+ENS = CH + ',pesos/robu_init4*_features_d32_h4_l2_linear_catordinal_init4*_seed{seed}.pt'
+EXPERIMENTOS |= {
+    # (a) regularizacion sobre el campeon — ¿estabamos en el punto justo sin saberlo?
+    'reg_wd0':     ([*ORD, '--weight-decay', '0'], 'tabular'),
+    'reg_wd1e3':   ([*ORD, '--weight-decay', '0.001'], 'tabular'),
+    'reg_wd1e1':   ([*ORD, '--weight-decay', '0.1'], 'tabular'),
+    'reg_do0':     ([*ORD, '--dropout', '0'], 'tabular'),
+    'reg_do03':    ([*ORD, '--dropout', '0.3'], 'tabular'),
+    # sin NINGUNA regularizacion explicita: ¿alcanza el early stopping solo?
+    'reg_nada':    ([*ORD, '--weight-decay', '0', '--dropout', '0'], 'tabular'),
+    # dropout a nivel TOKEN (features enteras anuladas, primo del MLM)
+    'reg_fdrop01': ([*ORD, '--feature-dropout', '0.1'], 'tabular'),
+    'reg_fdrop02': ([*ORD, '--feature-dropout', '0.2'], 'tabular'),
+    # label smoothing = distillation con teacher uniforme (conexion clase 3)
+    'reg_ls01':    ([*ORD, '--label-smoothing', '0.1'], 'tabular'),
+    # ablaciones de lo que la demo trae "de fabrica": ¿que aportan a esta escala?
+    'abl_sinres':  ([*ORD, '--sin-residual'], 'tabular'),
+    'abl_sinln':   ([*ORD, '--sin-layernorm'], 'tabular'),
+
+    # (b) transfer learning (clase 3) con nuestros checkpoints como teachers
+    # feature extraction: tronco del campeon CONGELADO + cabeza nueva (probe
+    # lineal): ¿la representacion aprendida es linealmente separable?
+    'tl_probe':        ([*ORD, '--init-from', CH, '--freeze-backbone',
+                         '--reinit-head', '--dropout', '0'], 'tabular'),
+    # probe sobre tronco pre-entrenado SOLO self-supervised (MLM, sin ver labels):
+    # sobre embeddings (donde el MLM aporto +0.011) y sobre ordinal
+    'tl_mlm_probe':     (['--pretrain-mlm', '20', '--freeze-backbone',
+                          '--dropout', '0', *PAC], 'tabular'),
+    'tl_mlm_probe_ord': ([*ORD, '--pretrain-mlm', '20', '--freeze-backbone',
+                          '--dropout', '0'], 'tabular'),
+    # fine-tuning ANCLADO: L2 hacia los pesos post-MLM (la "KL penalty" de la
+    # clase 3 en version L2-SP) — ¿retiene lo pre-entrenado sin frenar la tarea?
+    'tl_mlm_l2sp':      (['--pretrain-mlm', '20', '--l2sp', '0.001', *PAC], 'tabular'),
+    # knowledge distillation: entrenar contra las PROBABILIDADES del teacher
+    # (soft labels > labels duras, el 0.8 informa mas que el 1) — self-distill,
+    # compresion al modelo de 3.7k params, y el deep-ensemble (0.833) como
+    # teacher n=6 ("integrando informacion de varios modelos")
+    'tl_distill_same':    ([*ORD, '--distill-from', CH], 'tabular'),
+    'tl_distill_min':     ([*ORD, '--d-model', '16', '--n-layer', '1',
+                            '--distill-from', CH], 'tabular'),
+    'tl_distill_ens':     ([*ORD, '--distill-from', ENS], 'tabular'),
+    'tl_distill_ens_min': ([*ORD, '--d-model', '16', '--n-layer', '1',
+                            '--distill-from', ENS], 'tabular'),
+    'tl_distill_mix':     ([*ORD, '--distill-from', ENS, '--distill-alpha', '0.5'], 'tabular'),
+    # "el embedding mas un monton de cosas": pooled del campeon congelado como
+    # 32 numericas extra del MLP — ¿el MLP alcanza al transformer con su embedding?
+    'tl_emb_mlp':         (['--arch', 'mlp', *ORD, '--embed-from', CH], 'tabular'),
+
+    # (c) herramientas de SIA en este problema
+    # Kohonen: celda BMU del SOM (train, no supervisado) como categorica extra
+    'sia_som16':     ([*ORD, '--som-feature', '4'], 'tabular'),
+    'sia_som64':     ([*ORD, '--som-feature', '8'], 'tabular'),
+    # autoencoder como PRE-ENTRENAMIENTO del tronco (CLS reconstruye la fila);
+    # el hermano con cuello de botella del MLM — misma comparacion emb/ordinal
+    'sia_ae_cls':     ([*ORD, '--pretrain-ae', '20'], 'tabular'),
+    'sia_ae_cls_emb': (['--pretrain-ae', '20', *PAC], 'tabular'),
+    # representation learning puro (clase 3): PCA (la version cerrada de Oja) y
+    # el espacio latente de un AE como UNICA entrada del MLP
+    'sia_pca_mlp':    (['--arch', 'mlp', '--pca', '16', *PAC], 'tabular'),
+    'sia_ae_mlp':     (['--arch', 'mlp', '--ae-latent', '16', *PAC], 'tabular'),
+}
+
 
 def resolver_device(arg):
     if arg != 'auto':

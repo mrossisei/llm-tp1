@@ -512,3 +512,79 @@ equivalente — utilizable como respuesta si preguntan "¿es lo más chico posib
 - ~~Mapas de atención del campeón~~ → hechos (§6, §8.2).
 - Métricas por página (top-1 de la query, NDCG) — eje "pedir" en el panel.
 - GroupKFold si queremos intervalos más finos para la presentación.
+
+## 13. Sexta tanda (diseño, 22/08): regularización, transfer learning (clase 3) y SIA
+
+**Disparador**: dos preguntas de Fer tras la clase 3 (transfer learning & fine-tuning):
+(1) ¿probamos regularización — residuales, weight decay, etc.? (2) ¿tiene sentido transfer
+learning entre nuestros modelos, o usar Kohonen / PCA / autoencoders en alguna parte?
+
+**Respuesta honesta a (1)**: la regularización EFECTIVA del TP fue early stopping (paciencia,
+barrida en la 1ª tanda), capacidad (grilla d/l/h; `min_*` en la 5ª), 6 seeds promediadas, y el
+prior del encoding ordinal. Pero **weight decay quedó fijo en 1e-2** (el default de AdamW —
+nunca fue una decisión) **y dropout fijo en 0.1** (herencia de la demo); **las residuales y la
+LayerNorm nunca se ablacionaron**. La 6ª tanda cierra eso. Sobre (2): la clase 3 da el marco
+exacto — feature extraction / fine-tuning / knowledge distillation — y las tres son
+implementables acá con NUESTROS checkpoints como base (el enunciado pide entrenar el
+transformer propio; "bajar un modelo preentrenado" no aplica, pero transferir entre nuestros
+propios modelos sí, y es la misma mecánica).
+
+**27 configs nuevas** (todas tabulares, ~5-10 min c/u en la 3070): `reg_*` (11), `tl_*` (10),
+`sia_*`/`abl_*` (6). Base = campeón `feat_ordinal` salvo indicación. Implementación:
+`--weight-decay/--feature-dropout/--label-smoothing/--sin-residual/--sin-layernorm`,
+`--init-from/--freeze-backbone/--reinit-head/--l2sp`, `--distill-from/--distill-alpha`,
+`--embed-from`, `--som-feature/--pretrain-ae/--ae-latent/--pca`.
+
+### Hipótesis registradas ANTES de correr
+
+**(a) Regularización** — el patrón de TODO el TP (el prior simple + early stopping ya
+regularizan; los regularizadores extra llegan tarde) predice: `reg_wd*`/`reg_do*` **planos
+alrededor del campeón** (±0.005, sin dirección consistente 6/6); si `reg_nada` (wd 0 + dropout
+0) NO se cae, la conclusión fuerte es "a 26k parámetros con early stopping, la regularización
+explícita es decorativa". `reg_fdrop*` es el primo supervisado del MLM → esperable ~neutro en
+ordinal (como el MLM: −0.007). `reg_ls01` = distillation con teacher uniforme → neutro o
+levemente peor (pierde separación en los extremos donde vive el tier exacto). Las ablaciones
+`abl_sinres`/`abl_sinln` son las únicas con predicción de DAÑO claro: sin residuales el pre-LN
+de 2 bloques pierde el camino identidad (esperamos −0.01 a −0.05 y/o inestabilidad entre
+seeds); sin LayerNorm, peor convergencia (el smoke de 1 época ya muestra arranque mucho más
+lento: ROC 0.39 vs 0.55 del resto).
+
+**(b) Transfer** — `tl_probe` (tronco del campeón CONGELADO + cabeza lineal nueva): si empata
+al campeón end-to-end, la representación del CLS es **linealmente separable** — el smoke de 1
+época ya dio PR-AUC 0.8055, así que la hipótesis es *empate* (diferencia < 0.005) y el hallazgo
+es interpretativo: todo el trabajo está en la representación, la cabeza es trivial.
+`tl_mlm_probe` (probe sobre tronco SOLO self-supervised, sin ver labels): la pregunta
+cuantitativa más linda de la tanda — ¿qué fracción del 0.82 se alcanza sin supervisión? Sobre
+embeddings esperamos una fracción sustancial (el MLM ya movía +0.011 como init); sobre ordinal
+(`tl_mlm_probe_ord`), menos interesante pero completa el 2×2. `tl_mlm_l2sp` (fine-tuning
+anclado, la "KL penalty" de la clase en versión L2-SP): esperable ≈ `feat_mlm20` (+0.011) o
+apenas mejor si el ancla retiene lo pre-entrenado. **Distillation es la apuesta fuerte**:
+`tl_distill_ens` entrena UN d32 contra las probabilidades del deep-ensemble del mismo split
+(test 0.833, +0.009 sobre el campeón); si el student retiene ≥ la mitad de ese gap, tenemos
+"el ensemble comprimido en un solo modelo de 26k" — el mejor resultado single-model posible
+del TP sin re-abrir la selección (queda EXPLORATORIO, la selección sigue cerrada).
+`tl_distill_ens_min` (ensemble → 3.713 params) es la versión espectacular: teacher 0.833 →
+student 7× más chico que el campeón. `tl_distill_same`/`tl_distill_min` aíslan el efecto
+soft-labels con teacher n=1 (born-again: esperamos +0.000 a +0.005). `tl_distill_mix`
+(α=0.5) testea si mezclar labels duras ayuda con 10k filas. `tl_emb_mlp` ("el embedding más
+un montón de cosas"): MLP + pooled congelado del campeón → esperamos que ALCANCE al
+transformer (≈0.82): mediría que la atención ya hizo su trabajo dentro del extractor y el
+clasificador da igual.
+
+**(c) SIA** — `sia_som16/64` (celda BMU de un Kohonen sobre las numéricas de train como
+categórica extra): esperamos **neutro** (la atención + FFN ya pueden aprender esas regiones;
+un cluster no supervisado no trae señal de compra nueva) — el valor es la figura del mapa
+(BTR medio por celda) para la defensa, no el PR-AUC. `sia_ae_cls*` (pre-entrenar el tronco
+reconstruyendo la fila desde el CLS): hermano con cuello de botella del MLM → mismo patrón
+esperado (ayuda algo en embeddings, nada en ordinal). `sia_pca_mlp`/`sia_ae_mlp`
+(representación no supervisada de 16 dims como ÚNICA entrada del MLP): esperamos **peor** que
+el MLP end-to-end — la compresión óptima para RECONSTRUIR no es la óptima para PREDECIR
+compra (la lección clásica de representation learning, dicha en la clase 3: "quizás exista
+una mejor representación", pero acá la supervisión directa ya la encuentra) — el resultado
+vale como demostración medida de esa lección, y conecta PCA con Oja/Sanger de SIA.
+
+**Qué NO probamos y por qué**: bajar un BERT/GBDT preentrenado externo (el enunciado pide
+nuestro transformer; además 10k filas tabulares no es su dominio); RLHF/DPO (no hay
+preferencias que modelar — nuestro reward ES la label); fine-tuning cross-dominio
+catálogo→intrínseco (las tareas comparten filas, no hay "dominio nuevo" real, y el techo
+intrínseco 0.16 ya está medido como falta de señal, no de método).

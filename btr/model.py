@@ -201,10 +201,17 @@ class FeedForward(nn.Module):
 
 
 class Block(nn.Module):
-    """Bloque transformer pre-LN con conexiones residuales (igual que la demo)."""
+    """Bloque transformer pre-LN con conexiones residuales (igual que la demo).
+
+    use_residual / use_layernorm existen SOLO como ablaciones (6ta tanda): las
+    residuales y la LN vienen "de fabrica" en la demo y nunca habiamos medido
+    cuanto aportan a esta profundidad (2 bloques). Con use_layernorm=False las
+    LN se reemplazan por identidad; con use_residual=False el bloque devuelve
+    solo la transformacion (sin el camino x + ...).
+    """
 
     def __init__(self, n_embd, n_head, context_length, dropout, causal=False,
-                 per_feature='none'):
+                 per_feature='none', use_residual=True, use_layernorm=True):
         super().__init__()
         head_size = n_embd // n_head
         pf_sa = 'full' if per_feature in ('qkv', 'both') else \
@@ -215,12 +222,17 @@ class Block(nn.Module):
             self.ffwd = FeedForwardPorFeature(n_embd, context_length, dropout)
         else:
             self.ffwd = FeedForward(n_embd, dropout)
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
+        self.use_residual = use_residual
+        self.ln1 = nn.LayerNorm(n_embd) if use_layernorm else nn.Identity()
+        self.ln2 = nn.LayerNorm(n_embd) if use_layernorm else nn.Identity()
 
     def forward(self, x, padding_mask=None):
-        x = x + self.sa(self.ln1(x), padding_mask)
-        x = x + self.ffwd(self.ln2(x))
+        if self.use_residual:
+            x = x + self.sa(self.ln1(x), padding_mask)
+            x = x + self.ffwd(self.ln2(x))
+        else:
+            x = self.sa(self.ln1(x), padding_mask)
+            x = self.ffwd(self.ln2(x))
         return x
 
 
@@ -343,6 +355,8 @@ class FeatureTokenizer(nn.Module):
         if self.numeric_mode == 'linear':
             # (batch, n_num, 1) * (n_num, d_model) -> (batch, n_num, d_model)
             num_tokens = x_num.unsqueeze(-1) * self.num_weight + self.num_bias
+            if not tokens:  # sin categoricas (entrada PCA/AE del MLP, 6ta tanda)
+                return num_tokens
             tokens = torch.stack(tokens, dim=1)
             tokens = torch.cat([tokens, num_tokens], dim=1)
         else:
@@ -417,7 +431,8 @@ class BTRTransformer(nn.Module):
                  use_positional=False, numeric_mode='linear', bin_edges=None,
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
                  cat_tables=None, hash_buckets=8, cart_lambda=0.0, cat_modes=None,
-                 per_feature='none'):
+                 per_feature='none', sin_residual=False, sin_layernorm=False,
+                 feature_dropout=0.0):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
@@ -433,6 +448,9 @@ class BTRTransformer(nn.Module):
         self.pooling = pooling
         self.cls_position = cls_position
         self.cart_lambda = cart_lambda
+        # feature-dropout (6ta tanda): en TRAIN se anulan tokens de features al
+        # azar (nunca el CLS) — augmentation "faltan features", primo del MLM
+        self.feature_dropout = feature_dropout
 
         seq_len = 1  # [CLS]
         self.tokenizer = None
@@ -477,10 +495,11 @@ class BTRTransformer(nn.Module):
             assert formulation == 'features' and not causal, \
                 'per-feature requiere formulation=features sin causal'
         self.blocks = nn.ModuleList(
-            [Block(d_model, n_head, seq_len, dropout, causal, per_feature)
+            [Block(d_model, n_head, seq_len, dropout, causal, per_feature,
+                   use_residual=not sin_residual, use_layernorm=not sin_layernorm)
              for _ in range(n_layer)]
         )
-        self.ln_f = nn.LayerNorm(d_model)
+        self.ln_f = nn.LayerNorm(d_model) if not sin_layernorm else nn.Identity()
         self.cls_head = nn.Linear(d_model, 1)
         # cabeza auxiliar multi-task sobre el mismo pooled (--cart-aux); se
         # descarta en inferencia
@@ -526,8 +545,15 @@ class BTRTransformer(nn.Module):
         mask = torch.cat(masks, dim=1)
         return x, (mask if self.char_embedding_table is not None else None)
 
-    def forward(self, x_cat=None, x_num=None, x_text=None, targets=None):
+    def _pooled(self, x_cat=None, x_num=None, x_text=None):
+        """Secuencia -> bloques -> ln_f -> vector pooled (la representacion pre-cabeza)."""
         x, padding_mask = self._build_sequence(x_cat, x_num, x_text)
+        if self.training and self.feature_dropout > 0:
+            # anular tokens al azar (por fila), sin tocar nunca el CLS: el modelo
+            # aprende a clasificar con features faltantes (augmentation, no 1/p)
+            keep = torch.rand(x.shape[0], x.shape[1], device=x.device) >= self.feature_dropout
+            keep[:, 0 if self.cls_position == 'first' else -1] = True
+            x = x * keep.unsqueeze(-1)
         if self.position_embedding_table is not None:
             positions = torch.arange(x.shape[1], device=x.device)
             x = x + self.position_embedding_table(positions)
@@ -541,6 +567,10 @@ class BTRTransformer(nn.Module):
             m = (padding_mask if padding_mask is not None
                  else torch.ones(x.shape[:2], dtype=torch.bool, device=x.device))
             pooled = (x * m.unsqueeze(-1)).sum(1) / m.sum(1, keepdim=True)
+        return pooled
+
+    def forward(self, x_cat=None, x_num=None, x_text=None, targets=None):
+        pooled = self._pooled(x_cat, x_num, x_text)
         logits = self.cls_head(pooled).squeeze(-1)  # (batch,)
 
         loss = None
@@ -561,6 +591,23 @@ class BTRTransformer(nn.Module):
             logits, _ = self(sl(x_cat, start, end), sl(x_num, start, end), sl(x_text, start, end))
             probs.append(torch.sigmoid(logits))
         return torch.cat(probs)
+
+    @torch.no_grad()
+    def representar(self, x_cat=None, x_num=None, x_text=None, batch_size=4096):
+        """Embedding pooled (pre-cabeza) por fila: feature extraction de la clase 3.
+
+        Es el analogo de "usar BERT como modulo de embedding": el vector que otro
+        modelo puede recibir "mas un monton de cosas" (--embed-from del MLP).
+        """
+        self.eval()
+        n = (x_text if self.formulation == 'text' else x_cat).shape[0]
+        sl = lambda t, a, b: None if t is None else t[a:b]
+        outs = []
+        for start in range(0, n, batch_size):
+            end = start + batch_size
+            outs.append(self._pooled(sl(x_cat, start, end), sl(x_num, start, end),
+                                     sl(x_text, start, end)))
+        return torch.cat(outs)
 
 
 class MLPBaseline(nn.Module):

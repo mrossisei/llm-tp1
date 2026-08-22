@@ -26,6 +26,7 @@ VALIDACION; test se mira solo para reportar las configuraciones finales.
 """
 
 import argparse
+import glob
 import json
 import warnings
 from datetime import datetime, timezone
@@ -120,18 +121,36 @@ def evaluate(model, split, max_rows=None):
     return compute_metrics(y_true, probs, loss)
 
 
-def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, verbose=True):
-    """Entrena con early stopping por PR-AUC de validacion; restaura el mejor estado."""
+def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, verbose=True,
+                weight_decay=1e-2, train_targets=None, l2sp=0.0, l2sp_ref=None):
+    """Entrena con early stopping por PR-AUC de validacion; restaura el mejor estado.
+
+    weight_decay: el de AdamW (1e-2 era el default implicito de TODAS las corridas
+      previas; recien en la 6ta tanda se barre).
+    train_targets: reemplazo del target SOLO para los pasos de gradiente (labels
+      suavizadas o probabilidades del teacher en distillation); las metricas de
+      train/val/test se calculan siempre contra las labels duras originales.
+    l2sp / l2sp_ref: penalidad L2 hacia los pesos de referencia (post pre-training),
+      el analogo simple de la KL penalty de la clase 3: ajustarse a la tarea sin
+      alejarse del modelo pre-entrenado (L2-SP, Li et al. 2018).
+    """
     a, b, c, y = splits['train']
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    entrenables = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(entrenables, lr=lr, weight_decay=weight_decay)
     history, best_pr, best_state, since_best = [], -1.0, None, 0
+    y_grad = y if train_targets is None else train_targets
 
     for epoch in range(epochs):
         model.train()
         perm = torch.randperm(a.shape[0], device=a.device)
         for start in range(0, len(perm), batch_size):
             idx = perm[start:start + batch_size]
-            _, loss = model(a[idx], b[idx], c[idx], y[idx])
+            _, loss = model(a[idx], b[idx], c[idx], y_grad[idx])
+            if l2sp > 0 and l2sp_ref is not None:
+                ancla = sum(((p - l2sp_ref[n]) ** 2).sum()
+                            for n, p in model.named_parameters()
+                            if p.requires_grad and n in l2sp_ref)
+                loss = loss + l2sp * ancla
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -274,6 +293,188 @@ def pretrain_mlm(model, split_train, cardinalities, epochs, batch_size, lr, devi
     # las cabezas y el [MASK] se descartan; queda el tronco pre-entrenado
 
 
+def pretrain_ae(model, split_train, cardinalities, epochs, batch_size, lr, device,
+                verbose=True):
+    """Pre-entrenamiento autoencoder con cuello de botella en el CLS (--pretrain-ae).
+
+    Representation learning de la clase 3 via el autoencoder de SIA (TP5): el
+    vector pooled del CLS (d_model) debe RECONSTRUIR todas las features de la
+    fila — clasificacion para categoricas, regresion para numericas. Se difiere
+    del MLM en el cuello: MLM predice UNA feature enmascarada mirando las demas
+    (las posiciones conservan su informacion); aca TODO pasa por un unico vector
+    de d_model, como el espacio latente del AE. Las cabezas se descartan.
+    """
+    import torch.nn as nn
+    x_cat, x_num, _, _ = split_train
+    tok = model.tokenizer
+    n_cat, n_num = tok.n_cat, tok.n_tokens - tok.n_cat
+    d = model.cls.shape[-1]
+    heads = nn.ModuleList(
+        [nn.Linear(d, c) for c in cardinalities]
+        + [nn.Linear(d, 1) for _ in range(n_num)]
+    ).to(device)
+    opt = torch.optim.AdamW(list(model.parameters()) + list(heads.parameters()), lr=lr)
+    n = x_cat.shape[0]
+    for ep in range(epochs):
+        model.train()
+        perm = torch.randperm(n, device=device)
+        total, cuenta = 0.0, 0
+        for s in range(0, n, batch_size):
+            idx = perm[s:s + batch_size]
+            xc, xn = x_cat[idx], x_num[idx]
+            h = model._pooled(xc, xn)  # (b, d): el cuello de botella
+            loss = h.new_zeros(())
+            for f in range(n_cat):
+                loss = loss + torch.nn.functional.cross_entropy(heads[f](h), xc[:, f])
+            for f in range(n_num):
+                loss = loss + torch.nn.functional.mse_loss(
+                    heads[n_cat + f](h).squeeze(-1), xn[:, f])
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item() * xc.shape[0]
+            cuenta += xc.shape[0]
+        if verbose:
+            print(f"  ae epoch {ep}: loss {total / cuenta:.4f}")
+
+
+def entrenar_som(x, grid, seed, epochs=10):
+    """Mapa de Kohonen (SIA, TP4) minimo: grid x grid sobre las numericas de TRAIN.
+
+    Online clasico: BMU + vecindad gaussiana con lr y sigma decrecientes.
+    Devuelve los pesos (grid^2, d); la celda BMU de cada fila entra al modelo
+    como UNA feature categorica mas (--som-feature): ¿agrega senal un
+    clustering topologico no supervisado que el transformer no saque solo?
+    """
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    n, d = x.shape
+    w = rng.normal(0.0, 0.1, (grid * grid, d))
+    coords = np.array([(i // grid, i % grid) for i in range(grid * grid)], dtype=float)
+    t, t_max = 0, epochs * n
+    for _ in range(epochs):
+        for i in rng.permutation(n):
+            frac = t / t_max
+            lr = 0.5 * (1.0 - frac) + 0.01 * frac
+            sigma = max(grid / 2.0 * (1.0 - frac), 0.5)
+            v = x[i]
+            bmu = int(((w - v) ** 2).sum(1).argmin())
+            h = np.exp(-((coords - coords[bmu]) ** 2).sum(1) / (2 * sigma ** 2))
+            w += lr * h[:, None] * (v - w)
+            t += 1
+    return w
+
+
+def asignar_som(x, w):
+    """Celda BMU (0..grid^2-1) de cada fila, por lotes para no armar (n, celdas, d)."""
+    import numpy as np
+    out = []
+    for s in range(0, x.shape[0], 2048):
+        bloque = x[s:s + 2048]
+        out.append(((bloque[:, None, :] - w[None]) ** 2).sum(-1).argmin(1))
+    return np.concatenate(out)
+
+
+def expandir_ckpts(spec, seed):
+    """Resuelve la spec de checkpoints: patrones separados por coma, {seed} y glob.
+
+    Ej: 'pesos/feat_ordinal_*_seed{seed}.pt,pesos/robu_init4*_seed{seed}.pt'
+    Aborta si algun patron no matchea nada (el teacher TIENE que existir).
+    """
+    rutas = []
+    for patron in spec.split(','):
+        patron = patron.strip().format(seed=seed)
+        if not patron:
+            continue
+        hallados = sorted((REPO_ROOT / p if not Path(p).is_absolute() else Path(p))
+                          for p in glob.glob(str(REPO_ROOT / patron)))
+        if not hallados:
+            raise SystemExit(f'--init-from/--distill-from/--embed-from: ningun checkpoint '
+                             f'matchea {patron!r} (¿falta correr al teacher primero?)')
+        rutas.extend(hallados)
+    vistos, unicos = set(), []
+    for r in rutas:
+        if r not in vistos:
+            vistos.add(r)
+            unicos.append(r)
+    return unicos
+
+
+def probs_teachers(rutas, x_cat, x_num, device, verbose=True):
+    """Promedio de sigmoides de los teachers sobre las filas dadas (distillation).
+
+    Clase 3: entrenar contra las PROBABILIDADES del modelo grande (soft labels)
+    informa mas que la label dura; con n>1 teachers es el caso "integrando
+    informacion de varios modelos" que menciono la profesora. Los teachers se
+    cargan del mismo split (misma seed) — sin fuga: vieron exactamente el mismo
+    train que va a ver el student.
+    """
+    from .model import load_checkpoint
+    acum = None
+    for ruta in rutas:
+        teacher, _ = load_checkpoint(ruta, device=device)
+        p = teacher.predict_proba(x_cat, x_num)
+        acum = p if acum is None else acum + p
+        del teacher
+    probs = acum / len(rutas)
+    if verbose:
+        print(f"  teachers: {len(rutas)} ckpt(s), prob media {probs.mean():.4f}")
+    return probs
+
+
+def matriz_cruda(x_cat, x_num, cardinalities):
+    """[one-hot de categoricas | numericas]: la entrada 'cruda' para PCA/AE (SIA)."""
+    import torch.nn.functional as F
+    partes = [F.one_hot(x_cat[:, i], card).float() for i, card in enumerate(cardinalities)]
+    partes.append(x_num)
+    return torch.cat(partes, dim=1)
+
+
+def ajustar_pca(m_train, k):
+    """PCA clasico (SVD sobre train centrado; la version cerrada de Oja/Sanger en SIA).
+
+    Devuelve (media, componentes (D,k), std de las proyecciones de train) para
+    proyectar cualquier split y blanquear con estadisticos de TRAIN.
+    """
+    media = m_train.mean(0, keepdim=True)
+    _, _, vt = torch.linalg.svd(m_train - media, full_matrices=False)
+    comp = vt[:k].T
+    proy = (m_train - media) @ comp
+    std = proy.std(0, keepdim=True).clamp_min(1e-6)
+    return media, comp, std
+
+
+def ajustar_ae(m_train, k, device, epochs=30, batch_size=256, lr=1e-3, seed=0, verbose=True):
+    """Autoencoder denso (SIA, TP5) sobre la matriz cruda; devuelve el ENCODER.
+
+    in -> 4k -> k -> 4k -> in con MSE. El espacio latente (k) reemplaza a las
+    features del MLP (--ae-latent): feature extraction puro de la clase 3 —
+    la representacion se aprende SIN mirar el target.
+    """
+    import torch.nn as nn
+    torch.manual_seed(seed)
+    d_in = m_train.shape[1]
+    enc = nn.Sequential(nn.Linear(d_in, 4 * k), nn.ReLU(), nn.Linear(4 * k, k)).to(device)
+    dec = nn.Sequential(nn.Linear(k, 4 * k), nn.ReLU(), nn.Linear(4 * k, d_in)).to(device)
+    opt = torch.optim.AdamW(list(enc.parameters()) + list(dec.parameters()), lr=lr)
+    n = m_train.shape[0]
+    for ep in range(epochs):
+        perm = torch.randperm(n, device=m_train.device)
+        total = 0.0
+        for s in range(0, n, batch_size):
+            idx = perm[s:s + batch_size]
+            rec = dec(enc(m_train[idx]))
+            loss = torch.nn.functional.mse_loss(rec, m_train[idx])
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            opt.step()
+            total += loss.item() * idx.shape[0]
+        if verbose and (ep % 10 == 0 or ep == epochs - 1):
+            print(f"  ae-latente epoch {ep}: mse {total / n:.4f}")
+    enc.eval()
+    return enc
+
+
 def resolve_device(arg):
     if arg == 'auto':
         return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -300,6 +501,38 @@ def run_name(args, seed):
         parts.append(f"cv{args.cv_k}f{args.cv_fold}")
     if args.per_feature != 'none':
         parts.append(f"pf{args.per_feature}")
+    if args.dropout != 0.1:
+        parts.append(f"do{args.dropout:g}")
+    if args.weight_decay != 1e-2:
+        parts.append(f"wd{args.weight_decay:g}")
+    if args.feature_dropout:
+        parts.append(f"fdrop{args.feature_dropout:g}")
+    if args.label_smoothing:
+        parts.append(f"ls{args.label_smoothing:g}")
+    if args.sin_residual:
+        parts.append('sinres')
+    if args.sin_layernorm:
+        parts.append('sinln')
+    if args.init_from:
+        parts.append('ft')
+    if args.freeze_backbone:
+        parts.append('frz')
+    if args.reinit_head:
+        parts.append('rih')
+    if args.l2sp:
+        parts.append(f"l2sp{args.l2sp:g}")
+    if args.distill_from:
+        parts.append(f"dst{args.distill_alpha:g}")
+    if args.embed_from:
+        parts.append('embfrom')
+    if args.som_feature:
+        parts.append(f"som{args.som_feature}")
+    if args.pretrain_ae:
+        parts.append(f"ae{args.pretrain_ae}")
+    if args.ae_latent:
+        parts.append(f"ael{args.ae_latent}")
+    if args.pca:
+        parts.append(f"pca{args.pca}")
     if args.cat_feature_encoding:
         pares = sorted(p.strip().replace('_', '').replace('=', '-')
                        for p in args.cat_feature_encoding.split(',') if p.strip())
@@ -434,6 +667,8 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
                       n_layer=args.n_layer, causal=args.causal, pooling=args.pooling,
                       use_positional=args.positional, cls_position=args.cls_position,
                       cart_lambda=args.cart_aux, per_feature=args.per_feature,
+                      sin_residual=args.sin_residual, sin_layernorm=args.sin_layernorm,
+                      feature_dropout=args.feature_dropout,
                       **encod, **common)
         model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
@@ -485,6 +720,52 @@ def run(csv_path, seed, args, device):
         raise SystemExit('cat-feature-encoding no implementado para listwise')
     if args.cat_feature_encoding and args.cat_encoding == 'onehot':
         raise SystemExit('cat-feature-encoding no se combina con onehot (que es global del MLP)')
+    # ---- guards de la 6ta tanda (regularizacion / transfer / SIA) ----
+    if args.feature_dropout and (args.arch != 'transformer' or args.formulation != 'features'):
+        raise SystemExit('--feature-dropout es solo para transformer formulation features '
+                         '(anula tokens de features; en texto seria otro experimento)')
+    if (args.sin_residual or args.sin_layernorm) and args.arch != 'transformer':
+        raise SystemExit('--sin-residual/--sin-layernorm son ablaciones de los bloques '
+                         'del transformer')
+    if args.label_smoothing and (listwise or args.cart_aux):
+        raise SystemExit('--label-smoothing no esta implementado para listwise ni multi-task')
+    if args.distill_from and (listwise or args.cart_aux or args.label_smoothing):
+        raise SystemExit('--distill-from no se combina con listwise, --cart-aux ni '
+                         '--label-smoothing (un solo target de entrenamiento por corrida)')
+    if (args.init_from or args.freeze_backbone) and args.arch != 'transformer':
+        raise SystemExit('--init-from/--freeze-backbone estan implementados solo para '
+                         'el transformer')
+    if args.reinit_head and not args.init_from:
+        raise SystemExit('--reinit-head solo tiene sentido con --init-from (sin carga previa '
+                         'la cabeza ya arranca aleatoria)')
+    if args.l2sp and not (args.init_from or args.pretrain_mlm or args.pretrain_ae):
+        raise SystemExit('--l2sp ancla a pesos PRE-ENTRENADOS: requiere --init-from, '
+                         '--pretrain-mlm o --pretrain-ae')
+    if args.embed_from and args.arch != 'mlp':
+        raise SystemExit('--embed-from es feature extraction PARA el MLP (--arch mlp)')
+    if args.embed_from and args.som_feature:
+        raise SystemExit('--embed-from no se combina con --som-feature (el extractor espera '
+                         'las columnas originales)')
+    if (args.ae_latent or args.pca) and args.arch != 'mlp':
+        raise SystemExit('--ae-latent/--pca reemplazan la entrada del MLP (--arch mlp)')
+    if args.ae_latent and args.pca:
+        raise SystemExit('--ae-latent y --pca son excluyentes (una compresion por corrida)')
+    if (args.ae_latent or args.pca) and (args.cat_encoding != 'embedding'
+                                         or args.numeric_mode != 'linear'
+                                         or args.cat_feature_encoding or args.som_feature
+                                         or args.embed_from or args.cart_aux):
+        raise SystemExit('--ae-latent/--pca: la entrada pasa a ser [one-hot|numericas] '
+                         'comprimida; no se combina con otros encodings/extras')
+    if args.som_feature and (listwise or args.arch == 'tower'
+                             or (args.arch == 'transformer' and args.formulation == 'text')
+                             or args.cat_encoding == 'onehot'):
+        raise SystemExit('--som-feature agrega una categorica a la rama tabular '
+                         '(features/hybrid/fusion o mlp sin onehot)')
+    if args.pretrain_ae and (args.arch != 'transformer' or args.formulation != 'features'
+                             or args.cls_position != 'first'):
+        raise SystemExit('--pretrain-ae es solo para transformer features con CLS al inicio')
+    if args.pretrain_ae and args.pretrain_mlm:
+        raise SystemExit('--pretrain-ae y --pretrain-mlm: elegir UN pre-entrenamiento')
     extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
     if extras == ('all',):
         extras = EXTRA_ALL  # congelado: ver data.EXTRA_ALL
@@ -542,7 +823,76 @@ def run(csv_path, seed, args, device):
                                           args.hash_buckets)
             if all(m == args.cat_encoding for m in cat_modes):
                 cat_modes = None  # sin overrides: config mas limpia
-    model, model_config = build_model(args, prep, cardinalities, len(keep_num),
+
+    n_num_model = len(keep_num)
+    som_weights = None
+    if args.som_feature:
+        # Kohonen (SIA): SOM sobre las numericas de TRAIN; la celda BMU entra
+        # como una categorica extra (indices 1..G^2; el 0 queda como UNK)
+        g = args.som_feature
+        som_weights = entrenar_som(splits['train'][1].cpu().numpy(), g, seed)
+        nuevos = {}
+        for kk, (a_, b_, c_, y_) in splits.items():
+            celdas = torch.as_tensor(asignar_som(b_.cpu().numpy(), som_weights) + 1,
+                                     dtype=torch.long, device=a_.device)
+            nuevos[kk] = (torch.cat([a_, celdas.unsqueeze(1)], dim=1), b_, c_, y_)
+        splits = nuevos
+        cardinalities = cardinalities + [g * g + 1]
+        modos = list(cat_modes) if cat_modes else [args.cat_encoding] * (len(cardinalities) - 1)
+        modos.append('embedding')  # la celda no tiene orden: siempre embedding
+        cat_modes = None if all(m == 'embedding' for m in modos) else modos
+        if not args.quiet:
+            print(f"  som {g}x{g}: celda BMU agregada como categorica ({g * g + 1} niveles)")
+
+    if args.ae_latent or args.pca:
+        # SIA (TP5 / PCA): comprimir [one-hot|numericas] SIN mirar el target y
+        # entrenar el MLP sobre esa representacion (feature extraction, clase 3)
+        k = args.ae_latent or args.pca
+        m_tr = matriz_cruda(splits['train'][0], splits['train'][1], cardinalities)
+        if args.pca:
+            media, comp, std = ajustar_pca(m_tr, k)
+            transf = lambda a_, b_: ((matriz_cruda(a_, b_, cardinalities) - media) @ comp) / std
+        else:
+            enc = ajustar_ae(m_tr, k, device, seed=seed, verbose=not args.quiet)
+            with torch.no_grad():
+                lat = enc(m_tr)
+            media_l = lat.mean(0, keepdim=True)
+            std_l = lat.std(0, keepdim=True).clamp_min(1e-6)
+
+            def transf(a_, b_):
+                with torch.no_grad():
+                    return (enc(matriz_cruda(a_, b_, cardinalities)) - media_l) / std_l
+        nuevos = {}
+        for kk, (a_, b_, c_, y_) in splits.items():
+            vacio = torch.zeros(a_.shape[0], 0, dtype=torch.long, device=a_.device)
+            nuevos[kk] = (vacio, transf(a_, b_), c_, y_)
+        splits = nuevos
+        cardinalities, cat_tables, cat_modes = [], None, None
+        n_num_model = k
+        if not args.quiet:
+            fuente = 'PCA' if args.pca else 'autoencoder'
+            print(f"  {fuente}: entrada del MLP = {k} dimensiones (blanqueadas con train)")
+
+    if args.embed_from:
+        # feature extraction (clase 3): el embedding pooled del transformer
+        # CONGELADO, concatenado a las numericas del MLP ("el embedding mas un
+        # monton de cosas")
+        rutas = expandir_ckpts(args.embed_from, seed)
+        if len(rutas) != 1:
+            raise SystemExit(f'--embed-from espera UN checkpoint, matchearon {len(rutas)}')
+        from .model import load_checkpoint
+        extractor, _ = load_checkpoint(rutas[0], device=device)
+        nuevos = {}
+        for kk, (a_, b_, c_, y_) in splits.items():
+            emb = extractor.representar(a_, b_)
+            nuevos[kk] = (a_, torch.cat([b_, emb], dim=1), c_, y_)
+        splits = nuevos
+        n_num_model += emb.shape[1]
+        if not args.quiet:
+            print(f"  embed-from: +{emb.shape[1]} numericas desde {rutas[0].name}")
+        del extractor
+
+    model, model_config = build_model(args, prep, cardinalities, n_num_model,
                                       bin_edges, pos_weight, max_products, cat_tables,
                                       cat_modes)
     model = model.to(device)
@@ -557,6 +907,21 @@ def run(csv_path, seed, args, device):
         pesos_w2v = pretrain_w2v(train_df, prep, args.d_model, device, verbose=not args.quiet)
         with torch.no_grad():
             tabla.weight.copy_(pesos_w2v)
+    if args.init_from:
+        # fine-tuning (clase 3): arrancar de pesos ya entrenados en vez de aleatorios
+        rutas = expandir_ckpts(args.init_from, seed)
+        if len(rutas) != 1:
+            raise SystemExit(f'--init-from espera UN checkpoint, matchearon {len(rutas)}')
+        ckpt_ini = torch.load(rutas[0], map_location=device, weights_only=False)
+        model.load_state_dict(ckpt_ini['state_dict'])
+        if args.reinit_head:
+            # probe honesto: la cabeza vuelve a aleatorio; lo que se mide es la
+            # REPRESENTACION congelada, no la cabeza ya entrenada
+            model.cls_head.apply(model._init_weights)
+        if not args.quiet:
+            print(f"  init-from: {rutas[0].name}"
+                  + (' (cabeza reinicializada)' if args.reinit_head else ''))
+
     n_params = sum(p.numel() for p in model.parameters())
     name = run_name(args, seed)
     print(f"\n=== {name} | {n_params:,} parametros | device {device} ===")
@@ -565,8 +930,45 @@ def run(csv_path, seed, args, device):
         pretrain_mlm(model, splits['train'], cardinalities, epochs=args.pretrain_mlm,
                      batch_size=args.batch_size, lr=args.lr, device=device,
                      verbose=not args.quiet)
+    if args.pretrain_ae:
+        pretrain_ae(model, splits['train'], cardinalities, epochs=args.pretrain_ae,
+                    batch_size=args.batch_size, lr=args.lr, device=device,
+                    verbose=not args.quiet)
+
+    if args.freeze_backbone:
+        # feature extraction (clase 3): congelar el tronco; entrena SOLO la cabeza
+        congelados = 0
+        for nom, p in model.named_parameters():
+            if not nom.startswith(('cls_head', 'cart_head')):
+                p.requires_grad = False
+                congelados += p.numel()
+        if not args.quiet:
+            entrenables = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            print(f"  backbone congelado ({congelados:,} params); "
+                  f"entrena solo la cabeza ({entrenables:,})")
+
+    l2sp_ref = None
+    if args.l2sp:
+        # snapshot POST pre-training: el "modelo del que no quiero alejarme"
+        l2sp_ref = {n: p.detach().clone() for n, p in model.named_parameters()
+                    if p.requires_grad}
+
+    train_targets = None
+    y_tr = splits['train'][3]
+    if args.label_smoothing:
+        s = args.label_smoothing
+        train_targets = y_tr * (1 - s) + s / 2
+    if args.distill_from:
+        rutas = expandir_ckpts(args.distill_from, seed)
+        p_teacher = probs_teachers(rutas, splits['train'][0], splits['train'][1],
+                                   device, verbose=not args.quiet)
+        al = args.distill_alpha
+        train_targets = al * p_teacher + (1 - al) * y_tr
+
     history = train_model(model, splits, epochs=args.epochs, batch_size=args.batch_size,
-                          lr=args.lr, patience=args.patience, verbose=not args.quiet)
+                          lr=args.lr, patience=args.patience, verbose=not args.quiet,
+                          weight_decay=args.weight_decay, train_targets=train_targets,
+                          l2sp=args.l2sp, l2sp_ref=l2sp_ref)
     val_m = evaluate(model, splits['val'])
     test_m = evaluate(model, splits['test'])
     print(f"{name} -> VAL: ROC-AUC {val_m['roc_auc']:.4f} PR-AUC {val_m['pr_auc']:.4f} | "
@@ -603,6 +1005,7 @@ def run(csv_path, seed, args, device):
                 'preprocessor': prep,
                 'cat_features': [prep.cats[i] for i in keep_cat],
                 'num_features': [prep.nums[i] for i in keep_num],
+                'som': som_weights,  # pesos del SOM (--som-feature); None si no aplica
             }, ckpt)
             print(f"pesos      -> {ckpt.relative_to(REPO_ROOT)}")
 
@@ -666,6 +1069,55 @@ def build_parser():
     parser.add_argument('--n-head', type=int, default=4)
     parser.add_argument('--n-layer', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0.1)
+    # ---- regularizacion (6ta tanda: nunca barrida hasta ahora) ----
+    parser.add_argument('--weight-decay', type=float, default=1e-2,
+                        help='weight decay de AdamW (1e-2 fue el default implicito '
+                             'de todas las corridas previas)')
+    parser.add_argument('--feature-dropout', type=float, default=0.0, metavar='P',
+                        help='anular tokens de features al azar en TRAIN (nunca el CLS); '
+                             'augmentation "faltan features" (solo transformer features)')
+    parser.add_argument('--label-smoothing', type=float, default=0.0, metavar='S',
+                        help="suavizar las labels de TRAIN: y' = y(1-S) + S/2 "
+                             '(= distillation con teacher uniforme)')
+    parser.add_argument('--sin-residual', action='store_true',
+                        help='ablacion: bloques SIN conexiones residuales')
+    parser.add_argument('--sin-layernorm', action='store_true',
+                        help='ablacion: bloques SIN LayerNorm (ni ln_f)')
+    # ---- transfer learning (clase 3: feature extraction / fine-tuning / distillation) ----
+    parser.add_argument('--init-from', default='', metavar='CKPT',
+                        help='fine-tuning: cargar pesos iniciales de un checkpoint '
+                             '(admite {seed} y glob; debe matchear la arquitectura)')
+    parser.add_argument('--freeze-backbone', action='store_true',
+                        help='feature extraction: congelar todo salvo la cabeza '
+                             '(linear probe sobre la representacion)')
+    parser.add_argument('--reinit-head', action='store_true',
+                        help='reinicializar la cabeza tras --init-from (probe honesto)')
+    parser.add_argument('--l2sp', type=float, default=0.0, metavar='LAMBDA',
+                        help='penalidad L2 hacia los pesos post pre-training (el analogo '
+                             'de la KL penalty de la clase 3); requiere --init-from, '
+                             '--pretrain-mlm o --pretrain-ae')
+    parser.add_argument('--distill-from', default='', metavar='CKPTS',
+                        help='knowledge distillation: entrenar contra las PROBABILIDADES '
+                             'del promedio de estos checkpoints (patrones con coma, '
+                             '{seed} y glob); teacher(s) del MISMO split')
+    parser.add_argument('--distill-alpha', type=float, default=1.0, metavar='A',
+                        help='target = A*prob_teacher + (1-A)*label dura (1 = puro soft)')
+    parser.add_argument('--embed-from', default='', metavar='CKPT',
+                        help='feature extraction para --arch mlp: concatenar el embedding '
+                             'pooled (congelado) de este transformer a las numericas')
+    # ---- herramientas de SIA (Kohonen / PCA / autoencoder) ----
+    parser.add_argument('--som-feature', type=int, default=0, metavar='G',
+                        help='Kohonen: entrenar un SOM GxG sobre las numericas de train '
+                             'y agregar la celda BMU como feature categorica extra')
+    parser.add_argument('--pretrain-ae', type=int, default=0, metavar='EPOCHS',
+                        help='pre-entrenar el tronco como autoencoder: el CLS debe '
+                             'reconstruir todas las features (cuello de botella d_model)')
+    parser.add_argument('--ae-latent', type=int, default=0, metavar='K',
+                        help='--arch mlp: reemplazar la entrada por el espacio latente K '
+                             'de un autoencoder sobre [one-hot|numericas] (SIA TP5)')
+    parser.add_argument('--pca', type=int, default=0, metavar='K',
+                        help='--arch mlp: reemplazar la entrada por las K primeras '
+                             'componentes principales de [one-hot|numericas]')
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--lr', type=float, default=1e-3)

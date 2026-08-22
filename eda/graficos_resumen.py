@@ -32,7 +32,7 @@ def main():
     # paleta validada (dataviz: CVD y contraste ok): teal/violeta/ambar/magenta
     for y, (m, s, k) in zip(ys, filas):
         protocolo_largo = k.startswith(('pac20_', 'camp_', 'pf_', 'min_', 'cv5_', 'robu_',
-                                        'curva_')) \
+                                        'curva_', 'reg_', 'abl_', 'tl_', 'sia_')) \
             or k in ('feat_causal_last', 'feat_target', 'feat_freq', 'feat_hash8', 'mlp_onehot',
                      'feat_extras', 'feat_ordinal', 'feat_status_ordinal', 'feat_status_target',
                      'feat_tiempo', 'listwise_texto', 'feat_cartaux01', 'feat_cartaux03',

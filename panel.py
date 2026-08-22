@@ -107,6 +107,31 @@ def canon(c):
     pf = c.get('per_feature', 'none') if (arch == 'transformer' and form == 'features') else '-'
     nh = '-' if arch == 'mlp' else str(int(c.get('n_head', 4)))
     nl = '-' if arch == 'mlp' else str(int(c.get('n_layer', 2)))
+
+    # ---- 6ta tanda: regularizacion / transfer / SIA (None-safe: 0 es valor real) ----
+    def num(campo, defecto):
+        v = c.get(campo, defecto)
+        return defecto if v is None else v
+    wd = ffloat(num('weight_decay', 1e-2))
+    fdrop = (ffloat(num('feature_dropout', 0.0))
+             if arch == 'transformer' and form == 'features' else '-')
+    lsm = '-' if arch == 'listwise' else ffloat(num('label_smoothing', 0.0))
+    sinres = ('1' if c.get('sin_residual') else '0') if arch == 'transformer' else '-'
+    sinln = ('1' if c.get('sin_layernorm') else '0') if arch == 'transformer' else '-'
+    ifrom = (c.get('init_from') or '-') if arch == 'transformer' else '-'
+    frz = ('1' if c.get('freeze_backbone') else '0') if arch == 'transformer' else '-'
+    rih = ('1' if c.get('reinit_head') else '0') if ifrom != '-' else '-'
+    l2sp = ffloat(num('l2sp', 0.0))
+    dst = c.get('distill_from') or '-'
+    dsta = ffloat(num('distill_alpha', 1.0)) if dst != '-' else '-'
+    efrom = (c.get('embed_from') or '-') if arch == 'mlp' else '-'
+    som = '-' if (arch in ('listwise', 'tower')
+                  or (arch == 'transformer' and form == 'text')) \
+        else str(int(num('som_feature', 0)))
+    ae = str(int(num('pretrain_ae', 0)))
+    ael = str(int(num('ae_latent', 0))) if arch == 'mlp' else '-'
+    pca = str(int(num('pca', 0))) if arch == 'mlp' else '-'
+
     return '|'.join([
         arch, form, drops, strip, nmode, nbins, str(int(c['d_model'])), nh, nl,
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
@@ -114,6 +139,8 @@ def canon(c):
         ffloat(c.get('lr', 1e-3)), str(int(c.get('patience', 8))),
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
         frac, init, mlm, cv, pf,
+        wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
+        som, ae, ael, pca,
     ])
 
 
@@ -123,13 +150,22 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'lr', 'patience', 'cat_encoding', 'hash_buckets', 'cls_position',
               'cart_aux', 'extra_features', 'listwise_texto', 'cat_feature_encoding',
               'text_tokens', 'w2v_init', 'train_frac', 'init_seed', 'pretrain_mlm',
-              'cv_k', 'cv_fold', 'per_feature']
+              'cv_k', 'cv_fold', 'per_feature',
+              'weight_decay', 'feature_dropout', 'label_smoothing', 'sin_residual',
+              'sin_layernorm', 'init_from', 'freeze_backbone', 'reinit_head', 'l2sp',
+              'distill_from', 'distill_alpha', 'embed_from', 'som_feature',
+              'pretrain_ae', 'ae_latent', 'pca']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
                 'text_tokens': 'chars', 'w2v_init': False, 'train_frac': 1.0,
                 'init_seed': None, 'pretrain_mlm': 0, 'cv_k': 0, 'cv_fold': 0,
-                'per_feature': 'none'}
+                'per_feature': 'none',
+                'weight_decay': 1e-2, 'feature_dropout': 0.0, 'label_smoothing': 0.0,
+                'sin_residual': False, 'sin_layernorm': False, 'init_from': '',
+                'freeze_backbone': False, 'reinit_head': False, 'l2sp': 0.0,
+                'distill_from': '', 'distill_alpha': 1.0, 'embed_from': '',
+                'som_feature': 0, 'pretrain_ae': 0, 'ae_latent': 0, 'pca': 0}
 
 
 def cfg_dict(c):
@@ -522,6 +558,59 @@ def controles(features):
   (suite <code>feat_mlm20</code>, <code>feat_ordinal_mlm20</code>); GroupKFold: <code>cv5_fold0..4</code>.</p>
 </section>
 
+<section class="card"><h2><span class="n">5b</span>Regularización · Transfer learning · SIA (6ª tanda)</h2>
+  <div class="eyebrow" style="margin:0 0 6px">REGULARIZACIÓN (nunca barrida hasta la 6ª tanda)</div>
+  <div class="rowc">
+    <label class="inl">weight decay (AdamW) <input type="number" id="weight_decay" value="0.01" min="0" max="1" step="0.001"></label>
+    <label class="inl" id="fdrop-wrap">feature-dropout <input type="number" id="feature_dropout" value="0" min="0" max="0.9" step="0.05"></label>
+    <label class="inl">label smoothing <input type="number" id="label_smoothing" value="0" min="0" max="0.5" step="0.05"></label>
+    <label class="inl" id="sinres-wrap"><input type="checkbox" id="sin_residual"> sin residuales (ablación)</label>
+    <label class="inl" id="sinln-wrap"><input type="checkbox" id="sin_layernorm"> sin LayerNorm (ablación)</label>
+  </div>
+  <div class="eyebrow" style="margin:12px 0 6px">TRANSFER LEARNING (clase 3: extraction / fine-tuning / distillation)</div>
+  <div class="rowc">
+    <button class="preset" id="pre-probe">preset: probe del campeón</button>
+    <button class="preset" id="pre-dst-camp">preset: distill ← campeón</button>
+    <button class="preset" id="pre-dst-ens">preset: distill ← deep-ensemble</button>
+  </div>
+  <div class="rowc">
+    <label class="inl" style="flex:1">init-from (ckpt, admite {{seed}} y glob)
+      <input type="text" id="init_from" value="" placeholder="pesos/..._seed{{seed}}.pt" style="width:100%"></label>
+  </div>
+  <div class="rowc">
+    <label class="inl"><input type="checkbox" id="freeze_backbone"> congelar backbone (probe: solo la cabeza)</label>
+    <label class="inl"><input type="checkbox" id="reinit_head"> reinicializar la cabeza</label>
+    <label class="inl">λ L2-SP (ancla al pre-entrenado) <input type="number" id="l2sp" value="0" min="0" max="1" step="0.001"></label>
+  </div>
+  <div class="rowc">
+    <label class="inl" style="flex:1">distill-from (teachers, coma/{{seed}}/glob)
+      <input type="text" id="distill_from" value="" placeholder="pesos/teacher_seed{{seed}}.pt,..." style="width:100%"></label>
+    <label class="inl">α soft <input type="number" id="distill_alpha" value="1" min="0" max="1" step="0.1"></label>
+  </div>
+  <div class="rowc" id="efrom-wrap">
+    <label class="inl" style="flex:1">embed-from (MLP: + embedding congelado del transformer)
+      <input type="text" id="embed_from" value="" placeholder="pesos/..._seed{{seed}}.pt" style="width:100%"></label>
+  </div>
+  <div class="eyebrow" style="margin:12px 0 6px">HERRAMIENTAS DE SIA</div>
+  <div class="rowc">
+    <label class="inl" id="som-wrap">SOM (Kohonen) G×G, 0 = off <input type="number" id="som_feature" value="0" min="0" max="16"></label>
+    <label class="inl" id="ae-wrap">épocas AE pre-training (CLS reconstruye) <input type="number" id="pretrain_ae" value="0" min="0" max="100"></label>
+    <label class="inl" id="ael-wrap">AE→latente K (MLP) <input type="number" id="ae_latent" value="0" min="0" max="64"></label>
+    <label class="inl" id="pca-wrap">PCA K (MLP) <input type="number" id="pca" value="0" min="0" max="64"></label>
+  </div>
+  <p class="hint">Las tres técnicas de la <b>clase 3</b> con nuestros propios checkpoints como base:
+  <b>feature extraction</b> = congelar el tronco y entrenar solo la cabeza (probe lineal), o darle
+  al MLP el embedding pooled del transformer ("el embedding más un montón de cosas");
+  <b>fine-tuning</b> = --init-from (con λ&gt;0, L2-SP: la "KL penalty" — ajustarse sin alejarse del
+  pre-entrenado); <b>knowledge distillation</b> = entrenar contra las PROBABILIDADES del teacher
+  (el 0.8 informa más que el 1); el preset deep-ensemble usa los 6 modelos del mismo split como
+  teacher (n&gt;1, "integrando información de varios modelos"). SIA: la celda BMU de un
+  <b>Kohonen</b> como categórica extra, el <b>autoencoder</b> como pre-training del tronco
+  (hermano con cuello de botella del MLM) y <b>PCA/AE→latente</b> como única entrada del MLP
+  (representation learning puro). Suite: <code>reg_*</code>, <code>abl_*</code>, <code>tl_*</code>,
+  <code>sia_*</code>.</p>
+</section>
+
 <section class="card"><h2><span class="n">6</span>Métricas — se calculan SIEMPRE todas</h2>
   <div id="met-pills"></div>
   <div class="rowc">
@@ -614,6 +703,10 @@ const ARCH2CODE = {feat:{arch:'transformer',formulation:'features'}, mlp:{arch:'
   text:{arch:'transformer',formulation:'text'}, hybrid:{arch:'transformer',formulation:'hybrid'},
   fusion:{arch:'transformer',formulation:'fusion'}, tower:{arch:'tower'}, listwise:{arch:'listwise'}};
 const ALL_FEATS = DATA.features.cat.map(f=>f.name).concat(DATA.features.num.map(f=>f.name));
+// teachers de la 6ta tanda (presets de transfer): el campeon por split, y el
+// deep-ensemble = campeon + las 5 inits extra del MISMO split
+const CKPT_CAMPEON = 'pesos/feat_ordinal_features_d32_h4_l2_linear_catordinal_seed{seed}.pt';
+const CKPT_ENSEMBLE = CKPT_CAMPEON + ',pesos/robu_init4*_features_d32_h4_l2_linear_catordinal_init4*_seed{seed}.pt';
 
 // ---- estado (mismos nombres que argparse en btr/train.py) ----
 const S = Object.assign({}, DATA.defaults);
@@ -692,12 +785,35 @@ function canonKey(c){
   const pf = (arch==='transformer' && form==='features') ? (c.per_feature||'none') : '-';
   const nh = arch==='mlp' ? '-' : String(Math.trunc(c.n_head??4));
   const nl = arch==='mlp' ? '-' : String(Math.trunc(c.n_layer??2));
+
+  // ---- 6ta tanda: regularizacion / transfer / SIA (None-safe: 0 es valor real) ----
+  const numo = (v,d) => (v===null||v===undefined) ? d : v;
+  const wd = ffloat(numo(c.weight_decay, 0.01));
+  const fdrop = (arch==='transformer' && form==='features') ? ffloat(numo(c.feature_dropout,0)) : '-';
+  const lsm = arch==='listwise' ? '-' : ffloat(numo(c.label_smoothing,0));
+  const sinres = arch==='transformer' ? (c.sin_residual ? '1':'0') : '-';
+  const sinln = arch==='transformer' ? (c.sin_layernorm ? '1':'0') : '-';
+  const ifrom = arch==='transformer' ? (c.init_from || '-') : '-';
+  const frz = arch==='transformer' ? (c.freeze_backbone ? '1':'0') : '-';
+  const rih = ifrom!=='-' ? (c.reinit_head ? '1':'0') : '-';
+  const l2sp = ffloat(numo(c.l2sp,0));
+  const dst = c.distill_from || '-';
+  const dsta = dst!=='-' ? ffloat(numo(c.distill_alpha,1)) : '-';
+  const efrom = arch==='mlp' ? (c.embed_from || '-') : '-';
+  const som = (arch==='listwise'||arch==='tower'||(arch==='transformer'&&form==='text'))
+    ? '-' : String(Math.trunc(numo(c.som_feature,0)));
+  const ae = String(Math.trunc(numo(c.pretrain_ae,0)));
+  const ael = arch==='mlp' ? String(Math.trunc(numo(c.ae_latent,0))) : '-';
+  const pca = arch==='mlp' ? String(Math.trunc(numo(c.pca,0))) : '-';
+
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
     ffloat(c.lr??0.001), String(Math.trunc(c.patience??8)),
     catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
-    frac, init, mlm, cv, pf].join('|');
+    frac, init, mlm, cv, pf,
+    wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
+    som, ae, ael, pca].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -749,6 +865,31 @@ function coerciones(s){
     out.push('⚠ per-feature no se combina con causal — el comando fallaría');
   if ((Number(s.cv_k)>0 || Number(s.train_frac)<1) && s.arch==='listwise')
     out.push('cv / train-frac no implementados para listwise — el comando fallaría');
+  if (Number(s.feature_dropout)>0 && !(s.arch==='transformer' && s.formulation==='features'))
+    out.push('feature-dropout es solo para transformer features — ignorado');
+  if ((s.sin_residual||s.sin_layernorm) && s.arch!=='transformer')
+    out.push('sin-residual / sin-layernorm son ablaciones del transformer — ignoradas');
+  if (Number(s.label_smoothing)>0 && (s.arch==='listwise'||Number(s.cart_aux)>0))
+    out.push('⚠ label-smoothing no se combina con listwise ni multi-task — el comando fallaría');
+  if (s.distill_from && (s.arch==='listwise'||Number(s.cart_aux)>0||Number(s.label_smoothing)>0))
+    out.push('⚠ distill no se combina con listwise, cart-aux ni label-smoothing — el comando fallaría');
+  if ((s.init_from||s.freeze_backbone) && s.arch!=='transformer')
+    out.push('init-from / freeze-backbone están implementados solo para el transformer — ignorados');
+  if (Number(s.l2sp)>0 && !(s.init_from||Number(s.pretrain_mlm)>0||Number(s.pretrain_ae)>0))
+    out.push('⚠ l2sp ancla a pesos PRE-entrenados: requiere init-from, MLM o AE — el comando fallaría');
+  if (s.embed_from && s.arch!=='mlp')
+    out.push('embed-from es feature extraction PARA el MLP — ignorado');
+  if ((Number(s.ae_latent)>0||Number(s.pca)>0) && s.arch!=='mlp')
+    out.push('ae-latent / pca reemplazan la entrada del MLP — ignorados');
+  if (Number(s.ae_latent)>0 && Number(s.pca)>0)
+    out.push('⚠ ae-latent y pca son excluyentes — el comando fallaría');
+  if (Number(s.som_feature)>0 && (s.arch==='listwise'||s.arch==='tower'
+      ||(s.arch==='transformer'&&s.formulation==='text')||s.cat_encoding==='onehot'))
+    out.push('⚠ som-feature necesita la rama tabular sin onehot — el comando fallaría');
+  if (Number(s.pretrain_ae)>0 && !(s.arch==='transformer' && s.formulation==='features' && s.cls_position==='first'))
+    out.push('⚠ pretrain-ae es solo transformer features con CLS al inicio — el comando fallaría');
+  if (Number(s.pretrain_ae)>0 && Number(s.pretrain_mlm)>0)
+    out.push('⚠ pretrain-ae y pretrain-mlm: elegir UN pre-entrenamiento — el comando fallaría');
   return out;
 }
 
@@ -812,6 +953,27 @@ function comando(s){
   if (Number(s.cv_k)>0){ p.push('--cv-k', String(s.cv_k)); p.push('--cv-fold', String(s.cv_fold||0)); }
   if (s.arch==='transformer' && s.formulation==='features' && (s.per_feature||'none')!=='none')
     p.push('--per-feature', s.per_feature);
+  if (Number(s.weight_decay)!==0.01) p.push('--weight-decay', ffloat(s.weight_decay));
+  if (s.arch==='transformer' && s.formulation==='features' && Number(s.feature_dropout)>0)
+    p.push('--feature-dropout', ffloat(s.feature_dropout));
+  if (Number(s.label_smoothing)>0) p.push('--label-smoothing', ffloat(s.label_smoothing));
+  if (s.arch==='transformer' && s.sin_residual) p.push('--sin-residual');
+  if (s.arch==='transformer' && s.sin_layernorm) p.push('--sin-layernorm');
+  if (s.arch==='transformer' && s.init_from){
+    p.push('--init-from', `'${s.init_from}'`);
+    if (s.reinit_head) p.push('--reinit-head');
+  }
+  if (s.arch==='transformer' && s.freeze_backbone) p.push('--freeze-backbone');
+  if (Number(s.l2sp)>0) p.push('--l2sp', ffloat(s.l2sp));
+  if (s.distill_from){
+    p.push('--distill-from', `'${s.distill_from}'`);
+    if (Number(s.distill_alpha)!==1) p.push('--distill-alpha', ffloat(s.distill_alpha));
+  }
+  if (s.arch==='mlp' && s.embed_from) p.push('--embed-from', `'${s.embed_from}'`);
+  if (Number(s.som_feature)>0) p.push('--som-feature', String(s.som_feature));
+  if (Number(s.pretrain_ae)>0) p.push('--pretrain-ae', String(s.pretrain_ae));
+  if (s.arch==='mlp' && Number(s.ae_latent)>0) p.push('--ae-latent', String(s.ae_latent));
+  if (s.arch==='mlp' && Number(s.pca)>0) p.push('--pca', String(s.pca));
   if (s.epochs!==60) p.push('--epochs', String(s.epochs));
   if (s.batch_size!==256) p.push('--batch-size', String(s.batch_size));
   if (Number(s.lr)!==0.001) p.push('--lr', ffloat(s.lr));
@@ -1047,8 +1209,14 @@ function syncUI(){
   $('strip').checked = !!S.strip_status;
   $('listwise_texto').checked = !!S.listwise_texto;
   ['d_model','n_head','n_layer','dropout','epochs','batch_size','lr','patience','n_bins',
-   'hash_buckets','cart_aux','train_frac','pretrain_mlm'].forEach(k=>{ $(k).value = S[k]; });
+   'hash_buckets','cart_aux','train_frac','pretrain_mlm',
+   'weight_decay','feature_dropout','label_smoothing','l2sp','distill_alpha',
+   'som_feature','pretrain_ae','ae_latent','pca'].forEach(k=>{ $(k).value = S[k]; });
   $('init_seed').value = (S.init_seed===null||S.init_seed===undefined) ? '' : S.init_seed;
+  $('init_from').value = S.init_from||''; $('distill_from').value = S.distill_from||'';
+  $('embed_from').value = S.embed_from||'';
+  $('sin_residual').checked = !!S.sin_residual; $('sin_layernorm').checked = !!S.sin_layernorm;
+  $('freeze_backbone').checked = !!S.freeze_backbone; $('reinit_head').checked = !!S.reinit_head;
   $('catenc').value = S.cat_encoding||'embedding';
   const catfeObj = catfeRaw(S.cat_feature_encoding);
   document.querySelectorAll('select[name=catpf]').forEach(sel=>{ sel.value = catfeObj[sel.dataset.f]||''; });
@@ -1127,6 +1295,35 @@ document.querySelectorAll('input[name=val]').forEach(r=>r.onchange = () => {
 $('train_frac').onchange = e => { S.train_frac = parseFloat(e.target.value||1); update(); };
 $('init_seed').onchange = e => { S.init_seed = e.target.value==='' ? null : parseInt(e.target.value,10); update(); };
 $('pretrain_mlm').onchange = e => { S.pretrain_mlm = parseInt(e.target.value||0,10); update(); };
+// ---- 6ta tanda: regularizacion / transfer / SIA ----
+[['weight_decay',0],['feature_dropout',0],['label_smoothing',0],['l2sp',0],['distill_alpha',0],
+ ['som_feature',1],['pretrain_ae',1],['ae_latent',1],['pca',1]].forEach(([k,isInt])=>{
+  $(k).onchange = e => { S[k] = isInt ? parseInt(e.target.value||0,10) : parseFloat(e.target.value||0); update(); };
+});
+['sin_residual','sin_layernorm','freeze_backbone','reinit_head'].forEach(k=>{
+  $(k).onchange = e => { S[k] = e.target.checked; update(); };
+});
+['init_from','distill_from','embed_from'].forEach(k=>{
+  $(k).onchange = e => { S[k] = e.target.value.trim(); update(); };
+});
+$('pre-probe').onclick = () => {
+  Object.assign(S, {arch:'transformer', formulation:'features', cat_encoding:'ordinal',
+    init_from:CKPT_CAMPEON, freeze_backbone:true, reinit_head:true, dropout:0,
+    patience:20, epochs:300, distill_from:''});
+  syncUI(); update();
+};
+$('pre-dst-camp').onclick = () => {
+  Object.assign(S, {arch:'transformer', formulation:'features', cat_encoding:'ordinal',
+    distill_from:CKPT_CAMPEON, distill_alpha:1, init_from:'', freeze_backbone:false,
+    reinit_head:false, patience:20, epochs:300});
+  syncUI(); update();
+};
+$('pre-dst-ens').onclick = () => {
+  Object.assign(S, {arch:'transformer', formulation:'features', cat_encoding:'ordinal',
+    distill_from:CKPT_ENSEMBLE, distill_alpha:1, init_from:'', freeze_backbone:false,
+    reinit_head:false, patience:20, epochs:300});
+  syncUI(); update();
+};
 $('mq').onchange = e => { X.mq = e.target.checked; update(); };
 const copiar = (btn, src) => {
   const txt = $(src).textContent;
