@@ -524,3 +524,26 @@ grupo en AdamW, --drop-features all, pad_token_id==0 verificado, ckpt de ft no s
 (torch.tensor([]) es float → index_select explotaba). Panel: clave canónica 51 campos
 (espejo verificado, 249 claves OK), sección 5b con el bloque "preentrenado externo".
 transformers agregado a requirements.txt. Smokes CPU: los 5 caminos corren.
+
+## 23/08 — 8ª tanda corrida y analizada: congelado resta, fine-tuneado repara
+
+Matias corrió las 42 (838 totales, 116/116). Análisis apareado en analisis.md §15.1, figura
+graficos/bert_transfer.png. Contra las hipótesis: (1) anti-semántica confirmada con MÁS fuerza
+— bert_solo 0.567 pierde hasta con la logística cruda (0.660), porque MiniLM acerca lo que acá
+hay que separar; (2) bert_solo_intr 0.128 ≈ azar — quinta vindicación del EDA, con un lector
+de 22M params; (3) REFUTADA la neutralidad: el token congelado RESTA (−0.073 0/6; bert_mlp
+−0.051 0/6) — contraste con tl_emb_mlp (−0.006): features congeladas del mismo dominio eran
+inofensivas, las ajenas son ruido activo; los 4 grupos congelados repiten gap val-test ~0.04;
+(4) recuperación parcial sin regex (0.667 desde piso 0.162); (5) el fine-tuning repara — el
+efecto más consistente de la tanda: +0.060 (6/6) con status, +0.132 (6/6) sin; el sobreajuste
+temido no apareció (lr 1e-5, gap 0.011); (6) nada supera 0.824 — selección intacta. Hallazgo
+positivo: bert_ft_sin 0.798 es la mejor lectura del status desde texto crudo del proyecto
+(> tower 0.775 > hybrid 0.735) — preentrenamiento + fine-tuning le gana a entrenar de cero,
+medido; pero extraer la señal limpia (regex) sigue valiendo más que 22M de parámetros.
+
+Sync: panel 9.3MB con 838 corridas (paridad 256 claves OK) republicado en el artifact
+canónico (ojo: un republish sin url creó un duplicado accidental — ignorar/borrar de la
+galería; el link bueno sigue siendo el de siempre); zoo byte-idéntico (sin cambios); CSV 140
+grupos; entrega actualizada (análisis 838, figuras bert_transfer + resumen, guión: bullet
+nuevo "¿y con un preentrenado de verdad?" + corridas 838). Capítulo experimental CERRADO
+(ahora sí, con el arco de transfer completo).

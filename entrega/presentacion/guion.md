@@ -373,6 +373,17 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   un nivel — el nivel campeón aguanta hasta 1.937 parámetros destilando (0.8282, +0.014 sobre
   plain, 5/6; 13× menos que el campeón)**, a 353 params ambas ramas caen juntas (no hay dónde
   guardar el conocimiento). El ensemble sigue siendo la única forma medida de llegar a 0.834.
+- **¿Y transfer desde un preentrenado DE VERDAD? (BERT/MiniLM)** Probado (8ª tanda, figura
+  `bert_transfer.png`): MiniLM (22M params) embebe title+description y entra como UN token
+  extra del transformer propio, congelado vs fine-tuneado. **Congelado RESTA en todos lados**
+  (solo, 0.567, pierde hasta con la logística cruda 0.660): la partición de tiers es
+  *anti-semántica* — "Highly Rated" suena igual que "Top Rated" y compra 50× menos, y la
+  geometría preentrenada acerca justo lo que hay que separar. **El fine-tuning la repara (6/6
+  en ambos pares)**: sin el regex, el encoder fine-tuneado lee el status desde el texto crudo
+  mejor que nuestros encoders entrenados de cero (0.798 vs tower 0.775 / hybrid 0.735) — la
+  promesa de la clase 3 cumplida donde tenía margen. Y sin status en el texto, MiniLM confirma
+  el EDA: 0.128 ≈ azar (quinta vindicación). Nada supera 0.824: cuando la señal se puede
+  extraer limpia (regex + categórica), extraerla vale más que 22M de parámetros.
 - **¿Y las herramientas de SIA? (Kohonen, PCA, autoencoders)** Medidas (6ª tanda): la celda BMU
   de un SOM como feature extra RESTA (−0.017; el mapa organiza las numéricas pero el BTR por
   celda queda en 0.09–0.20 alrededor de la base 0.13 — la señal vive en el status, figura
@@ -389,5 +400,5 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   varianza — coherente con sia_pca_mlp). Salvedad honesta: la U invertida del precio es
   invisible para medidas monótonas; por eso el EDA fue por variable, y la matriz lo confirma
   sin reemplazarlo. Y "(Best Seller)" del título ya era feature desde el día 1 (listing_status).
-- **¿Cuántas corridas hay detrás?** 796 (109 configuraciones × 6 seeds + grillas), todas con las
+- **¿Cuántas corridas hay detrás?** 838 (116 configuraciones × 6 seeds + grillas), todas con las
   16 métricas por época, reproducibles con la suite del repo.

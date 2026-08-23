@@ -833,3 +833,64 @@ incluidos), token extra en `BTRTransformer` (`temb_proj`, hf_encoder colgado pos
 pisarlo con `_init_weights`), `--drop-features all`, lr por grupo en el optimizador, alias en
 el panel (clave canónica 51 campos, paridad JS verificada, sección 5b ampliada). El bug de
 `drop_feature_columns` con lista vacía (dtype float de `torch.tensor([])`) quedó corregido.
+
+### 15.1 Resultados de la 8ª tanda (corrida 23/08): congelado RESTA, fine-tuneado repara
+
+Las 42 corridas completas (838 totales). Tabla (test PR-AUC, media ± desvío, 6 seeds;
+comparaciones apareadas por seed):
+
+| config | test | Δ vs campeón (0.8239) | gana | val−test |
+|---|---|---|---|---|
+| bert_solo | 0.5666 ± 0.043 | — | — | 0.031 |
+| bert_solo_intr | 0.1283 ± 0.008 | — | — | 0.019 |
+| bert_mlp | 0.7733 ± 0.032 | −0.0506 | 0/6 | 0.040 |
+| bert_token | 0.7509 ± 0.060 | −0.0731 | 0/6 | 0.040 |
+| bert_token_sin | 0.6669 ± 0.027 | −0.1571 | 0/6 | 0.041 |
+| bert_ft | 0.8112 ± 0.027 | −0.0128 | 2/6 | 0.011 |
+| bert_ft_sin | 0.7984 ± 0.045 | −0.0255 | 2/6 | 0.018 |
+
+**Contra las hipótesis de §15, una por una:**
+
+1. **`bert_solo` 0.567 — la anti-semántica confirmada con más fuerza de la esperada** (la
+   hipótesis decía 0.65–0.78). El embedding congelado de MiniLM pierde contra la *logística
+   sobre one-hots crudos* (0.660) y contra nuestro encoder de chars entrenado de cero (tower
+   0.775). MiniLM fue entrenado para acercar frases parecidas — y acá "Highly Rated" (BTR 0.00)
+   tiene que quedar LEJOS de "Top Rated" (0.65). La geometría preentrenada entierra la
+   partición exacta que hay que leer.
+2. **`bert_solo_intr` 0.128 ≈ azar (0.131)** — quinta vindicación del EDA, ahora con un lector
+   de 22M de parámetros: sin el estado, el texto no tiene señal, la mire quien la mire.
+   Predijimos 0.15–0.20; dio aún más nulo.
+3. **Hipótesis 3 REFUTADA: el token congelado no es neutro, RESTA** — `bert_token` −0.073
+   (0/6, y con el desvío más alto de la tanda, ±0.060) y `bert_mlp` −0.051 (0/6). Contraste
+   instructivo con `tl_emb_mlp` (§13.1, −0.006): las features congeladas *del mismo dominio*
+   eran redundantes-inofensivas; las de *otro dominio* son ruido activo que la atención no
+   logra ignorar del todo. Los cuatro grupos congelados repiten además el gap val−test ~0.04
+   (selección-overfitting: la proyección se acomoda a la validación).
+4. **`bert_token_sin` 0.667: recuperación parcial, como se predijo** (aunque debajo del rango
+   0.70–0.79): desde el piso sin estado (0.162), la proyección lineal de features congeladas
+   ajenas recupera la mayor parte del camino a la logística — pero ni cerca del campeón.
+5. **El fine-tuning repara, y es el efecto más consistente de la tanda: +0.060 (6/6) con
+   status, +0.132 (6/6) sin status.** La mitad de la hipótesis 5 acertó (`bert_ft_sin` ≫
+   `bert_token_sin`) y la otra mitad erró en dirección instructiva: dijimos `bert_ft` ≈
+   `bert_token` "porque no hay nada que ganar"; en realidad hubo mucho que REPARAR (0.751 →
+   0.811). Y el sobreajuste temido de 22M params sobre 7k filas no apareció: lr 1e-5 alcanzó
+   (gap 0.011–0.018, epochs 41 vs 64 del campeón).
+6. **Nada supera al campeón — hipótesis 6 confirmada, la selección queda como está.** El mejor
+   `bert_*` (0.8112) pierde −0.0128 apareado (2/6).
+
+**El hallazgo positivo de la tanda**: `bert_ft_sin` 0.798 es la mejor lectura del status
+*desde el texto crudo* de todo el proyecto — supera a tower (0.775) y a hybrid (0.735), los
+encoders entrenados de cero. Preentrenamiento masivo + fine-tuning > entrenar de cero, medido
+— la promesa de la clase 3, cumplida en el único lugar donde tenía margen. Pero sigue 0.026
+abajo del regex + categórica: **cuando la señal se puede extraer limpia, extraerla vale más
+que 22M de parámetros**. La lección de transferability de la clase 3 quedó medida en sus dos
+mitades: *qué* transfiere depende de que la geometría fuente sirva a la tarea (acá no: la
+partición es anti-semántica → feature extraction fracasa), y fine-tuning es el mecanismo que
+corrige esa geometría (6/6 en ambos pares).
+
+![Transfer externo](graficos/bert_transfer.png)
+
+Con esto el capítulo experimental cierra en **838 corridas, 116/116 configuraciones**. El
+modelo final sigue siendo `feat_ordinal` (0.824 / ensemble 0.834); la 8ª tanda es el epílogo
+de transfer learning: probamos las tres técnicas de la clase con checkpoints propios (§13) y
+el caso canónico con un preentrenado externo (§15) — y el campeón sobrevivió a todos.
