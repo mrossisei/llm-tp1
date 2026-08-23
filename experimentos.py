@@ -272,6 +272,29 @@ EXPERIMENTOS |= {
     'sia_ae_mlp':     (['--arch', 'mlp', '--ae-latent', '16', *PAC], 'tabular'),
 }
 
+# ---- 7ma mini-tanda (23/08): el piso de la compresion, con y sin teacher ----
+# Cierra la UNICA pregunta abierta que dejaron la 5ta y la 6ta juntas. Puntos
+# que ya tenemos: sin teacher 26.177 -> 0.8239 | 3.713 -> 0.8254 | 1.937 ->
+# 0.8142 (aca empieza a degradar); con teacher (deep-ensemble 0.833) solo
+# 26.177 -> 0.8272 y 3.713 -> 0.8274. Esta tanda completa la curva "PR vs
+# parametros" en dos ramas (plain vs destilada) bajando hasta 353 parametros:
+# min_d8l1 1.089 / min_d4l1 353 + las versiones destiladas de 1.937/1.089/353.
+# Hipotesis registrada ANTES de correr (analisis.md 13.2): las soft labels
+# corren el piso ~un nivel hacia abajo (d8 con teacher ~= d16 sin), porque
+# regularizan justo donde la capacidad empieza a faltar; si NO lo corren, el
+# "dark knowledge" no compra compresion en este problema — ambas salidas
+# cierran la figura. La seleccion sigue cerrada: esto es la curva final de
+# "conocimiento vs parametros", no una busqueda de campeon.
+EXPERIMENTOS |= {
+    'min_d8l1':            ([*ORD, '--d-model', '8', '--n-layer', '1'], 'tabular'),
+    'min_d4l1':            ([*ORD, '--d-model', '4', '--n-layer', '1'], 'tabular'),
+    'tl_distill_ens_d8':   ([*ORD, '--d-model', '8', '--distill-from', ENS], 'tabular'),
+    'tl_distill_ens_d8l1': ([*ORD, '--d-model', '8', '--n-layer', '1',
+                             '--distill-from', ENS], 'tabular'),
+    'tl_distill_ens_d4l1': ([*ORD, '--d-model', '4', '--n-layer', '1',
+                             '--distill-from', ENS], 'tabular'),
+}
+
 
 def resolver_device(arg):
     if arg != 'auto':

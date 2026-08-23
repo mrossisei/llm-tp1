@@ -436,6 +436,19 @@ AE-CLS replica el patrón MLM; PCA/AE→16d como entrada del MLP DESTRUYEN la se
 panel re-embebido (232 claves Python==JS OK) y republicado; CSV 128 grupos; copia de análisis y
 guión-apéndice (3 respuestas nuevas: regularización / transfer / SIA) actualizados en entrega/.
 
+## 23/08 — 7ª mini-tanda preparada: el piso de la compresión (con y sin teacher)
+
+Fer ofreció más GPU; auditoría honesta de qué queda: el programa está cerrado (104/104 con
+respuesta) y lo único genuinamente abierto es la curva "PR vs parámetros" en dos ramas — sin
+teacher degrada a partir de 1.937 params (min_d8 0.8142), pero NO hay puntos destilados por
+debajo de 3.713. 5 configs (30 corridas, ~30-45 min): min_d8l1 (1.089) / min_d4l1 (**353
+params**) + destiladas d8/d8l1/d4l1 desde el deep-ensemble. Hipótesis pre-registrada
+(analisis.md §13.2): las soft labels corren el piso ~un nivel; si no, el dark knowledge no
+compra compresión acá — ambas salidas cierran la figura. Rechazado a propósito: más seeds del
+campeón (fishing de ±0.004), combos do0+distill (fishing), refit train+val sin val (rompe la
+higiene del protocolo por +0.007 estimado), listwise seeds 46-47 (decisión de costo ya
+tomada). Selección sigue cerrada. Suite 109 configs; panel 237 claves OK republicado.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

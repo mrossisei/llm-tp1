@@ -681,3 +681,23 @@ la representación es linealmente separable; (4) `tl_mlm_probe` 0.16: el límite
 self-supervised puro en 10k filas; (5) `tl_distill_ens_min`: el ensemble destilado en 3.713
 parámetros (0.8274); (6) SOM/PCA/AE: los puentes con SIA, medidos y negativos por razones
 entendibles.
+
+## 13.2 Séptima mini-tanda (diseño, 23/08): el piso de la compresión, con y sin teacher
+
+**La única pregunta abierta que dejaron la 5ª y la 6ª juntas.** Puntos medidos de la curva
+"PR-AUC vs parámetros": sin teacher 26.177 → 0.8239 · 3.713 → 0.8254 · **1.937 → 0.8142 (acá
+empieza a degradar)**; con teacher (deep-ensemble 0.833) solo tenemos 26.177 → 0.8272 y
+3.713 → 0.8274. No sabemos si las soft labels **corren el piso hacia abajo** — el punto de la
+distillation según la clase 3 (comprimir conservando conocimiento). 5 configs nuevas (30
+corridas, ~30-45 min): `min_d8l1` (1.089 params) y `min_d4l1` (**353 params**) como rama
+plain, y las destiladas `tl_distill_ens_d8` (1.937), `tl_distill_ens_d8l1` (1.089),
+`tl_distill_ens_d4l1` (353). La curva final cubre dos órdenes de magnitud en dos ramas.
+
+**Hipótesis registrada ANTES de correr**: las soft labels regularizan justo donde la
+capacidad empieza a faltar ⇒ esperamos que la rama destilada **corra el piso ~un nivel**
+(d8 con teacher ≈ d16 sin; d8l1 destilada ≥ min_d8 plain), con la brecha creciendo al achicar
+hasta que la capacidad domine (353 params probablemente caen igual: no hay dónde guardar el
+conocimiento). Salida alternativa: las dos ramas se superponen ⇒ el "dark knowledge" no
+compra compresión en 14 tokens tabulares — también cierra la figura. Escala de scaling laws
+mencionada en la clase: el umbral de a cuánto se puede destilar es empírico; esto lo mide.
+**La selección sigue cerrada**: esto completa una figura, no busca campeón.
