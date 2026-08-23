@@ -1,8 +1,8 @@
 {
   "artboards": [
     { "file": "Main.dc.html", "x": 0, "y": 0, "w": 920, "h": 1500, "title": "Flujo completo" },
-    { "file": "Tokenizador.dc.html", "x": 1020, "y": 0, "w": 760, "h": 1040, "title": "Detalle: tokenizador" },
-    { "file": "Bloque.dc.html", "x": 1020, "y": 1180, "w": 760, "h": 1320, "title": "Detalle: un bloque" }
+    { "file": "Tokenizador.dc.html", "x": 1020, "y": 0, "w": 760, "h": 860, "title": "Detalle: tokenizador" },
+    { "file": "Bloque.dc.html", "x": 1020, "y": 980, "w": 760, "h": 1140, "title": "Detalle: un bloque" }
   ],
   "annotations": [
     { "id": "como-leer", "x": 0, "y": -150, "w": 420, "text": "Cómo leer esto: el tablero grande es el flujo de punta a punta (fila del CSV → probabilidad). Los dos de la derecha hacen zoom en los pasos 2 y 4. Los números de parámetros y métricas son los reales del modelo entregado (26.177 params, PR 0.824)." }
