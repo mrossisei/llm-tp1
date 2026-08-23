@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #EFF2F5; color: #1B2530;
+           font-family: "Segoe UI", "Noto Sans", Roboto, Helvetica, Arial, sans-serif; }
+    a { color: #1C8A76; } a:hover { color: #0E9B7E; }
+  </style>
+</helmet>
+<div style="width: 920px; min-height: 1480px; background: #EFF2F5; padding: 28px 30px 26px; box-sizing: border-box; display: flex; flex-direction: column; gap: 0px">
+
+  <!-- header -->
+  <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 18px">
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #5F7183">TP1 · BTR · modelo final</div>
+    <div style="font-size: 28px; font-weight: 700; letter-spacing: -0.01em">feat_ordinal — el flujo completo</div>
+    <div style="font-size: 13.5px; color: #3D4B5A">FT-Transformer propio: cada feature tabular es un token. 26.177 parámetros · test PR-AUC 0.824 ± 0.018</div>
+  </div>
+
+  <!-- 1. entrada -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <div style="font-size: 15px; font-weight: 700">1 · Entrada: una fila producto × búsqueda</div>
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #5F7183">supermarket_products.csv · 10.000 impresiones</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; color: #7052C9">7 CATEGÓRICAS (niveles en train)</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px">
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; font-weight: 600">listing_status · 20</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">category · 12</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">brand · 15</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">storage_type · 3</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">unit_of_measure · 5</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">country_of_origin · 10</span>
+        <span style="background: #E7DEF9; color: #4B3993; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">allergens · 8</span>
+      </div>
+      <div style="font-size: 12px; color: #5F7183"><span style="font-weight: 600; color: #4B3993">listing_status</span> se extrae por regex del sufijo del título — «Cedar House Pizza <b>(Best Seller)</b>» — y es la señal dominante del dataset.</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; color: #1C8A76">6 NUMÉRICAS</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px">
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">price (log1p)</span>
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; font-weight: 600">price_rel</span>
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">filter_price_min</span>
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">filter_price_max</span>
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">net_weight_oz (log1p)</span>
+        <span style="background: #DFF0EB; color: #135F52; border-radius: 8px; padding: 4px 9px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">nutrition_score</span>
+      </div>
+      <div style="font-size: 12px; color: #5F7183"><span style="font-weight: 600; color: #135F52">price_rel</span> = posición del precio dentro del rango del filtro de la búsqueda — el contexto de la query entra por acá y por los filtros.</div>
+    </div>
+    <div style="border-top: 1px dashed #D8DFE7; padding-top: 8px; font-size: 12px; color: #5F7183">Quedan afuera: <s>cart</s> (leakage: comprado ⟹ carrito), <s>texto crudo</s> (su única señal es el status, que ya entra limpio), <s>timestamp</s> (roto), <s>query_id</s> (solo particiona el split).</div>
+  </div>
+
+  <!-- arrow -->
+  <div style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 4px 0">
+    <svg width="24" height="34" viewBox="0 0 24 34"><path d="M12 2v22M5 18l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">7 enteros + 6 floats</span>
+  </div>
+
+  <!-- 2. tokenizador -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <div style="font-size: 15px; font-weight: 700">2 · FeatureTokenizer: cada feature → un vector de 32</div>
+      <div style="margin-left: auto; background: #F8ECCB; color: #7A5A10; border-radius: 7px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600">832 params</div>
+    </div>
+    <div style="display: flex; gap: 12px">
+      <div style="flex: 1; background: #F8FAFC; border: 1px solid #E7DEF9; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; color: #7052C9">CATEGÓRICA — ENCODING ORDINAL</div>
+        <div style="font-size: 12.5px; color: #3D4B5A">nivel → <b>rango por BTR de train</b>, normalizado a [0,1] → escalar</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #1B2530">token<sub>i</sub> = v · W<sub>i</sub> + b<sub>i</sub></div>
+      </div>
+      <div style="flex: 1; background: #F8FAFC; border: 1px solid #DFF0EB; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; color: #1C8A76">NUMÉRICA — LINEAL</div>
+        <div style="font-size: 12.5px; color: #3D4B5A">(log1p) → <b>z-score</b> con media y desvío de train → escalar</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #1B2530">token<sub>i</sub> = v · W<sub>i</sub> + b<sub>i</sub></div>
+      </div>
+    </div>
+    <div style="font-size: 12px; color: #5F7183">Cada feature tiene su <span style="font-family: ui-monospace, Menlo, Consolas, monospace">W<sub>i</sub> ∈ ℝ³², b<sub>i</sub> ∈ ℝ³²</span> propios (13 × 64 = 832): la <b>identidad del feature vive en sus pesos</b>, no en la posición → no hace falta positional encoding. Detalle con ejemplo real: tablero «Tokenizador».</div>
+  </div>
+
+  <!-- arrow -->
+  <div style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 4px 0">
+    <svg width="24" height="34" viewBox="0 0 24 34"><path d="M12 2v22M5 18l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">+ token [CLS] aprendido (32 params)</span>
+  </div>
+
+  <!-- 3. secuencia -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <div style="font-size: 15px; font-weight: 700">3 · La secuencia: 14 tokens × 32 dims</div>
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">shape (batch, 14, 32)</div>
+    </div>
+    <div style="display: flex; gap: 5px; align-items: flex-end">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #F8ECCB; border: 1.5px solid #B58117; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 700; color: #7A5A10">CLS</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1.5px solid #7052C9; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; font-weight: 700; color: #4B3993">status</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">categ</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">brand</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">storag</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">unit</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">countr</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #E7DEF9; border: 1px solid #C9B8F0; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #4B3993">allerg</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1px solid #A9D8CC; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9.5px; color: #135F52">price</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1.5px solid #1C8A76; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; font-weight: 700; color: #135F52">p_rel</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1px solid #A9D8CC; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #135F52">f_min</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1px solid #A9D8CC; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #135F52">f_max</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1px solid #A9D8CC; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #135F52">weight</div>
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 3px">
+        <div style="width: 46px; height: 46px; border-radius: 8px; background: #DFF0EB; border: 1px solid #A9D8CC; display: flex; align-items: center; justify-content: center; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9px; color: #135F52">nutri</div>
+      </div>
+    </div>
+    <div style="font-size: 12px; color: #5F7183">El <span style="color: #7A5A10; font-weight: 600">[CLS]</span> va primero (como BERT): es el token que agrega la información para clasificar. Secuencia corta y <b>sin orden</b> — bidireccional, sin máscara causal, sin positional.</div>
+  </div>
+
+  <!-- arrow -->
+  <div style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 4px 0">
+    <svg width="24" height="34" viewBox="0 0 24 34"><path d="M12 2v22M5 18l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">(14, 32)</span>
+  </div>
+
+  <!-- 4. bloques -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <div style="font-size: 15px; font-weight: 700">4 · Dos bloques transformer idénticos</div>
+      <div style="margin-left: auto; background: #F8ECCB; color: #7A5A10; border-radius: 7px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600">12.608 params c/u</div>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: stretch">
+      <div style="flex: 1; background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #1B2530">LN → <b>Atención multi-head</b> → dropout → ⊕ residual</div>
+        <div style="font-size: 12px; color: #5F7183">4 cabezas × d_k 8 · escalado <b>una sola vez</b> por √d_k (la demo escalaba doble — fix nuestro)</div>
+      </div>
+      <div style="flex: 1; background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #1B2530">LN → <b>FFN 32→128→32</b> (ReLU) → dropout → ⊕ residual</div>
+        <div style="font-size: 12px; color: #5F7183">expansión ×4, igual que la demo · dropout 0.1</div>
+      </div>
+    </div>
+    <div style="font-size: 12px; color: #5F7183">Los <b>residuales son la pieza más crítica</b>: sin ellos el modelo casi no entrena (PR 0.23, ablación 6ª tanda). Anatomía completa con la cuenta de parámetros: tablero «Bloque».</div>
+  </div>
+
+  <!-- arrow -->
+  <div style="display: flex; justify-content: center; align-items: center; gap: 10px; padding: 4px 0">
+    <svg width="24" height="34" viewBox="0 0 24 34"><path d="M12 2v22M5 18l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    <span style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">(14, 32)</span>
+  </div>
+
+  <!-- 5. cabeza -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline; gap: 10px">
+      <div style="font-size: 15px; font-weight: 700">5 · Cabeza de clasificación</div>
+      <div style="margin-left: auto; background: #F8ECCB; color: #7A5A10; border-radius: 7px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600">64 + 33 params</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px">
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">LayerNorm final</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #F8ECCB; border: 1.5px solid #B58117; border-radius: 8px; padding: 6px 10px; font-weight: 700; color: #7A5A10">tomar el vector del [CLS] ∈ ℝ³²</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">Linear 32→1</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">σ (sigmoide)</span>
+    </div>
+    <div style="font-size: 12px; color: #5F7183">Los otros 13 vectores de salida se descartan: su trabajo fue darle contexto al CLS vía atención. En la capa 1, el CLS concentra <b>0.75 de su atención en listing_status</b> (coincide con la importancia por permutación).</div>
+  </div>
+
+  <!-- arrow -->
+  <div style="display: flex; justify-content: center; padding: 4px 0">
+    <svg width="24" height="34" viewBox="0 0 24 34"><path d="M12 2v22M5 18l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+  </div>
+
+  <!-- salida -->
+  <div style="background: #DFF0EB; border: 1.5px solid #1C8A76; border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; font-weight: 700; color: #135F52">p(bought | producto, búsqueda) ∈ [0, 1]</div>
+    <div style="font-size: 12.5px; color: #135F52">El BTR de negocio por producto = <b>agregar</b> estas probabilidades sobre sus impresiones. Loss: BCE contra bought, sin pos_weight.</div>
+    <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px">
+      <span style="background: #FFFFFF; border: 1px solid #A9D8CC; border-radius: 7px; padding: 3px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #135F52">PR-AUC test 0.824 ± 0.018</span>
+      <span style="background: #FFFFFF; border: 1px solid #A9D8CC; border-radius: 7px; padding: 3px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #135F52">ROC 0.975</span>
+      <span style="background: #FFFFFF; border: 1px solid #A9D8CC; border-radius: 7px; padding: 3px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #135F52">top-1 página 0.912</span>
+      <span style="background: #FFFFFF; border: 1px solid #A9D8CC; border-radius: 7px; padding: 3px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #135F52">deep-ensemble ×6 → 0.834</span>
+    </div>
+  </div>
+
+  <!-- footer entrenamiento -->
+  <div style="margin-top: 14px; border-top: 1px solid #D8DFE7; padding-top: 10px; display: flex; flex-direction: column; gap: 4px">
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; color: #5F7183">ENTRENAMIENTO</div>
+    <div style="font-size: 12px; color: #3D4B5A">AdamW lr 1e-3 · weight decay 1e-2 · dropout 0.1 · batch 256 · split por query 70/15/15 · early stopping por PR-AUC de validación, paciencia 20 (converge ≈ 64 épocas y restaura el mejor estado). La regularización efectiva es early stopping + capacidad chica + prior ordinal (barrido en la 6ª tanda: lo explícito es decorativo).</div>
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: #5F7183">Parámetros: tokenizer 832 + CLS 32 + 2 bloques 25.216 + LN final 64 + cabeza 33 = <b style="color: #1B2530">26.177</b></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

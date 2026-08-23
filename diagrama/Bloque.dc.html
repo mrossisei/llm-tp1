@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: #EFF2F5; color: #1B2530;
+           font-family: "Segoe UI", "Noto Sans", Roboto, Helvetica, Arial, sans-serif; }
+    a { color: #1C8A76; } a:hover { color: #0E9B7E; }
+  </style>
+</helmet>
+<div style="width: 760px; min-height: 1300px; background: #EFF2F5; padding: 26px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #5F7183">detalle · paso 4</div>
+    <div style="font-size: 23px; font-weight: 700; letter-spacing: -0.01em">Anatomía de un bloque (hay 2 iguales)</div>
+    <div style="font-size: 13px; color: #3D4B5A">Pre-LN, como la demo de la cátedra. Entrada y salida: (14, 32) — la forma nunca cambia.</div>
+  </div>
+
+  <!-- entrada -->
+  <div style="align-self: center; background: #F8FAFC; border: 1px dashed #5F7183; border-radius: 10px; padding: 8px 16px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #3D4B5A">x ∈ (14, 32)</div>
+  <div style="align-self: center"><svg width="24" height="26" viewBox="0 0 24 26"><path d="M12 2v16M5 12l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+
+  <!-- sub-bloque atencion -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline">
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; color: #7052C9">MITAD 1 · ATENCIÓN MULTI-HEAD</div>
+      <div style="margin-left: auto; background: #F8ECCB; color: #7A5A10; border-radius: 7px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600">4.224 params</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px">
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">LayerNorm₁</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="color: #5F7183; font-size: 12px">4 cabezas en paralelo:</span>
+    </div>
+    <div style="display: flex; gap: 8px">
+      <div style="flex: 1; background: #E7DEF9; border: 1px solid #C9B8F0; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #4B3993; font-weight: 700">cabeza h (d_k = 8)</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #1B2530">Q = x·W<sub>Q</sub> &nbsp; K = x·W<sub>K</sub> &nbsp; V = x·W<sub>V</sub> &nbsp;(32→8)</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #1B2530">A<sub>h</sub> = softmax(Q·Kᵀ / √8) · V</div>
+        <div style="font-size: 11.5px; color: #5F7183">la matriz de atención es 14×14: cada token decide a qué features mirar · <b>sin máscara causal</b> (bidireccional: clasificación, no generación)</div>
+      </div>
+      <div style="width: 170px; background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; justify-content: center">
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">concat 4×8 = 32</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">→ W<sub>O</sub> 32→32</div>
+        <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px">→ dropout 0.1</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px">
+      <svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="10" stroke="#C22B5E" stroke-width="2" fill="none"></circle><path d="M13 7v12M7 13h12" stroke="#C22B5E" stroke-width="2" stroke-linecap="round"></path></svg>
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #C22B5E; font-weight: 700">x = x + atención(LN₁(x))</div>
+      <div style="font-size: 11.5px; color: #5F7183">— el residual: la ablación sin esto da PR 0.23 (casi no entrena)</div>
+    </div>
+    <div style="font-size: 11.5px; color: #5F7183; border-top: 1px dashed #D8DFE7; padding-top: 6px">Escalado <b>una sola vez</b> por √d_k, como el paper — la demo escalaba dos veces (nuestro fix). Cuenta: 4 cabezas × 3·(32·8+8) = 3.168, más W<sub>O</sub> 32·32+32 = 1.056.</div>
+  </div>
+
+  <div style="align-self: center"><svg width="24" height="26" viewBox="0 0 24 26"><path d="M12 2v16M5 12l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+
+  <!-- sub-bloque ffn -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+    <div style="display: flex; align-items: baseline">
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; color: #1C8A76">MITAD 2 · FEED-FORWARD (por token, en paralelo)</div>
+      <div style="margin-left: auto; background: #F8ECCB; color: #7A5A10; border-radius: 7px; padding: 2px 8px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; font-weight: 600">8.352 params</div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px">
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">LayerNorm₂</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #DFF0EB; border: 1px solid #A9D8CC; border-radius: 8px; padding: 6px 10px; color: #135F52">Linear 32→128</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #DFF0EB; border: 1px solid #A9D8CC; border-radius: 8px; padding: 6px 10px; color: #135F52">ReLU</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #DFF0EB; border: 1px solid #A9D8CC; border-radius: 8px; padding: 6px 10px; color: #135F52">Linear 128→32</span>
+      <svg width="20" height="14" viewBox="0 0 20 14"><path d="M2 7h13M10 2l6 5-6 5" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <span style="background: #F8FAFC; border: 1px solid #D8DFE7; border-radius: 8px; padding: 6px 10px">dropout 0.1</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px">
+      <svg width="26" height="26" viewBox="0 0 26 26"><circle cx="13" cy="13" r="10" stroke="#C22B5E" stroke-width="2" fill="none"></circle><path d="M13 7v12M7 13h12" stroke="#C22B5E" stroke-width="2" stroke-linecap="round"></path></svg>
+      <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #C22B5E; font-weight: 700">x = x + ffn(LN₂(x))</div>
+      <div style="font-size: 11.5px; color: #5F7183">— segundo residual del bloque</div>
+    </div>
+    <div style="font-size: 11.5px; color: #5F7183; border-top: 1px dashed #D8DFE7; padding-top: 6px">Expansión ×4, igual que la demo. La atención mezcla <b>entre</b> tokens; el FFN procesa <b>cada</b> token por separado. Cuenta: 32·128+128 + 128·32+32 = 8.352.</div>
+  </div>
+
+  <div style="align-self: center"><svg width="24" height="26" viewBox="0 0 24 26"><path d="M12 2v16M5 12l7 8 7-8" stroke="#5F7183" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+
+  <!-- salida -->
+  <div style="align-self: center; background: #F8FAFC; border: 1px dashed #5F7183; border-radius: 10px; padding: 8px 16px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #3D4B5A">salida ∈ (14, 32) → al bloque 2 (o a la cabeza)</div>
+
+  <!-- notas -->
+  <div style="background: #FFFFFF; border: 1px solid #D8DFE7; border-radius: 12px; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px">
+    <div style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; color: #5F7183">LO QUE MEDIMOS SOBRE ESTE BLOQUE</div>
+    <div style="font-size: 12.5px; color: #3D4B5A; display: flex; flex-direction: column; gap: 4px">
+      <div>· Total por bloque: 4.224 + 8.352 + 2 LN (128) = <span style="font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700">12.608</span> — el 96% del modelo vive en los 2 bloques.</div>
+      <div>· <b>Sin residuales</b>: PR 0.23 (−0.59) — la pieza más crítica. <b>Sin LayerNorm</b>: −0.037, 0/6.</div>
+      <div>· En la capa 1, el CLS pone <b>0.75 de su atención en listing_status</b>; price consulta a price_rel.</div>
+      <div>· 1 cabeza rinde igual que 4 acá (pac20_feat_h1 empató): con 13 features la multi-head sobra, se mantuvo 4 por parsimonia de búsqueda.</div>
+      <div>· Con 1 solo bloque y d16 (3.713 params) el modelo <b>empata</b> — y destilando del ensemble aguanta hasta 1.937.</div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

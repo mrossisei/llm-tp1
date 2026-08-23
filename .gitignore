@@ -16,3 +16,4 @@ venv/
 # Salidas de experimentos
 outputs/
 runs/
+diagrama/arquitectura-feat-ordinal.html
