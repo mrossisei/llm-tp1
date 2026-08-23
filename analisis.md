@@ -588,3 +588,96 @@ nuestro transformer; además 10k filas tabulares no es su dominio); RLHF/DPO (no
 preferencias que modelar — nuestro reward ES la label); fine-tuning cross-dominio
 catálogo→intrínseco (las tareas comparten filas, no hay "dominio nuevo" real, y el techo
 intrínseco 0.16 ya está medido como falta de señal, no de método).
+
+## 13.1 Sexta tanda: resultados (162 corridas, 22/08 — 766 totales, 128 grupos)
+
+Deltas apareados por seed contra el baseline que corresponde (campeón `feat_ordinal`
+0.8239±0.018 salvo indicación).
+
+### (a) Regularización — la hipótesis "decorativa" CONFIRMADA, con un matiz brutal
+
+**`reg_nada` (weight decay 0 + dropout 0): −0.0004, gana 4/6.** El campeón entrenado SIN
+ninguna regularización explícita rinde exactamente igual. La respuesta directa a "¿probaron
+regularización?": sí — y medimos que **a 26k parámetros, con early stopping por val y el
+prior ordinal, la regularización explícita no hace nada**. El barrido individual es plano y
+sin dirección consistente (wd0 −0.0005 4/6 · wd1e-3 −0.0116 1/6 · wd1e-1 −0.0071 2/6 · do0
++0.0043 3/6 — el mejor número crudo de la familia, 0.8283 · fdrop01 +0.0020 2/6); **agregar
+más regularización sí daña**: do03 −0.0114, fdrop02 −0.0288, ls01 −0.0151 — sobre-regularizar
+un modelo que ya está en su piso le quita capacidad de ajuste. Label smoothing pierde como
+predijimos (suaviza justo los extremos donde vive el tier exacto).
+
+**El matiz brutal está en las ablaciones**: `abl_sinres` **−0.5913, 0/6 — PR 0.23** (apenas
+sobre la base 0.13), ROC inestable entre seeds (0.55–0.90, una seed medio-recupera a 0.48 de
+PR). No es el degenerado limpio del causal (ROC 0.500 exacto): sin el camino identidad el
+pre-LN de 2 bloques **casi no puede entrenar**, y lo poco que entrena depende de la suerte de
+la init. Habíamos predicho −0.01..−0.05: el daño real es 10× — **las residuales son la pieza
+más crítica de todo lo que la demo trae "de fábrica"**. `abl_sinln` −0.0373 (0/6): entrena
+pero consistentemente peor. Para la defensa: por qué cada pieza del bloque está ahí, medido.
+
+### (b) Transfer learning — la representación es todo; el self-supervised solo, nada
+
+- **`tl_probe` +0.0025, gana 6/6 — nunca pierde** (peor seed +0.000, mejor +0.009). Tronco
+  del campeón CONGELADO + cabeza lineal nueva ≥ campeón end-to-end en TODAS las seeds. La
+  representación del CLS es **linealmente separable**: todo el valor del modelo está en el
+  tronco, la cabeza es trivial (33 parámetros). Esto explica retroactivamente por qué
+  `min_d16l1` empata: lo que hay que aprender cabe en muy poca cabeza. Feature extraction de
+  la clase 3, confirmada en su mejor versión.
+- **`tl_mlm_probe`: 0.157** (emb; `_ord` 0.138) — el reverso perfecto. Probe lineal sobre un
+  tronco pre-entrenado SOLO con MLM (sin ver una label): apenas sobre la tasa base (0.13) y
+  **peor que la logística sobre features crudas (0.660)**. El pre-entrenamiento
+  self-supervised de 20 épocas aprende correlaciones entre features, no la tarea; su valor
+  medido en la 4ª tanda era como INICIALIZACIÓN (`feat_mlm20` 0.809 fine-tuneado), no como
+  representación. Es exactamente la transferability de la clase 3 (tarea base ≠ tarea
+  objetivo ⇒ el recorte con capa nueva no alcanza) y el general→específico de Yosinski,
+  medidos en nuestro problema. La respuesta a "¿cuánto del 0.82 sin labels?": **nada útil por
+  extracción; todo por fine-tuning**.
+- `tl_mlm_l2sp` −0.0006 vs base emb; **−0.0114 (2/6) vs `feat_mlm20` sin ancla**: la "KL
+  penalty" NO ayudó — anclarse a un pre-entrenado débil solo frena el ajuste. La lección
+  de la clase aplica cuando el preentrenado es fuerte (LLMs); acá medimos su reverso.
+- **Distillation**: `tl_distill_same` +0.0015 (4/6) y `tl_distill_mix` +0.0001 (4/6) —
+  born-again neutro-positivo, α da igual, como predijimos. `tl_distill_ens` +0.0033 pero
+  **2/6**: la media la hacen dos seeds (+0.018, +0.027), y la grande es s47 — justo la MEJOR
+  seed del campeón, no un rescate de las débiles ⇒ varianza, no señal consistente. En media
+  retiene ~⅓ del gap del ensemble (0.833) pero sin consistencia: **destilar acá regulariza
+  suave; el ensemble sigue siendo la única forma medida de llegar a 0.834**. El efecto sólido
+  transversal: **convergencia más rápida con soft targets** (47–57 épocas vs 64 del campeón).
+  **El titular es `tl_distill_ens_min`: test 0.8274 con 3.713 parámetros** — 4º mejor
+  single-model del proyecto (tras cv5_fold4 0.8288 —otro protocolo—, pf_qkv 0.8284 y reg_do0
+  0.8283), +0.0035 vs campeón d32 (4/6), nunca peor que −0.004 en ninguna seed. La miniatura
+  destilada del ensemble: el objeto más "clase 3" del TP.
+- `tl_emb_mlp` (MLP + embedding congelado del campeón): **+0.0672, 6/6** vs MLP emb
+  (confundido con el ordinal que también lleva) y −0.0064 (3/6) vs campeón ⇒ **el MLP con el
+  embedding alcanza al transformer**: la atención ya hizo su trabajo DENTRO del extractor,
+  el clasificador de arriba da igual. Y una perla metodológica: su val 0.8458 es la MÁS ALTA
+  de la tanda con gap val→test 0.028 — tercer ejemplo vivo de sobreajuste de selección
+  (pf_ffn 0.026, y ahora éste).
+
+### (c) SIA — puentes medidos, honestamente negativos
+
+- `sia_som16` **−0.0166 (1/6)**, `sia_som64` −0.0330: la celda de Kohonen NO es neutra como
+  hipotetizamos — agrega superficie de sobreajuste sin señal nueva (más celdas, peor). La
+  figura `graficos/som_btr.png` muestra por qué: el SOM SÍ organiza (topología suave, la
+  región de BTR alto es contigua) pero el rango por celda es 0.09–0.20 alrededor de la base
+  0.13 — ruido comparado con los tiers del status (0.000 / 0.03 / 0.65). La señal de compra
+  no vive en las numéricas, y eso el transformer ya lo sabía.
+- `sia_ae_cls` −0.0073 (2/6) y `sia_ae_cls_emb` +0.0069 (3/6): el AE con cuello en el CLS
+  replica el patrón del MLM (ayuda algo sobre embeddings, nada sobre ordinal), algo más
+  débil. Tercer pre-entrenamiento que confirma: el prior ordinal ya ocupa ese lugar.
+- `sia_pca_mlp` **0.2008** y `sia_ae_mlp` **0.2284** (vs MLP end-to-end 0.7503, 0/6): la
+  compresión no supervisada a 16 dims **destruye la señal** — apenas sobre la base. La
+  demostración medida (y extrema) de la lección de representation learning de la clase 3:
+  la representación óptima para RECONSTRUIR no es la óptima para PREDECIR; con supervisión
+  disponible, comprimir antes de mirar el target es tirar la señal. (PCA ≙ Oja/Sanger de SIA:
+  el puente conceptual queda, el método no compite.)
+
+### Cierre
+
+El modelo final **NO cambia** (la selección sigue cerrada desde la 4ª tanda; todo esto es
+exploratorio). Las 27 configs confirman el patrón de todo el TP — el prior simple + early
+stopping ya hacen el trabajo; casi todo lo demás empata o daña — y le agregan a la defensa
+seis respuestas medidas: (1) `reg_nada`: la regularización explícita era decorativa;
+(2) `abl_sinres`: por qué las residuales están ahí (−0.59 sin ellas); (3) `tl_probe` 6/6:
+la representación es linealmente separable; (4) `tl_mlm_probe` 0.16: el límite del
+self-supervised puro en 10k filas; (5) `tl_distill_ens_min`: el ensemble destilado en 3.713
+parámetros (0.8274); (6) SOM/PCA/AE: los puentes con SIA, medidos y negativos por razones
+entendibles.

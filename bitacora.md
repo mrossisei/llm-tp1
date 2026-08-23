@@ -411,6 +411,31 @@ exploratorio). Infra nueva en `btr/train.py` (16 flags), `experimentos.py` (27 c
 versionado: `eda/test_canon_panel.js`, 205 claves OK). Smokes CPU de TODOS los caminos nuevos:
 OK. Teachers verificados en `pesos/` (git): campeón + robu_init43..47 por seed.
 
+## 22/08 — 6ª tanda corrida y analizada (162 corridas; 766 totales, 104/104 configs de suite)
+
+Análisis apareado en `analisis.md §13.1`. **Regularización**: `reg_nada` (wd 0 + dropout 0)
+−0.0004 (4/6) — la hipótesis "decorativa" CONFIRMADA: a 26k params, early stopping + prior
+ordinal bastan; sobre-regularizar daña (do03 −0.011, fdrop02 −0.029, ls01 −0.015). El matiz:
+**sin residuales el modelo casi no entrena (−0.59, PR 0.23, inestable entre seeds)** — 10× el
+daño predicho, la pieza más crítica de la demo; sin LayerNorm −0.037 (0/6). **Transfer**:
+`tl_probe` +0.0025 y **gana 6/6, nunca pierde** — la representación del campeón es linealmente
+separable (explica retroactivamente el empate de min_d16l1); `tl_mlm_probe` 0.157 — el
+self-supervised puro NO captura la tarea (peor que la logística cruda 0.660): su valor era como
+init, espejo medido de la transferability de la clase 3; `tl_mlm_l2sp` el ancla no ayuda
+(−0.011 vs mlm sin ancla — no hay preentrenado fuerte que retener); distillation: same/mix
+neutro-positivo (4/6), `tl_distill_ens` +0.0033 pero 2/6 (la media la hacen 2 seeds; la grande
+es la MEJOR seed del campeón → varianza, no rescate), soft targets convergen más rápido (47-57
+vs 64 épocas); **titular: `tl_distill_ens_min` test 0.8274 con 3.713 params** — 4º mejor
+single-model del proyecto, nunca peor que −0.004 por seed; `tl_emb_mlp` el MLP con el embedding
+congelado EMPATA al transformer (−0.006, 3/6) — la atención ya trabajó dentro del extractor — y
+su val 0.8458 (la más alta de la tanda) con gap 0.028 es el TERCER ejemplo vivo de sobreajuste
+de selección. **SIA**: SOM resta (−0.017/−0.033; figura nueva `graficos/som_btr.png`: organiza
+las numéricas pero el BTR por celda queda 0.09–0.20 ≈ base — la señal vive en el status);
+AE-CLS replica el patrón MLM; PCA/AE→16d como entrada del MLP DESTRUYEN la señal (0.20/0.23 vs
+0.75): reconstruir ≠ predecir, medido. **Modelo final NO cambia**; selección cerrada. Sync:
+panel re-embebido (232 claves Python==JS OK) y republicado; CSV 128 grupos; copia de análisis y
+guión-apéndice (3 respuestas nuevas: regularización / transfer / SIA) actualizados en entrega/.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.

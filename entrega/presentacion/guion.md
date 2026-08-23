@@ -352,5 +352,28 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   parámetros**) empata al final. Bonus metodológico: la config con mejor validación de todo el
   proyecto (pf_ffn, 245k params) NO es mejor en test — sobreajuste de selección en vivo, la
   razón por la que la selección se cerró con procedimiento pre-registrado.
-- **¿Cuántas corridas hay detrás?** 604 (77 configuraciones × 6 seeds + grillas), todas con las
+- **¿Probaron regularización? (weight decay, dropout, residuales…)** Sí (6ª tanda, exploratoria):
+  el campeón SIN ninguna regularización explícita (wd 0 + dropout 0) rinde igual (−0.000, 4/6) —
+  a 26k parámetros, early stopping + el prior ordinal ya regularizan; agregar MÁS regularización
+  daña (dropout 0.3 −0.011, feature-dropout 0.2 −0.029, label smoothing −0.015). Y las ablaciones
+  miden por qué cada pieza del bloque está ahí: **sin residuales el modelo casi no entrena**
+  (PR 0.23, −0.59) y sin LayerNorm pierde −0.037 (0/6).
+- **¿Transfer learning? (clase 3)** Las tres técnicas, con nuestros checkpoints: *feature
+  extraction* — tronco del campeón congelado + cabeza lineal nueva **empata o gana en 6/6**
+  (la representación es linealmente separable; todo el valor está en el tronco); el mismo probe
+  sobre un tronco pre-entrenado SOLO con MLM (sin labels) da 0.16 — el self-supervised puro no
+  captura la tarea en 10k filas, su valor era como inicialización; *fine-tuning anclado* (L2-SP,
+  la "KL penalty") no ayuda — no hay pre-entrenado fuerte que retener; *knowledge distillation* —
+  entrenar contra las probabilidades del deep-ensemble (0.833) converge más rápido (47 vs 64
+  épocas) y su mejor fruto es la miniatura: **el modelo de 3.713 parámetros destilado del
+  ensemble da test 0.8274**, 4º mejor single-model del proyecto. El ensemble sigue siendo la
+  única forma medida de llegar a 0.834.
+- **¿Y las herramientas de SIA? (Kohonen, PCA, autoencoders)** Medidas (6ª tanda): la celda BMU
+  de un SOM como feature extra RESTA (−0.017; el mapa organiza las numéricas pero el BTR por
+  celda queda en 0.09–0.20 alrededor de la base 0.13 — la señal vive en el status, figura
+  `som_btr.png`); el AE como pre-training del tronco replica el patrón del MLM (algo en
+  embeddings, nada sobre ordinal); y comprimir la entrada a 16 dims con PCA o AE ANTES de mirar
+  el target destruye la señal (PR 0.20–0.23 vs 0.75 end-to-end): la representación óptima para
+  reconstruir no es la óptima para predecir — la lección de representation learning, medida.
+- **¿Cuántas corridas hay detrás?** 766 (104 configuraciones × 6 seeds + grillas), todas con las
   16 métricas por época, reproducibles con la suite del repo.
