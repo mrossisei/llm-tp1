@@ -474,3 +474,25 @@ entrega/. Modelo final sin cambios: feat_ordinal.
 - [ ] Consultar a la cátedra las preguntas de `propuesta.md §11`.
 - [ ] Armar la presentación (25-30 min) con la estructura de SIA: experimento → tabla de config →
       resultado → decisión.
+
+## 23/08 — Figura EDA retro-agregada (pregunta de Fer: ¿matriz de correlación / PCA?)
+
+Fer preguntó si en algún momento hicimos matriz de correlaciones, relación con el target y/o
+un PCA del dataset (candidato a abrir la presentación), y si eso podría haber cambiado
+decisiones. Auditoría honesta: la relación con el target se hizo **variable por variable**
+(propuesta §2) y de ahí salieron todas las decisiones (cart afuera, extracción del status,
+price_rel, descartes §2.6, timestamps); la **figura** matriz no existía, y PCA solo se había
+usado como compresión de entrada (sia_pca_mlp, 6ª tanda), no como visualización.
+
+Hecho (CPU, sin GPU): `eda/grafico_correlacion.py` → `graficos/matriz_asociacion.png` —
+matriz de asociación mixta (|Spearman| / V de Cramér / η, 19 features + target, incluidas las
+columnas descartadas marcadas con †) + PCA 2D de la matriz cruda coloreado por bought.
+Lecturas (analisis.md §14): fila del target = desierto con un pico (status 0.75, resto <0.09);
+bloques de redundancia = los descartes de §2.6 en imagen (unit↔pkg_unit 1.00,
+category↔n_ingredients 1.00, category↔filtros 0.95–0.99, price↔price_rel 0.80); PCA no separa
+clases (27% var en 2 PCs) — contracara visual de sia_pca_mlp. Salvedad: U invertida del precio
+invisible para medidas monótonas (price 0.003) → la matriz complementa, no reemplaza, el EDA
+por variable. **No habría cambiado ninguna decisión** — todo lo fuerte de la matriz ya estaba
+decidido por otra vía. Lo de "sacar Best Seller del título y encodearlo": hecho desde el día 1
+(`listing_status`). Sync: figura y análisis copiados a entrega/, guión §3 (alternativa de
+apertura) + apéndice (bullet nuevo) + fix 766→796.

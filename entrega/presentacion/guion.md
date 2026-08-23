@@ -47,7 +47,10 @@ exactamente 0 y el modelo degeneraría a mirar solo eso. Queda afuera. (Spoiler:
 probamos como *label auxiliar* de multi-task — que no es leakage porque nunca es input — y
 tampoco aportó.)
 
-`→ en pantalla`: tabla de estructura + el 100% de bought⟹cart.
+`→ en pantalla`: tabla de estructura + el 100% de bought⟹cart. Alternativa/apertura:
+`graficos/matriz_asociacion.png` — la matriz de asociación completa (la fila del target es un
+desierto con un pico: status 0.75, todo lo demás <0.09) + el PCA 2D donde las clases NO se
+separan; en una imagen queda claro dónde vive la señal antes de contar cómo la extraemos.
 
 ## 4 · EDA (2): la señal dominante está escondida en el texto — [2.5 min]
 
@@ -377,5 +380,14 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   embeddings, nada sobre ordinal); y comprimir la entrada a 16 dims con PCA o AE ANTES de mirar
   el target destruye la señal (PR 0.20–0.23 vs 0.75 end-to-end): la representación óptima para
   reconstruir no es la óptima para predecir — la lección de representation learning, medida.
-- **¿Cuántas corridas hay detrás?** 766 (104 configuraciones × 6 seeds + grillas), todas con las
+- **¿Hicieron matriz de correlación / relación con el target / PCA del dataset?** Sí — matriz
+  de asociación mixta (|Spearman| numéricas, V de Cramér categóricas, η cruzadas) + PCA 2D:
+  `graficos/matriz_asociacion.png` (análisis §14). La fila del target: status 0.75, todo lo
+  demás <0.09 (converge con permutación y atención). Los bloques de redundancia (unit↔pkg_unit
+  1.00, category↔filtros 0.95–0.99, price↔price_rel 0.80) son los descartes de propuesta §2.6,
+  verificados luego con feat_extras. El PCA no separa las clases (la señal no vive en la
+  varianza — coherente con sia_pca_mlp). Salvedad honesta: la U invertida del precio es
+  invisible para medidas monótonas; por eso el EDA fue por variable, y la matriz lo confirma
+  sin reemplazarlo. Y "(Best Seller)" del título ya era feature desde el día 1 (listing_status).
+- **¿Cuántas corridas hay detrás?** 796 (109 configuraciones × 6 seeds + grillas), todas con las
   16 métricas por época, reproducibles con la suite del repo.

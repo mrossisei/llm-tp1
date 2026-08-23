@@ -739,3 +739,43 @@ Tres lecturas, todas pre-registradas y las tres verificadas:
 Con esto el capítulo experimental queda **cerrado de verdad**: 796 corridas, 109/109
 configuraciones con sus 6 seeds, y ninguna pregunta abierta que amerite GPU. El modelo final
 sigue siendo `feat_ordinal`; la curva de compresión es su epílogo, no su reemplazo.
+
+## 14. Figura EDA retro-agregada: matriz de asociación + PCA 2D (23/08)
+
+Pregunta de Fer: ¿hicimos matriz de correlaciones / relación con el target / un PCA del
+dataset, tipo para abrir la presentación? La relación con el target la hicimos variable por
+variable (propuesta §2) y de ahí salieron las decisiones; la **figura** de la matriz no
+existía. Ahora sí: `eda/grafico_correlacion.py` → `graficos/matriz_asociacion.png`.
+
+Como el dataset es mixto no hay "correlación" a secas: es la matriz de asociación estándar
+(|Spearman| entre numéricas, V de Cramér entre categóricas, razón de correlación η en las
+cruzadas, todo en [0,1]). Incluye las columnas descartadas en la v1 (†) a propósito.
+
+![Matriz de asociación y PCA](graficos/matriz_asociacion.png)
+
+Tres lecturas, y las tres **confirman decisiones que ya habíamos tomado** (no aparece nada nuevo):
+
+1. **La fila del target es un desierto con un pico**: `listing_status` 0.75; todo lo demás
+   < 0.09 (allergens 0.087, category 0.072, price_rel 0.039…). Es la versión en una imagen
+   del hallazgo central del EDA, y coincide con la importancia por permutación y la atención
+   del modelo final (status 0.68 / price_rel 0.14 / allergens 0.05). Ojo: `price` da 0.003
+   **porque estas medidas son monótonas** — la U invertida del precio es invisible acá; por
+   eso la matriz complementa y no reemplaza el EDA por variable.
+2. **Los bloques de redundancia que motivaron los descartes de propuesta §2.6 quedan a la
+   vista**: `unit_of_measure`↔`pkg_unit` V=1.00, `category`↔`n_ingredients` η=1.00 (la
+   cantidad de ingredientes está determinada por la categoría), `category`↔`filter_price_max`
+   0.99 y `filter_price_min` 0.95 (los filtros se fijan por categoría), `category`↔
+   `nutrition_score` 0.89, `price`↔`price_rel` 0.80, `allergens`↔`n_ingredients` 0.81.
+   El descarte se verificó después empíricamente (feat_extras ≈ base, feat_tiempo −0.022).
+3. **El PCA 2D no separa las clases** (PC1+PC2 = 27% de la varianza, compradas y no compradas
+   mezcladas en todos los clusters): la señal — la partición exacta de tiers del status — casi
+   no aporta varianza. Es la contracara visual de `sia_pca_mlp` (§13.1): reconstruir varianza
+   ≠ predecir. Si hubiéramos empezado por acá, la conclusión habría sido la misma que la del
+   EDA por variable: mirá el título, cuidado con cart, el resto es paisaje.
+
+¿Nos habría llevado a otras decisiones? No: cada celda fuerte de la matriz es una decisión que
+ya estaba tomada por otra vía. Lo que sí aporta es **pedagógico** — es la diapositiva de
+apertura natural: un vistazo y se entiende dónde vive la señal y por qué el TP giró alrededor
+del sufijo del título. Y sobre la otra mitad de la pregunta: extraer "(Best Seller)" del título
+y ponerlo como categórica **fue lo primero que hicimos** (`listing_status`, btr/data.py, día 1)
+— el texto crudo no entra en una matriz de correlación, pero su señal sí, una vez extraída.
