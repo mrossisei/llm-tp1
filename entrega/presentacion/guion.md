@@ -365,9 +365,11 @@ p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número 
   captura la tarea en 10k filas, su valor era como inicialización; *fine-tuning anclado* (L2-SP,
   la "KL penalty") no ayuda — no hay pre-entrenado fuerte que retener; *knowledge distillation* —
   entrenar contra las probabilidades del deep-ensemble (0.833) converge más rápido (47 vs 64
-  épocas) y su mejor fruto es la miniatura: **el modelo de 3.713 parámetros destilado del
-  ensemble da test 0.8274**, 4º mejor single-model del proyecto. El ensemble sigue siendo la
-  única forma medida de llegar a 0.834.
+  épocas) y su mejor fruto es la compresión: medimos la curva completa "PR vs parámetros" en
+  dos ramas (353 → 26.177, figura `curva_compresion.png`) y **las soft labels corren el piso
+  un nivel — el nivel campeón aguanta hasta 1.937 parámetros destilando (0.8282, +0.014 sobre
+  plain, 5/6; 13× menos que el campeón)**, a 353 params ambas ramas caen juntas (no hay dónde
+  guardar el conocimiento). El ensemble sigue siendo la única forma medida de llegar a 0.834.
 - **¿Y las herramientas de SIA? (Kohonen, PCA, autoencoders)** Medidas (6ª tanda): la celda BMU
   de un SOM como feature extra RESTA (−0.017; el mapa organiza las numéricas pero el BTR por
   celda queda en 0.09–0.20 alrededor de la base 0.13 — la señal vive en el status, figura

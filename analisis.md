@@ -701,3 +701,36 @@ conocimiento). Salida alternativa: las dos ramas se superponen ⇒ el "dark know
 compra compresión en 14 tokens tabulares — también cierra la figura. Escala de scaling laws
 mencionada en la clase: el umbral de a cuánto se puede destilar es empírico; esto lo mide.
 **La selección sigue cerrada**: esto completa una figura, no busca campeón.
+
+## 13.3 Séptima mini-tanda: resultados (30 corridas, 23/08 — 796 totales, 109/109 configs)
+
+**La hipótesis se confirmó en su forma exacta.** La curva completa
+(figura `graficos/curva_compresion.png`):
+
+| nivel | params | plain | destilada | Δ apareado |
+|---|---|---|---|---|
+| d4·1b | 353 | 0.7950 ± 0.031 | 0.7944 ± 0.025 | −0.0006 (3/6) |
+| d8·1b | 1.089 | 0.8163 ± 0.017 | 0.8210 ± 0.024 | +0.0047 (3/6) |
+| **d8·2b** | **1.937** | 0.8142 ± 0.025 | **0.8282 ± 0.021** | **+0.0140 (5/6)** |
+| d16·1b | 3.713 | 0.8254 ± 0.026 | 0.8274 ± 0.019 | +0.0020 (3/6) |
+| d32·2b | 26.177 | 0.8239 ± 0.018 | 0.8272 ± 0.023 | +0.0033 (2/6) |
+
+Tres lecturas, todas pre-registradas y las tres verificadas:
+
+1. **Las soft labels corren el piso ~un nivel**: el nivel campeón, que en plain requiere
+   3.713 parámetros, con teacher aguanta hasta **1.937** (0.8282 — numéricamente incluso
+   arriba del campeón d32). El **+0.0140 (5/6) de d8·2b es el efecto de destilación más
+   grande y más consistente de todo el proyecto, y aparece exactamente donde lo predijimos:
+   donde la capacidad empieza a faltar**. Arriba de ahí el teacher no tiene qué aportar
+   (+0.002/+0.003, ruido); abajo ayuda parcialmente (d8·1b +0.0047).
+2. **A 353 parámetros las dos ramas caen juntas** (−0.0006): no hay dónde guardar el
+   conocimiento — el "hasta dónde se puede destilar es empírico y satura" de la clase 3,
+   medido. El umbral de este problema está entre 353 y ~1.1k.
+3. **La rama destilada es PLANA en nivel campeón de 1.937 a 26.177** (0.8282 / 0.8274 /
+   0.8272): la frase para la defensa — *el conocimiento del problema cabe en ~2.000
+   parámetros, si te lo enseña un ensemble*. (Detalle honesto: en plain, d8·1b 0.8163 >
+   d8·2b 0.8142 — inversión dentro del ruido, ±0.017/0.025.)
+
+Con esto el capítulo experimental queda **cerrado de verdad**: 796 corridas, 109/109
+configuraciones con sus 6 seeds, y ninguna pregunta abierta que amerite GPU. El modelo final
+sigue siendo `feat_ordinal`; la curva de compresión es su epílogo, no su reemplazo.

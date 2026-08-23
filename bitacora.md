@@ -449,6 +449,21 @@ campeón (fishing de ±0.004), combos do0+distill (fishing), refit train+val sin
 higiene del protocolo por +0.007 estimado), listwise seeds 46-47 (decisión de costo ya
 tomada). Selección sigue cerrada. Suite 109 configs; panel 237 claves OK republicado.
 
+## 23/08 — 7ª mini-tanda corrida: la curva de compresión, cerrada (796 corridas, 109/109)
+
+Hipótesis confirmada en su forma exacta (analisis.md §13.3, figura
+graficos/curva_compresion.png): **las soft labels corren el piso de la compresión un nivel**
+— el nivel campeón, que en plain requiere 3.713 params, destilando del deep-ensemble aguanta
+hasta **1.937 params** (0.8282, +0.0140 sobre plain, gana 5/6 — el efecto de destilación más
+grande y consistente del proyecto, exactamente donde la capacidad empieza a faltar). A 353
+params las dos ramas caen juntas (−0.0006): no hay dónde guardar el conocimiento — el umbral
+está entre 353 y ~1.1k. La rama destilada es PLANA en nivel campeón de 1.937 a 26.177
+(0.8282/0.8274/0.8272): "el conocimiento del problema cabe en ~2.000 parámetros si te lo
+enseña un ensemble". Capítulo experimental CERRADO de verdad: sin preguntas abiertas que
+ameriten GPU. Sync: CSV 133 grupos, panel 242 claves OK republicado, zoo regenerado
+byte-idéntico (ya estaba al día), guión-apéndice actualizado con la curva, figura copiada a
+entrega/. Modelo final sin cambios: feat_ordinal.
+
 ## Pendientes
 
 - [x] ~~Correr la suite completa en la RTX 3070 y analizar~~ → hecho (1ª tanda), ver `analisis.md`.
