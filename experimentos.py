@@ -295,6 +295,42 @@ EXPERIMENTOS |= {
                              '--distill-from', ENS], 'tabular'),
 }
 
+# ---- 8va tanda (23/08): transfer desde un preentrenado EXTERNO (idea de Fer) ----
+# Todo el transfer previo fue con NUESTROS checkpoints; esta tanda agrega el caso
+# canonico de la clase 3: MiniLM (sentence-transformers, 22M params) como encoder
+# de title+description. El transformer sigue siendo propio — el preentrenado solo
+# aporta el embedding del texto, que entra como UN token extra (proyeccion
+# aprendida 384->32), el mismo mecanismo de fusion pero con encoder ajeno.
+# Dos regimenes: feature extraction (embeddings/*.npy precomputados con
+# eda/embed_texto.py, CONGELADOS — los .npy ya estan commiteados) y fine-tuning
+# (el encoder entra al grafo con lr 1e-5; requiere `uv pip install transformers`
+# en la 3070 y baja el modelo de HF la primera vez). Hipotesis: analisis.md §15.
+TEMB = 'embeddings/minilm.npy'        # texto completo (el sufijo de estado incluido)
+TEMBI = 'embeddings/minilm_intr.npy'  # texto SIN estado (strip_status_from_text)
+HF = 'sentence-transformers/all-MiniLM-L6-v2'
+EXPERIMENTOS |= {
+    # ¿cuanto ve el preentrenado por si solo? (referencias: logistica cruda
+    # 0.660, text_base 0.652, tower 0.775, campeon 0.824)
+    'bert_solo':      (['--arch', 'mlp', '--drop-features', 'all',
+                        '--text-emb', TEMB, *PAC], 'tabular'),
+    # ...y sin el sufijo de estado (referencia: techo intrinseco 0.16)
+    'bert_solo_intr': (['--arch', 'mlp', '--drop-features', 'all',
+                        '--text-emb', TEMBI, *PAC], 'tabular'),
+    # el embedding como 384 numericas extra del MLP (hermano de tl_emb_mlp)
+    'bert_mlp':       (['--arch', 'mlp', *ORD, '--text-emb', TEMB], 'tabular'),
+    # campeon + token BERT congelado (feature extraction pura)
+    'bert_token':     ([*ORD, '--text-emb', TEMB], 'tabular'),
+    # ¿el preentrenado CONGELADO reemplaza al regex? (hybrid lo logro end-to-end)
+    'bert_token_sin': ([*ORD, '--drop-features', 'listing_status',
+                        '--text-emb', TEMB], 'tabular'),
+    # fine-tuning: el encoder se ACTUALIZA (lr 1e-5, batch 128 por memoria);
+    # familia 'texto' para que el guard de GPU los proteja
+    'bert_ft':        ([*ORD, '--text-emb-finetune', HF,
+                        '--batch-size', '128'], 'texto'),
+    'bert_ft_sin':    ([*ORD, '--drop-features', 'listing_status',
+                        '--text-emb-finetune', HF, '--batch-size', '128'], 'texto'),
+}
+
 
 def resolver_device(arg):
     if arg != 'auto':

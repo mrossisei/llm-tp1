@@ -432,7 +432,7 @@ class BTRTransformer(nn.Module):
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
                  cat_tables=None, hash_buckets=8, cart_lambda=0.0, cat_modes=None,
                  per_feature='none', sin_residual=False, sin_layernorm=False,
-                 feature_dropout=0.0):
+                 feature_dropout=0.0, text_emb_dim=0, hf_model=''):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
@@ -475,6 +475,23 @@ class BTRTransformer(nn.Module):
             self.text_encoder = TextEncoder(char_vocab_size, max_text_len, d_model,
                                             n_head, n_layer, dropout)
             seq_len += 1
+        # transfer learning desde un preentrenado EXTERNO (8va tanda): el texto
+        # entra como UN token = proyeccion del embedding de un modelo conocido.
+        # Dos regimenes de la clase 3: text_emb_dim>0 = feature extraction (el
+        # embedding viene precomputado y congelado en el slot x_text, float);
+        # hf_model = fine-tuning (el encoder HF entra al grafo y x_text son sus
+        # input_ids). La proyeccion a d_model se aprende siempre.
+        self.temb_proj = None
+        _hf = None
+        if text_emb_dim or hf_model:
+            assert formulation == 'features', \
+                'preentrenado de texto: solo formulation features (el resto ya ve texto)'
+            if hf_model:
+                from transformers import AutoModel
+                _hf = AutoModel.from_pretrained(hf_model)
+                text_emb_dim = _hf.config.hidden_size
+            self.temb_proj = nn.Linear(text_emb_dim, d_model)
+            seq_len += 1
         self.seq_len = seq_len
 
         # [CLS] aprendido, como BERT: agrega la informacion para clasificar
@@ -510,6 +527,9 @@ class BTRTransformer(nn.Module):
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
         )
         self.apply(self._init_weights)
+        # el encoder HF se cuelga DESPUES del apply: _init_weights no debe pisar
+        # los pesos preentrenados (seria tirar el transfer learning a la basura)
+        self.hf_encoder = _hf
 
     def _init_weights(self, module):
         # misma inicializacion que la demo
@@ -531,6 +551,20 @@ class BTRTransformer(nn.Module):
             masks.append(torch.ones(batch_size, feat.shape[1], dtype=torch.bool, device=device))
         if self.text_encoder is not None:  # fusion: el resumen del texto como un token
             parts.append(self.text_encoder(x_text).unsqueeze(1))
+            masks.append(torch.ones(batch_size, 1, dtype=torch.bool, device=device))
+        if self.temb_proj is not None:  # embedding de un preentrenado externo como un token
+            if self.hf_encoder is not None:
+                # fine-tuning: x_text son input_ids del tokenizer HF (pad = 0);
+                # mean pooling + L2, la misma receta que el precomputo congelado
+                mask_t = x_text != 0
+                h = self.hf_encoder(input_ids=x_text,
+                                    attention_mask=mask_t).last_hidden_state
+                mt = mask_t.unsqueeze(-1).float()
+                vec = (h * mt).sum(1) / mt.sum(1).clamp_min(1e-9)
+                vec = nn.functional.normalize(vec, dim=1)
+            else:
+                vec = x_text  # feature extraction: el embedding ya viene calculado
+            parts.append(self.temb_proj(vec).unsqueeze(1))
             masks.append(torch.ones(batch_size, 1, dtype=torch.bool, device=device))
         if self.char_embedding_table is not None:
             parts.append(self.char_embedding_table(x_text))

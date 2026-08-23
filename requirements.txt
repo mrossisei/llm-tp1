@@ -3,3 +3,4 @@ pandas
 numpy
 scikit-learn
 matplotlib
+transformers  # 8va tanda: encoder preentrenado externo (MiniLM)

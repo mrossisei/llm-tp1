@@ -496,3 +496,31 @@ por variable. **No habría cambiado ninguna decisión** — todo lo fuerte de la
 decidido por otra vía. Lo de "sacar Best Seller del título y encodearlo": hecho desde el día 1
 (`listing_status`). Sync: figura y análisis copiados a entrega/, guión §3 (alternativa de
 apertura) + apéndice (bullet nuevo) + fix 766→796.
+
+## 23/08 — 8ª tanda preparada: transfer desde un preentrenado externo (idea de Fer)
+
+Fer propuso lo que faltaba del arco de transfer: usar el embedding de un modelo conocido para
+title+description como entrada de nuestro transformer, en dos regímenes — congelado (feature
+extraction) y actualizando el encoder (fine-tuning). Decisiones: MiniLM-L6-v2 (22M params, el
+estándar chico de sentence-transformers; entrenable en la 3070); el embedding entra como UN
+token extra (proyección aprendida 384→32, mismo mecanismo que fusion) para no repetir la
+dilución del hybrid; los embeddings congelados se precomputaron acá en CPU
+(eda/embed_texto.py, ~3 min) y van commiteados en embeddings/*.npy (2×15MB) — la 3070 solo
+necesita `transformers` para los dos configs de fine-tuning. Salvedad de reglas: el enunciado
+pide transformer propio; acá el preentrenado es entrada, no el modelo — igual se reporta como
+exploratorio y la selección sigue cerrada.
+
+7 configs bert_* (116 totales, 42 corridas nuevas): solo/solo_intr (¿cuánto ve MiniLM con y
+sin status?), mlp/token (redundancia con la categórica), token_sin/ft_sin (¿reemplaza al
+regex, congelado vs fine-tuneado?), ft. Hipótesis pre-registradas en analisis.md §15 — la
+apuesta central: la partición de tiers es ANTI-semántica ("Highly Rated" suena igual que "Top
+Rated" y compra 50× menos), así que el congelado recupera parcial y el fine-tuning debería
+comprar la diferencia justo en *_sin.
+
+Infra: --text-emb/--text-emb-finetune/--text-emb-lr con guards, temb_proj en BTRTransformer
+(hf_encoder colgado DESPUÉS de _init_weights para no pisar los pesos preentrenados), lr por
+grupo en AdamW, --drop-features all, pad_token_id==0 verificado, ckpt de ft no se guarda
+(~90MB, exploratorio). Bug corregido de paso: drop_feature_columns con lista vacía
+(torch.tensor([]) es float → index_select explotaba). Panel: clave canónica 51 campos
+(espejo verificado, 249 claves OK), sección 5b con el bloque "preentrenado externo".
+transformers agregado a requirements.txt. Smokes CPU: los 5 caminos corren.

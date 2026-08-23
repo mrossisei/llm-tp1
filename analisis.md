@@ -774,3 +774,62 @@ apertura natural: un vistazo y se entiende dónde vive la señal y por qué el T
 del sufijo del título. Y sobre la otra mitad de la pregunta: extraer "(Best Seller)" del título
 y ponerlo como categórica **fue lo primero que hicimos** (`listing_status`, btr/data.py, día 1)
 — el texto crudo no entra en una matriz de correlación, pero su señal sí, una vez extraída.
+
+## 15. 8ª tanda: transfer desde un preentrenado EXTERNO (preparada 23/08, hipótesis pre-registradas)
+
+Idea de Fer. Todo el transfer del proyecto fue con **nuestros** checkpoints (§13); esta tanda
+agrega el caso canónico de la clase 3: un modelo preentrenado ajeno — **MiniLM**
+(`sentence-transformers/all-MiniLM-L6-v2`, 22M params, 6 capas) — como encoder de
+title+description. El transformer sigue siendo propio: el preentrenado solo aporta el
+embedding del texto (384d), que entra como **UN token extra** vía proyección aprendida 384→32
+— el mismo mecanismo de `fusion`, pero con encoder ajeno en vez del nuestro. Los dos regímenes
+de la clase: **feature extraction** (embeddings precomputados con `eda/embed_texto.py`,
+congelados, en `embeddings/*.npy` ya commiteados) y **fine-tuning** (el encoder entra al grafo
+con lr propio 1e-5, `--text-emb-finetune`). Salvedad de reglas anotada: el enunciado pide
+transformer propio — acá el preentrenado es *entrada*, no el modelo; se reporta como
+exploratorio (la selección sigue cerrada en `feat_ordinal`).
+
+7 configs × 6 seeds = 42 corridas (`bert_*`, 116 configs totales):
+
+| config | pregunta |
+|---|---|
+| `bert_solo` | ¿cuánto ve MiniLM congelado por sí solo? (refs: logística 0.660, text_base 0.652, tower 0.775) |
+| `bert_solo_intr` | ...¿y sin el sufijo de estado? (ref: techo intrínseco 0.16) |
+| `bert_mlp` | embedding como 384 numéricas extra del MLP (hermano de tl_emb_mlp) |
+| `bert_token` | campeón + token BERT congelado |
+| `bert_token_sin` | campeón SIN listing_status + token BERT: ¿el congelado reemplaza al regex? |
+| `bert_ft` | como bert_token pero fine-tuneando el encoder (lr 1e-5) |
+| `bert_ft_sin` | como bert_token_sin pero fine-tuneando: ¿cuánto compra el fine-tuning? |
+
+**Hipótesis, registradas antes de correr:**
+
+1. **`bert_solo` entre 0.65 y 0.78**: el sufijo de estado está textual en el título, y un
+   embedding de oración preentrenado debería codificarlo; pero la partición exacta de tiers
+   ("Top Rated" 0.65 vs "Highly Rated" 0.00) es *anti-semántica* — MiniLM fue entrenado para
+   que frases parecidas queden cerca, que acá es exactamente lo contrario de lo útil. Si supera
+   a tower (0.775, entrenado en la tarea), el preentrenamiento masivo le gana al task-specific
+   a esta escala; apostamos a que NO.
+2. **`bert_solo_intr` ≈ 0.15–0.20**: quinta vindicación esperada del EDA (sin estado no hay
+   señal, la vea quien la vea). Si da >0.25, MiniLM encontró algo que nosotros no vimos —
+   sería el hallazgo de la tanda.
+3. **`bert_token` y `bert_mlp` ≈ campeón ± ruido**: la señal del texto ya entra limpia como
+   categórica; el token extra es redundante (como tl_emb_mlp, −0.006). Riesgo a la baja:
+   dilución leve.
+4. **`bert_token_sin` la pregunta interesante del régimen congelado**: hybrid recuperó la señal
+   del regex desde chars *entrenando el encoder*; ¿features congeladas de otro dominio alcanzan
+   para separar los tiers vía una proyección lineal 384→32? Esperamos recuperación PARCIAL
+   (0.70–0.79): por debajo del campeón (0.824) y probablemente del hybrid.
+5. **`bert_ft_sin` > `bert_token_sin`** (el fine-tuning ajusta el encoder a la partición
+   anti-semántica; es donde más margen hay) y **`bert_ft` ≈ bert_token** (nada que ganar si el
+   status ya entra como campo). Riesgo del ft: 22M params contra 7k filas — si el lr 1e-5 no
+   alcanza como regularización implícita, sobreajuste con gap val-test grande (ya tenemos tres
+   casos vivos de selección-overfitting para compararlo).
+6. En conjunto: **ningún bert_* supera 0.824+ruido**. Si alguno lo hace, la lectura de "el
+   texto no aporta más allá del status" era un artefacto de nuestros encoders chicos, no del
+   dataset — eso también sería un resultado.
+
+Infra: `--text-emb` / `--text-emb-finetune` / `--text-emb-lr` en `btr/train.py` (guards
+incluidos), token extra en `BTRTransformer` (`temb_proj`, hf_encoder colgado post-init para no
+pisarlo con `_init_weights`), `--drop-features all`, lr por grupo en el optimizador, alias en
+el panel (clave canónica 51 campos, paridad JS verificada, sección 5b ampliada). El bug de
+`drop_feature_columns` con lista vacía (dtype float de `torch.tensor([])`) quedó corregido.

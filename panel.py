@@ -132,6 +132,14 @@ def canon(c):
     ael = str(int(num('ae_latent', 0))) if arch == 'mlp' else '-'
     pca = str(int(num('pca', 0))) if arch == 'mlp' else '-'
 
+    # ---- 8va tanda: transfer desde un preentrenado externo ----
+    temb = c.get('text_emb') or '-'
+    if temb != '-':  # canonico por nombre de archivo (la ruta puede variar)
+        temb = temb.replace('\\', '/').split('/')[-1]
+        temb = temb[:-4] if temb.endswith('.npy') else temb
+    tembft = c.get('text_emb_finetune') or '-'
+    templr = ffloat(num('text_emb_lr', 1e-5)) if tembft != '-' else '-'
+
     return '|'.join([
         arch, form, drops, strip, nmode, nbins, str(int(c['d_model'])), nh, nl,
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
@@ -140,7 +148,7 @@ def canon(c):
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
         frac, init, mlm, cv, pf,
         wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-        som, ae, ael, pca,
+        som, ae, ael, pca, temb, tembft, templr,
     ])
 
 
@@ -154,7 +162,8 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'weight_decay', 'feature_dropout', 'label_smoothing', 'sin_residual',
               'sin_layernorm', 'init_from', 'freeze_backbone', 'reinit_head', 'l2sp',
               'distill_from', 'distill_alpha', 'embed_from', 'som_feature',
-              'pretrain_ae', 'ae_latent', 'pca']
+              'pretrain_ae', 'ae_latent', 'pca',
+              'text_emb', 'text_emb_finetune', 'text_emb_lr']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
@@ -165,7 +174,8 @@ CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 
                 'sin_residual': False, 'sin_layernorm': False, 'init_from': '',
                 'freeze_backbone': False, 'reinit_head': False, 'l2sp': 0.0,
                 'distill_from': '', 'distill_alpha': 1.0, 'embed_from': '',
-                'som_feature': 0, 'pretrain_ae': 0, 'ae_latent': 0, 'pca': 0}
+                'som_feature': 0, 'pretrain_ae': 0, 'ae_latent': 0, 'pca': 0,
+                'text_emb': '', 'text_emb_finetune': '', 'text_emb_lr': 1e-5}
 
 
 def cfg_dict(c):
@@ -591,6 +601,18 @@ def controles(features):
     <label class="inl" style="flex:1">embed-from (MLP: + embedding congelado del transformer)
       <input type="text" id="embed_from" value="" placeholder="pesos/..._seed{{seed}}.pt" style="width:100%"></label>
   </div>
+  <div class="eyebrow" style="margin:12px 0 6px">PREENTRENADO EXTERNO (8ª tanda: MiniLM sobre title+description)</div>
+  <div class="rowc">
+    <label class="inl">text-emb (congelado, .npy)
+      <select id="text_emb">
+        <option value="">— no —</option>
+        <option value="embeddings/minilm.npy">minilm (texto completo)</option>
+        <option value="embeddings/minilm_intr.npy">minilm_intr (sin status)</option>
+      </select></label>
+    <label class="inl" style="flex:1">text-emb-finetune (modelo HF, entra al grafo)
+      <input type="text" id="text_emb_finetune" value="" placeholder="sentence-transformers/all-MiniLM-L6-v2" style="width:100%"></label>
+    <label class="inl">lr encoder <input type="number" id="text_emb_lr" value="0.00001" min="0" max="0.01" step="0.00001"></label>
+  </div>
   <div class="eyebrow" style="margin:12px 0 6px">HERRAMIENTAS DE SIA</div>
   <div class="rowc">
     <label class="inl" id="som-wrap">SOM (Kohonen) G×G, 0 = off <input type="number" id="som_feature" value="0" min="0" max="16"></label>
@@ -608,7 +630,10 @@ def controles(features):
   <b>Kohonen</b> como categórica extra, el <b>autoencoder</b> como pre-training del tronco
   (hermano con cuello de botella del MLM) y <b>PCA/AE→latente</b> como única entrada del MLP
   (representation learning puro). Suite: <code>reg_*</code>, <code>abl_*</code>, <code>tl_*</code>,
-  <code>sia_*</code>.</p>
+  <code>sia_*</code>. La 8ª tanda agrega el caso canónico: un preentrenado <b>externo</b>
+  (MiniLM) como encoder del texto — congelado (<code>--text-emb</code>, un token extra
+  proyectado 384→d) o fine-tuneado en el grafo (<code>--text-emb-finetune</code>). Suite:
+  <code>bert_*</code>.</p>
 </section>
 
 <section class="card"><h2><span class="n">6</span>Métricas — se calculan SIEMPRE todas</h2>
@@ -806,6 +831,12 @@ function canonKey(c){
   const ael = arch==='mlp' ? String(Math.trunc(numo(c.ae_latent,0))) : '-';
   const pca = arch==='mlp' ? String(Math.trunc(numo(c.pca,0))) : '-';
 
+  // ---- 8va tanda: transfer desde un preentrenado externo ----
+  let temb = c.text_emb || '-';
+  if (temb!=='-'){ temb = temb.replace(/\\/g,'/').split('/').pop().replace(/\.npy$/,''); }
+  const tembft = c.text_emb_finetune || '-';
+  const templr = tembft!=='-' ? ffloat(numo(c.text_emb_lr, 1e-5)) : '-';
+
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
@@ -813,7 +844,7 @@ function canonKey(c){
     catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
     frac, init, mlm, cv, pf,
     wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-    som, ae, ael, pca].join('|');
+    som, ae, ael, pca, temb, tembft, templr].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)
@@ -879,6 +910,12 @@ function coerciones(s){
     out.push('⚠ l2sp ancla a pesos PRE-entrenados: requiere init-from, MLM o AE — el comando fallaría');
   if (s.embed_from && s.arch!=='mlp')
     out.push('embed-from es feature extraction PARA el MLP — ignorado');
+  if (s.text_emb && s.text_emb_finetune)
+    out.push('⚠ text-emb y text-emb-finetune son excluyentes (congelado O fine-tuning) — el comando fallaría');
+  if (s.text_emb && !((s.arch==='transformer'&&s.formulation==='features')||s.arch==='mlp'))
+    out.push('⚠ text-emb: transformer features (token extra) o mlp (numéricas extra) — el comando fallaría');
+  if (s.text_emb_finetune && !(s.arch==='transformer'&&s.formulation==='features'))
+    out.push('⚠ text-emb-finetune: solo transformer formulation features — el comando fallaría');
   if ((Number(s.ae_latent)>0||Number(s.pca)>0) && s.arch!=='mlp')
     out.push('ae-latent / pca reemplazan la entrada del MLP — ignorados');
   if (Number(s.ae_latent)>0 && Number(s.pca)>0)
@@ -970,6 +1007,11 @@ function comando(s){
     if (Number(s.distill_alpha)!==1) p.push('--distill-alpha', ffloat(s.distill_alpha));
   }
   if (s.arch==='mlp' && s.embed_from) p.push('--embed-from', `'${s.embed_from}'`);
+  if (s.text_emb) p.push('--text-emb', `'${s.text_emb}'`);
+  if (s.text_emb_finetune){
+    p.push('--text-emb-finetune', `'${s.text_emb_finetune}'`);
+    if (Number(s.text_emb_lr)!==1e-5) p.push('--text-emb-lr', ffloat(s.text_emb_lr));
+  }
   if (Number(s.som_feature)>0) p.push('--som-feature', String(s.som_feature));
   if (Number(s.pretrain_ae)>0) p.push('--pretrain-ae', String(s.pretrain_ae));
   if (s.arch==='mlp' && Number(s.ae_latent)>0) p.push('--ae-latent', String(s.ae_latent));
@@ -1215,6 +1257,8 @@ function syncUI(){
   $('init_seed').value = (S.init_seed===null||S.init_seed===undefined) ? '' : S.init_seed;
   $('init_from').value = S.init_from||''; $('distill_from').value = S.distill_from||'';
   $('embed_from').value = S.embed_from||'';
+  $('text_emb').value = S.text_emb||''; $('text_emb_finetune').value = S.text_emb_finetune||'';
+  $('text_emb_lr').value = S.text_emb_lr;
   $('sin_residual').checked = !!S.sin_residual; $('sin_layernorm').checked = !!S.sin_layernorm;
   $('freeze_backbone').checked = !!S.freeze_backbone; $('reinit_head').checked = !!S.reinit_head;
   $('catenc').value = S.cat_encoding||'embedding';
@@ -1303,7 +1347,8 @@ $('pretrain_mlm').onchange = e => { S.pretrain_mlm = parseInt(e.target.value||0,
 ['sin_residual','sin_layernorm','freeze_backbone','reinit_head'].forEach(k=>{
   $(k).onchange = e => { S[k] = e.target.checked; update(); };
 });
-['init_from','distill_from','embed_from'].forEach(k=>{
+$('text_emb_lr').onchange = e => { S.text_emb_lr = parseFloat(e.target.value||1e-5); update(); };
+['init_from','distill_from','embed_from','text_emb','text_emb_finetune'].forEach(k=>{
   $(k).onchange = e => { S[k] = e.target.value.trim(); update(); };
 });
 $('pre-probe').onclick = () => {

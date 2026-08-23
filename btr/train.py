@@ -40,7 +40,8 @@ from sklearn.metrics import (
 )
 
 from .data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, MAX_TEXT_LEN, NUM_FEATURES,
-                   TARGET, _palabras, prepare, prepare_listwise)
+                   TARGET, _palabras, load_dataset, prepare, prepare_listwise,
+                   split_by_query, strip_status_from_text)
 from .model import BTRTransformer, ListwiseTransformer, MLPBaseline, TextTowerModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -122,7 +123,8 @@ def evaluate(model, split, max_rows=None):
 
 
 def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, verbose=True,
-                weight_decay=1e-2, train_targets=None, l2sp=0.0, l2sp_ref=None):
+                weight_decay=1e-2, train_targets=None, l2sp=0.0, l2sp_ref=None,
+                text_emb_lr=1e-5):
     """Entrena con early stopping por PR-AUC de validacion; restaura el mejor estado.
 
     weight_decay: el de AdamW (1e-2 era el default implicito de TODAS las corridas
@@ -136,7 +138,16 @@ def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, v
     """
     a, b, c, y = splits['train']
     entrenables = [p for p in model.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(entrenables, lr=lr, weight_decay=weight_decay)
+    if getattr(model, 'hf_encoder', None) is not None:
+        # fine-tuning del preentrenado (clase 3): lr chico y separado para el
+        # encoder HF (no destruir lo aprendido), lr normal para el resto
+        hf_ids = {id(p) for p in model.hf_encoder.parameters()}
+        grupos = [{'params': [p for p in entrenables if id(p) not in hf_ids]},
+                  {'params': [p for p in entrenables if id(p) in hf_ids],
+                   'lr': text_emb_lr}]
+        optimizer = torch.optim.AdamW(grupos, lr=lr, weight_decay=weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(entrenables, lr=lr, weight_decay=weight_decay)
     history, best_pr, best_state, since_best = [], -1.0, None, 0
     y_grad = y if train_targets is None else train_targets
 
@@ -533,6 +544,11 @@ def run_name(args, seed):
         parts.append(f"ael{args.ae_latent}")
     if args.pca:
         parts.append(f"pca{args.pca}")
+    if args.text_emb:
+        parts.append('temb-' + Path(args.text_emb).stem.replace('_', ''))
+    if args.text_emb_finetune:
+        parts.append('tembft' + (f"-lr{args.text_emb_lr:g}"
+                                 if args.text_emb_lr != 1e-5 else ''))
     if args.cat_feature_encoding:
         pares = sorted(p.strip().replace('_', '').replace('=', '-')
                        for p in args.cat_feature_encoding.split(',') if p.strip())
@@ -578,8 +594,8 @@ def drop_feature_columns(splits, drop, listwise=False, cat_features=None, num_fe
     if unknown:
         raise SystemExit(f'--drop-features desconocidos: {sorted(unknown)}')
     dim = 2 if listwise else 1  # en listwise los features son la 3ra dimension
-    splits = {k: (v[0].index_select(dim, torch.tensor(keep_cat)),
-                  v[1].index_select(dim, torch.tensor(keep_num)),
+    splits = {k: (v[0].index_select(dim, torch.tensor(keep_cat, dtype=torch.long)),
+                  v[1].index_select(dim, torch.tensor(keep_num, dtype=torch.long)),
                   v[2], v[3]) for k, v in splits.items()}
     return splits, keep_cat, keep_num
 
@@ -654,7 +670,7 @@ def build_cat_tables(modes, prep, train_df, keep_cat, hash_buckets):
 
 
 def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
-                max_products=None, cat_tables=None, cat_modes=None):
+                max_products=None, cat_tables=None, cat_modes=None, text_emb_dim=0):
     """Configura y construye la arquitectura pedida; devuelve (modelo, config para el ckpt)."""
     common = dict(d_model=args.d_model, dropout=args.dropout,
                   numeric_mode=args.numeric_mode, pos_weight=pos_weight)
@@ -668,7 +684,8 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
                       use_positional=args.positional, cls_position=args.cls_position,
                       cart_lambda=args.cart_aux, per_feature=args.per_feature,
                       sin_residual=args.sin_residual, sin_layernorm=args.sin_layernorm,
-                      feature_dropout=args.feature_dropout,
+                      feature_dropout=args.feature_dropout, text_emb_dim=text_emb_dim,
+                      hf_model=args.text_emb_finetune,
                       **encod, **common)
         model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
@@ -766,6 +783,27 @@ def run(csv_path, seed, args, device):
         raise SystemExit('--pretrain-ae es solo para transformer features con CLS al inicio')
     if args.pretrain_ae and args.pretrain_mlm:
         raise SystemExit('--pretrain-ae y --pretrain-mlm: elegir UN pre-entrenamiento')
+    # ---- guards de la 8va tanda (transfer desde un preentrenado externo) ----
+    if args.text_emb and args.text_emb_finetune:
+        raise SystemExit('--text-emb y --text-emb-finetune: elegir UN regimen '
+                         '(feature extraction congelado o fine-tuning)')
+    if args.text_emb or args.text_emb_finetune:
+        if args.cv_k or args.train_frac < 1.0 or listwise:
+            raise SystemExit('preentrenado externo: no implementado con cv/train-frac/'
+                             'listwise (los embeddings se alinean al split holdout)')
+        if args.pca or args.ae_latent or args.som_feature or args.embed_from:
+            raise SystemExit('preentrenado externo: no se combina con pca/ae-latent/'
+                             'som/embed-from')
+        if args.pretrain_mlm or args.pretrain_ae or args.init_from or args.per_feature != 'none':
+            raise SystemExit('preentrenado externo: no se combina con mlm/ae/init-from/'
+                             'per-feature')
+    if args.text_emb and not (args.arch == 'mlp' or (args.arch == 'transformer'
+                                                     and args.formulation == 'features')):
+        raise SystemExit('--text-emb: transformer formulation features (un token extra) '
+                         'o mlp (numericas extra)')
+    if args.text_emb_finetune and not (args.arch == 'transformer'
+                                       and args.formulation == 'features'):
+        raise SystemExit('--text-emb-finetune: solo transformer formulation features')
     extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
     if extras == ('all',):
         extras = EXTRA_ALL  # congelado: ver data.EXTRA_ALL
@@ -790,6 +828,12 @@ def run(csv_path, seed, args, device):
         max_products = None
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
+    if drop == {'all'}:
+        # sin features tabulares: solo tiene sentido si otra cosa alimenta al
+        # modelo (p. ej. --text-emb: ¿cuanto ve el preentrenado por si solo?)
+        if not (args.text_emb or args.text_emb_finetune):
+            raise SystemExit('--drop-features all requiere --text-emb/--text-emb-finetune')
+        drop = set(prep.cats) | set(prep.nums)
     splits, keep_cat, keep_num = drop_feature_columns(splits, drop, listwise,
                                                       prep.cats, prep.nums)
     splits = {k: tuple(t.to(device) for t in v) for k, v in splits.items()}
@@ -873,6 +917,54 @@ def run(csv_path, seed, args, device):
             fuente = 'PCA' if args.pca else 'autoencoder'
             print(f"  {fuente}: entrada del MLP = {k} dimensiones (blanqueadas con train)")
 
+    text_emb_dim = 0
+    if args.text_emb or args.text_emb_finetune:
+        # transfer learning desde un preentrenado EXTERNO (8va tanda): los dos
+        # regimenes de la clase 3 sobre el MISMO texto (title+description).
+        # Los tensores de transform() preservan el orden del df, asi que el
+        # indice de fila del split recupera la fila del embedding precomputado.
+        df_emb = load_dataset(csv_path)
+        dfs = dict(zip(('train', 'val', 'test'), split_by_query(df_emb, seed=seed)))
+        nuevos = {}
+        if args.text_emb:
+            E = np.load(args.text_emb)
+            if E.shape[0] != len(df_emb):
+                raise SystemExit(f'--text-emb: {E.shape[0]} filas vs {len(df_emb)} del CSV '
+                                 '(regenerar con eda/embed_texto.py)')
+            for kk, (a_, b_, c_, y_) in splits.items():
+                e = torch.tensor(E[dfs[kk].index.to_numpy()], dtype=torch.float32,
+                                 device=a_.device)
+                assert e.shape[0] == a_.shape[0], 'desalineacion embeddings/split'
+                if args.arch == 'mlp':
+                    nuevos[kk] = (a_, torch.cat([b_, e], dim=1), c_, y_)
+                else:
+                    nuevos[kk] = (a_, b_, e, y_)  # el embedding ocupa el slot del texto
+            if args.arch == 'mlp':
+                n_num_model += E.shape[1]
+            else:
+                text_emb_dim = E.shape[1]
+            if not args.quiet:
+                print(f"  text-emb: {Path(args.text_emb).name} "
+                      f"({E.shape[1]} dims congeladas)")
+        else:
+            from transformers import AutoTokenizer
+            tok = AutoTokenizer.from_pretrained(args.text_emb_finetune)
+            if tok.pad_token_id != 0:
+                raise SystemExit('--text-emb-finetune: el modelo debe usar pad_token_id=0 '
+                                 '(la mascara del grafo asume pad=0)')
+            for kk, (a_, b_, c_, y_) in splits.items():
+                pares = zip(dfs[kk]['title'], dfs[kk]['description'])
+                if args.strip_status:
+                    pares = (strip_status_from_text(t, d) for t, d in pares)
+                textos = [t + '\n' + d for t, d in pares]
+                enc = tok(textos, padding=True, truncation=True, max_length=128,
+                          return_tensors='pt')
+                nuevos[kk] = (a_, b_, enc['input_ids'].to(a_.device), y_)
+            if not args.quiet:
+                print(f"  text-emb-finetune: {args.text_emb_finetune} "
+                      f"(lr encoder {args.text_emb_lr:g})")
+        splits = nuevos
+
     if args.embed_from:
         # feature extraction (clase 3): el embedding pooled del transformer
         # CONGELADO, concatenado a las numericas del MLP ("el embedding mas un
@@ -894,7 +986,7 @@ def run(csv_path, seed, args, device):
 
     model, model_config = build_model(args, prep, cardinalities, n_num_model,
                                       bin_edges, pos_weight, max_products, cat_tables,
-                                      cat_modes)
+                                      cat_modes, text_emb_dim=text_emb_dim)
     model = model.to(device)
     if args.w2v_init:
         tabla = None
@@ -968,7 +1060,7 @@ def run(csv_path, seed, args, device):
     history = train_model(model, splits, epochs=args.epochs, batch_size=args.batch_size,
                           lr=args.lr, patience=args.patience, verbose=not args.quiet,
                           weight_decay=args.weight_decay, train_targets=train_targets,
-                          l2sp=args.l2sp, l2sp_ref=l2sp_ref)
+                          l2sp=args.l2sp, l2sp_ref=l2sp_ref, text_emb_lr=args.text_emb_lr)
     val_m = evaluate(model, splits['val'])
     test_m = evaluate(model, splits['test'])
     print(f"{name} -> VAL: ROC-AUC {val_m['roc_auc']:.4f} PR-AUC {val_m['pr_auc']:.4f} | "
@@ -992,7 +1084,10 @@ def run(csv_path, seed, args, device):
         }, indent=2))
         print(f"resultados -> {out.relative_to(REPO_ROOT)}")
 
-        if args.save_pesos:
+        if args.save_pesos and args.text_emb_finetune:
+            print('  (checkpoint NO guardado: el encoder HF fine-tuneado pesa ~90MB '
+                  'y la corrida es exploratoria)')
+        elif args.save_pesos:
             pesos_dir = REPO_ROOT / 'pesos'
             pesos_dir.mkdir(exist_ok=True)
             ckpt = pesos_dir / f'{out.stem}.pt'  # mismo nombre que el JSON de resultados
@@ -1115,6 +1210,17 @@ def build_parser():
     parser.add_argument('--ae-latent', type=int, default=0, metavar='K',
                         help='--arch mlp: reemplazar la entrada por el espacio latente K '
                              'de un autoencoder sobre [one-hot|numericas] (SIA TP5)')
+    parser.add_argument('--text-emb', default='', metavar='NPY',
+                        help='transfer desde un preentrenado EXTERNO, feature extraction: '
+                             'matriz (N, E) precomputada por eda/embed_texto.py alineada al '
+                             'CSV; entra como UN token extra (transformer features) o como '
+                             'E numericas extra (mlp)')
+    parser.add_argument('--text-emb-finetune', default='', metavar='HF_MODEL',
+                        help='transfer desde un preentrenado EXTERNO, fine-tuning: el '
+                             'encoder HF (p. ej. sentence-transformers/all-MiniLM-L6-v2) '
+                             'entra al grafo y se actualiza con --text-emb-lr')
+    parser.add_argument('--text-emb-lr', type=float, default=1e-5,
+                        help='lr del encoder preentrenado con --text-emb-finetune')
     parser.add_argument('--pca', type=int, default=0, metavar='K',
                         help='--arch mlp: reemplazar la entrada por las K primeras '
                              'componentes principales de [one-hot|numericas]')
