@@ -1,8 +1,9 @@
 # Guión de la presentación — TP1: Predicción de BTR con Transformers
 
-**Duración total: ~27 minutos** (rango pedido: 25–30). Los tiempos por diapositiva están
-calibrados para hablar tranquilo; si el reloj aprieta, los recortes seguros son la mitad B de
-la diapositiva 14 (palabras/w2v) y la 17 (dejar solo la curva de aprendizaje).
+**Duración total: ~30 minutos** (rango pedido: 25–30; ensayar con reloj). Los tiempos por
+diapositiva están calibrados para hablar tranquilo; si el reloj aprieta, los recortes seguros
+son la diapositiva 16 (inits), la mitad B de la 17 (palabras/w2v) y la 20 (dejar solo la curva
+de aprendizaje).
 
 La presentación es `presentacion.html` (abrir en un navegador; flechas ← → para navegar,
 imprimir a PDF desde el navegador si Campus pide archivo). Cada sección de este guión indica
@@ -79,7 +80,7 @@ Con ese EDA, la selección queda así. Entran **7 categóricas** — incluida `l
 *derivamos* parseando el sufijo del título con una regex — y **6 numéricas**, incluida
 `price_rel` derivada. Preprocesamiento por tipo: categóricas → codificación (era LA decisión
 abierta: el enunciado sugiere investigar one-hot y alternativas — le dedicamos un experimento
-entero, diapositiva 13); numéricas → z-score con estadísticos de train, con log1p previo en las
+entero, diapositiva 15); numéricas → z-score con estadísticos de train, con log1p previo en las
 dos sesgadas a derecha (price, peso). Todo se ajusta **solo con train**; los niveles no vistos
 van a un índice UNK.
 
@@ -165,7 +166,7 @@ búsqueda, pero el EDA midió competencia débil (se compran varios productos po
 **el transformer solo como encoder de texto** + un MLP clasificador. Elegimos features-como-
 tokens como base… pero no descartamos en papel: **implementamos y corrimos las tres** (y dos
 variantes más). Los resultados les dan la razón a los diagnósticos del EDA — los vemos en la
-diapositiva 14 y en la tabla final.
+diapositiva 17 y en la tabla final.
 
 ## 10 · Baselines: la vara — [1 min]
 
@@ -189,22 +190,43 @@ vara más alta. Dos: ¿la atención solo "descubrió" el cruce precio×tier que 
 Le dimos ese cruce a mano a la logística: mejora +0.015, pero eso explica **solo el 12%** del
 gap — la atención aprende bastante más que esa única interacción.
 
-## 12 · Experimento 2: capacidad y entrenamiento — [1.5 min]
+## 12 · Experimento 2: ¿cuántas cabezas? — [1 min]
 
-Grilla de capacidad estilo paper chico: d_model {8,16,32,64} × cabezas {1,2,4} × bloques
-{1,2,4}, más el protocolo de entrenamiento. Hallazgos: **una cabeza grande le gana a cuatro
-chicas** (+0.018) — coherente con que la señal dominante es una sola: una consulta "rica" vale
-más que cuatro pobres; d64 suma poco; más paciencia en el early stopping (8→20) mejora en 21 de
-24 configs tabulares. Pero al combinar los ganadores individuales, no suman: meseta en ~0.816.
-La lección que nos llevó al experimento decisivo: **el eje ganador no era capacidad**.
+**Por qué variarlo**: multi-head significa varias "consultas" en subespacios distintos, en
+paralelo; la pregunta es si este problema las necesita o si hay una sola señal dominante. El
+resultado tiene una sorpresa metodológica que vale la pena contar: con embeddings, **una cabeza
+grande le gana a cuatro chicas** (0.816 vs 0.798 — una consulta rica vale más que cuatro
+pobres, coherente con el EDA); pero sobre la base ordinal, **cuatro cabezas ganan** (0.824 vs
+0.800). Es decir: **el eje interactúa con el encoding**, y por eso ninguna decisión se hereda
+de otra base — cada una se re-decide por validación sobre la base final.
 
-`→ en pantalla`: `graficos/decisiones_por_eje.png` — los 6 paneles "una decisión por eje"
-(formulación · encoding · cabezas · bloques · d_model · pre-entrenamiento), con la opción
-elegida marcada. Es la figura paraguas de las diapos 11–14: cada panel es una decisión con sus
-alternativas medidas, y sirve para volver a ella en las preguntas. Índice detallado por eje
-(por qué se probó, configs, números, decisión): `mapa_decisiones.md`.
+`→ en pantalla`: la diapo trae el gráfico del eje (`decision_cabezas.png`): elegida en verde,
+alternativas en violeta, la serie de la otra base en gris.
 
-## 13 · Experimento 3: la codificación de las categóricas — [2.5 min]
+## 13 · Experimento 3: ¿cuánta profundidad? — [0.75 min]
+
+**Por qué variarlo**: más bloques es componer atención sobre atención — y con 13 features que
+ya se ven todas a un salto, la hipótesis era que no hace falta. Confirmado: 1 bloque pierde
+poco (0.801), **2 ganan (0.824)**, 4 no suman (0.811, con el doble de parámetros). Adelanto de
+la interpretabilidad: el CLS ya concentra 0.75 de su atención en el status en la capa 1. Del
+protocolo: más paciencia en el early stopping (8→20) mejora 21/24 configs tabulares.
+
+`→ en pantalla`: `decision_bloques.png`.
+
+## 14 · Experimento 4: ¿qué d_model? — [1 min]
+
+**Por qué variarlo**: dimensionar el embedding al problema (13 features, 10k filas) y no al
+hábito de los papers. Resultado: **meseta amplia** — d8 (1.937 params) 0.814, d16 (6.945)
+0.815, d32 (26.177) 0.824, d64 (105k, embeddings) 0.815; d32 se elige por validación. El
+epílogo fuerte (7ª tanda): d16 con 1 bloque —3.713 parámetros— **empata al campeón**, y
+destilando del deep-ensemble el nivel campeón aguanta hasta 1.937 (curva completa en backup).
+Cierre de los tres ejes de capacidad: **el experimento decisivo no era capacidad: era la
+codificación de la entrada** — transición a la diapo siguiente.
+
+`→ en pantalla`: `decision_dmodel.png`. Figura paraguas de los 6 ejes para preguntas:
+`decisiones_por_eje.png`; índice detallado: `mapa_decisiones.md`.
+
+## 15 · Experimento 5: la codificación de las categóricas — [2.5 min]
 
 La sugerencia del enunciado era investigar codificaciones — one-hot y alternativas. El menú que
 implementamos y corrimos, todo lo demás fijo: primero, un resultado teórico que ahorra un
@@ -228,7 +250,20 @@ corrigieron, y esa corrección es el mejor modelo del TP.
 
 `→ en pantalla`: tabla del menú con resultados; el campeón resaltado.
 
-## 14 · Experimento 4: ¿y el texto? — [2.5 min]
+## 16 · Experimento 6: ¿arrancar de pesos informados? — [1 min]
+
+**Por qué variarlo**: es la promesa del pre-entrenamiento (clase 3) en miniatura — ¿un init
+informado le gana al aleatorio? Tres formas, todas con modelos propios: **MLM estilo BERT**
+sobre los feature-tokens (20 épocas enmascarando features, sin labels) suma +0.011 sobre
+embeddings pero **nada sobre ordinal** — el prior ya hace ese trabajo de regularización;
+**w2v-init** (skipgram propio) regulariza la variante words (+0.010) sin alcanzar a chars; el
+autoencoder replica el patrón del MLM. Decisión: init aleatoria. (Si preguntan por transfer
+desde un preentrenado DE VERDAD: 8ª tanda en el apéndice — MiniLM congelado resta, fine-tuneado
+repara, nada supera 0.824.)
+
+`→ en pantalla`: `decision_init.png`.
+
+## 17 · Experimento 7: ¿y el texto? — [2.5 min]
 
 La señal nace en el texto — ¿el transformer puede leerla solo, sin nuestra regex? Corrimos el
 arco completo. **Texto puro** (caracteres como tokens, la demo adaptada de decoder a encoder):
@@ -249,7 +284,7 @@ caracteres de la demo resultó el correcto a esta escala.
 
 `→ en pantalla`: el gráfico de barras del arco textual.
 
-## 15 · Desafíos encontrados — [2 min]
+## 18 · Desafíos encontrados — [2 min]
 
 Cuatro que valen la pena contar. **El causal degenerado**: la ablación "¿importa la máscara
 causal?" dio ROC exactamente 0.500. No era "causal es peor": con máscara causal, nuestro [CLS]
@@ -264,7 +299,7 @@ resumible que corre todo en una GPU consumer y deja cada corrida registrada con 
 para la U del precio (el FFN ya la captura), pos_weight para el desbalance (daña: PR-AUC es de
 ranking), mean pooling (CLS gana 6/6), positional en features (Δ≈0, como predice la teoría).
 
-## 16 · El modelo final — [2 min]
+## 19 · El modelo final — [2 min]
 
 **FT-Transformer con encoding ordinal**: 13 feature-tokens + [CLS], d_model 32, 4 cabezas, 2
 bloques pre-LN, sin positional, BCE, AdamW, early stopping por validación con paciencia 20.
@@ -278,7 +313,7 @@ confirma. Números finales: **PR-AUC test 0.824 ± 0.018** (6 seeds) · GroupKFo
 inicializaciones, dos rutas independientes que convergen — **0.834**. Contra las varas: GBM
 0.762, mejor MLP 0.797.
 
-## 17 · Robustez — [1.5 min]
+## 20 · Robustez — [1.5 min]
 
 Tres verificaciones sobre el modelo final. **Curva de aprendizaje**: 0.758 → 0.780 → 0.817 →
 0.824 al 25/50/75/100% de los datos — casi saturada (el último cuarto aporta +0.007), y con el
@@ -291,7 +326,7 @@ corrección.
 
 `→ en pantalla`: la curva de aprendizaje.
 
-## 18 · ¿El modelo mira donde debe? — [2 min]
+## 21 · ¿El modelo mira donde debe? — [2 min]
 
 Con 14 tokens, la matriz de atención se puede *mirar*. En la capa 1, el [CLS] pone el **75% de
 su atención en el token de estado**, y la familia de precio se consulta entre sí — `price` y
@@ -306,7 +341,7 @@ modelo rankea primero fue efectivamente comprado el **91%** de las veces (azar: 
 
 `→ en pantalla`: mapa de atención + barras de importancia, lado a lado.
 
-## 19 · Ejercicio 3: personalización (teórico) — [2.5 min]
+## 22 · Ejercicio 3: personalización (teórico) — [2.5 min]
 
 ¿Cómo haríamos que el BTR dependa de *quién* busca? Hoy nuestro modelo es
 p(bought | producto, búsqueda); personalizar es condicionar también al usuario:
@@ -326,7 +361,7 @@ que este TP nos dejó bien aprendido: el usuario nuevo sin historial es el mismo
 producto nuevo sin estado — cold-start — y el fallback es exactamente el modelo que ya tenemos,
 que no depende del usuario.
 
-## 20 · Conclusiones — [1 min]
+## 23 · Conclusiones — [1 min]
 
 Cinco, cortas. **El EDA mandó**: la señal estaba escondida en un sufijo de texto, y todo el
 diseño sale de haberla encontrado. **La formulación correcta valió más que el modelo grande**:

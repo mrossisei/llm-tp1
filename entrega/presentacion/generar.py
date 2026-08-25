@@ -41,9 +41,9 @@ S = []  # cada item: (eyebrow, html)
 
 S.append(('TP1 · 73.69 LARGE LANGUAGE MODELS', '''
 <h1 class="titulo">Predicción de Buy Through Rate<br>con Transformers</h1>
-<p class="sub">Formulación · EDA · un transformer sobre feature-tokens · 544 corridas de
+<p class="sub">Formulación · EDA · un transformer sobre feature-tokens · 838 corridas de
 experimentos · modelo final de 26k parámetros</p>
-<p class="equipo">Fer Rossi · Junior Rambau · Matias Rossi Seifert</p>'''))
+<p class="equipo">Fer Rossi · Junior Rambau · Matias Rossi Seifert · Juan Bautista Albertoni Salini</p>'''))
 
 S.append(('EL PROBLEMA · FORMULACIÓN', '''
 <h2>Qué se predice, exactamente</h2>
@@ -220,7 +220,7 @@ S.append(('ALTERNATIVAS CONSIDERADAS', '''
 <td>comprime la señal a un cuello de botella antes de decidir</td></tr>
 </table>
 <p class="destacado">No las descartamos en papel: <b>las implementamos y corrimos todas</b>
-(más 2 variantes). Los resultados — slide 14 — les dan la razón a los diagnósticos del EDA.</p>'''))
+(más 2 variantes). Los resultados — slide 17 — les dan la razón a los diagnósticos del EDA.</p>'''))
 
 S.append(('BASELINES', '''
 <h2>La vara, antes del transformer</h2>
@@ -253,31 +253,64 @@ pero eso explica <b>solo el 12% del gap</b> — la atención aprende bastante m�
 </div>
 </div>'''))
 
-S.append(('EXPERIMENTO 2', '''
-<h2>Capacidad y entrenamiento: el eje que NO era</h2>
-<ul class="espaciada">
-<li>Grilla d_model {8,16,32,64} × cabezas {1,2,4} × bloques {1,2,4} + protocolo de paciencia</li>
-<li><b>1 cabeza grande &gt; 4 chicas</b> (+0.018): la señal dominante es una sola — vale más una
-consulta rica que cuatro pobres</li>
-<li>d64 suma poco · paciencia 8→20 mejora en <b>21/24</b> configs tabulares</li>
-<li>Combinar los ganadores <b>no suma</b>: meseta en ~0.816</li>
+S.append(('EXPERIMENTO 2 · CABEZAS', f'''
+<h2>¿Cuántas cabezas de atención?</h2>
+<div class="cols2 ancha">
+<div><img src="{png('decision_cabezas.png')}" alt="cabezas de atencion"></div>
+<div>
+<ul>
+<li><b>Por qué variarlo</b>: multi-head = varias "consultas" en subespacios distintos, en
+paralelo. ¿Este problema las necesita, o hay UNA señal dominante?</li>
+<li>Con <b>embeddings</b>: 1 cabeza gana (0.816 vs 0.798) — una consulta rica &gt; cuatro
+pobres, coherente con el EDA</li>
+<li>Con <b>ordinal</b> (la base final): 4 cabezas 0.824 &gt; 1 cabeza 0.800</li>
 </ul>
-<p class="destacado">Lección → el experimento decisivo no era capacidad: era la
-<b>codificación de la entrada</b>.</p>'''))
+<p class="destacado">El eje <b>interactúa con el encoding</b> → ninguna decisión se hereda de
+otra base: se re-decide por validación sobre la base final.</p>
+</div>
+</div>'''))
 
-S.append(('EXPERIMENTO 3 · EL DECISIVO', '''
+S.append(('EXPERIMENTO 3 · BLOQUES', f'''
+<h2>¿Cuánta profundidad?</h2>
+<div class="cols2 ancha">
+<div><img src="{png('decision_bloques.png')}" alt="bloques"></div>
+<div>
+<ul>
+<li><b>Por qué variarlo</b>: más bloques = componer atención sobre atención. Con 13 features
+que ya se ven todas a un salto, ¿hace falta?</li>
+<li>1 bloque pierde poco (0.801) · <b>2 ganan (0.824)</b> · 4 no suman (0.811, con 2× los
+parámetros)</li>
+<li>Coherente con la interpretabilidad (slide 21): el CLS ya concentra <b>0.75 de su atención
+en el status en la capa 1</b></li>
+</ul>
+<p class="destacado">La profundidad no era el eje. Paciencia del early stopping sí ayudó:
+8→20 mejora <b>21/24</b> configs tabulares.</p>
+</div>
+</div>'''))
+
+S.append(('EXPERIMENTO 4 · D_MODEL', f'''
+<h2>¿Qué dimensión de embedding?</h2>
+<div class="cols2 ancha">
+<div><img src="{png('decision_dmodel.png')}" alt="d_model"></div>
+<div>
+<ul>
+<li><b>Por qué variarlo</b>: dimensionar al problema (13 features, 10k filas), no al hábito
+(los 512 de los papers)</li>
+<li><b>Meseta amplia</b> d8→d64: la señal cabe en poquísimos parámetros; d32 se elige por
+validación</li>
+<li>Epílogo (7ª tanda): <b>d16 con 1 bloque (3.713 params) empata al campeón</b>, y destilando
+del ensemble el nivel campeón aguanta hasta <b>1.937</b> — curva completa en backup</li>
+</ul>
+<p class="destacado">Lección de los tres ejes de capacidad → el experimento decisivo no era
+capacidad: era la <b>codificación de la entrada</b>.</p>
+</div>
+</div>'''))
+
+S.append(('EXPERIMENTO 5 · EL DECISIVO', f'''
 <h2>Codificación de las categóricas</h2>
 <div class="cols2 ancha">
 <div>
-<table class="t chica">
-<tr><th>encoding</th><th>PR-AUC test</th></tr>
-<tr class="hl"><td><b>ordinal</b> (nivel → rango por BTR de train)</td><td class="n"><b>0.824 ± 0.018</b></td></tr>
-<tr><td>target (nivel → BTR suavizado)</td><td class="n">0.813</td></tr>
-<tr><td>embedding aprendido (estándar FT-T)</td><td class="n">0.798</td></tr>
-<tr><td>one-hot crudo (solo tiene sentido en el MLP)</td><td class="n">0.797</td></tr>
-<tr><td>hashing (módulo, con colisiones)</td><td class="n mal">0.498</td></tr>
-<tr><td>frequency</td><td class="n mal">0.218</td></tr>
-</table>
+<img src="{png('decision_encoding.png')}" alt="encodings de categoricas">
 <p class="nota">one-hot + proyección lineal ≡ embedding (misma matriz) → para el transformer no
 es una opción distinta; por eso se prueba solo como entrada cruda al MLP.</p>
 </div>
@@ -296,7 +329,25 @@ los datos nos corrigieron, y esa corrección es el mejor modelo del TP</li>
 </div>
 </div>'''))
 
-S.append(('EXPERIMENTO 4', f'''
+S.append(('EXPERIMENTO 6 · INITS', f'''
+<h2>¿Arrancar de pesos informados? (algoritmos de embedding)</h2>
+<div class="cols2 ancha">
+<div><img src="{png('decision_init.png')}" alt="inits y pre-entrenamiento"></div>
+<div>
+<ul>
+<li><b>Por qué variarlo</b>: la promesa del pre-entrenamiento (clase 3) — ¿un init informado
+le gana al aleatorio?</li>
+<li><b>MLM estilo BERT</b> sobre los feature-tokens (20 épocas, sin labels): +0.011 sobre
+embeddings; sobre <b>ordinal, no</b> — el prior ya hace ese trabajo</li>
+<li><b>w2v-init</b> (skipgram propio) regulariza words (+0.010) sin alcanzar a chars</li>
+</ul>
+<p class="destacado">Init aleatoria + prior ordinal &gt; pre-entrenar, a esta escala.
+<span class="nota">(8ª tanda, backup: MiniLM externo congelado RESTA; fine-tuneado repara —
+y aun así no supera 0.824.)</span></p>
+</div>
+</div>'''))
+
+S.append(('EXPERIMENTO 7 · TEXTO', f'''
 <h2>¿Y el texto? Recuperable — pero redundante</h2>
 <div class="cols2 ancha">
 <div>{barras_texto()}</div>
@@ -329,7 +380,7 @@ cazó antes de que muerdan.</p>
 </div>
 <div>
 <p><b>3 · El cómputo.</b> La familia de texto es inviable en CPU (atención 257²) → suite de
-experimentos <em>resumible</em> en GPU: 544 corridas, cada una con sus 16 métricas por época.</p>
+experimentos <em>resumible</em> en GPU: 838 corridas, cada una con sus 16 métricas por época.</p>
 <p><b>4 · Hipótesis refutadas con datos</b> (el método importa): bins por cuantiles para la U
 (el FFN ya la captura) · pos_weight (daña: PR-AUC es de ranking) · mean pooling (CLS gana 6/6) ·
 positional en features (Δ ≈ 0, como predice la teoría) · y la hipótesis del encoding (slide 13).</p>
@@ -435,7 +486,7 @@ S.append(('APÉNDICE · BACKUP (NO SE PRESENTA)', f'''
 (línea punteada) con paciencia 20 — se restaura ese checkpoint</li>
 <li>El gap train/val final es moderado y estable — sin underfitting (supera todas las varas) ni
 overfitting descontrolado (dropout 0.1 + el encoding ordinal actúa de regularizador)</li>
-<li>Estas curvas existen <b>para cada una de las 544 corridas</b> (16 métricas por época,
+<li>Estas curvas existen <b>para cada una de las 838 corridas</b> (16 métricas por época,
 explorables en el panel interactivo del repo)</li>
 <li>Gap val→test del modelo final: 0.011 — el menor del top-4 (selección sana)</li>
 </ul>

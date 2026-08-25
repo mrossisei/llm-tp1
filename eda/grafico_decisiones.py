@@ -102,5 +102,37 @@ def main():
     print(f'escrito {out.relative_to(REPO)}')
 
 
+
+
+def singles():
+    """Versiones individuales tamano-diapositiva (una por eje, tipografia grande)."""
+    nombres = ['formulacion', 'encoding', 'cabezas', 'bloques', 'dmodel', 'init']
+    for nombre, (titulo, filas, lectura) in zip(nombres, PANELES):
+        n = len(filas)
+        fig, ax = plt.subplots(figsize=(7.6, 0.62 * n + 1.7))
+        for i, (et, m, sd, rol) in enumerate(filas):
+            y = n - 1 - i
+            color = {'e': TEAL, 'a': VIOLETA, 'c': GRIS}[rol]
+            ax.errorbar(m, y, xerr=sd, color=color, marker='o',
+                        ms=10 if rol == 'e' else 8, capsize=4,
+                        lw=2.4 if rol == 'e' else 1.8, zorder=3 if rol == 'e' else 2)
+            ax.annotate(f'{m:.3f}', (m, y), textcoords='offset points',
+                        xytext=(0, 10), fontsize=11, ha='center', color='#444444',
+                        fontweight='bold' if rol == 'e' else 'normal')
+        ax.set_yticks(range(n), [f[0] for f in reversed(filas)], fontsize=12)
+        ax.set_ylim(-0.75, n - 0.25)
+        ax.tick_params(axis='x', labelsize=10)
+        ax.set_xlabel('test PR-AUC (media ± desvío, 6 seeds)',
+                      fontsize=10.5, color='#555555')
+        ax.grid(True, axis='x', alpha=0.25, lw=0.5)
+        ax.spines[['top', 'right']].set_visible(False)
+        fig.tight_layout()
+        out = REPO / 'graficos' / f'decision_{nombre}.png'
+        fig.savefig(out, dpi=150)
+        plt.close(fig)
+        print(f'escrito {out.relative_to(REPO)}')
+
+
 if __name__ == '__main__':
     main()
+    singles()

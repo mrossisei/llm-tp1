@@ -567,3 +567,18 @@ experimento de este estilo ya hecho". Lo hay: TODOS — es la historia de las ta
 
 Cero GPU. El guión ya era experimento-por-experimento (diapos 11–14); esto lo hace defendible
 pregunta por pregunta.
+
+## 25/08 — La ppt ahora va experimento por experimento (fix al reclamo de Fer)
+
+El 24/08 armé la figura y el mapa pero NO toqué la ppt — Fer lo marcó (con razón). Hecho:
+generar.py reescrito → 24 diapositivas. La vieja diapo única "capacidad y entrenamiento" se
+partió en TRES, cada una con su gráfico propio embebido: 12 Cabezas (decision_cabezas.png, con
+la interacción encoding×cabezas como punto metodológico), 13 Bloques (decision_bloques.png),
+14 d_model (decision_dmodel.png, con min_d16l1 y la destilación como epílogo). La 15 (encoding,
+el decisivo) cambió la tabla por decision_encoding.png. Diapo NUEVA 16: Experimento 6 · Inits
+(decision_init.png: MLM/w2v/AE — init aleatoria gana; MiniLM al backup). El texto pasa a ser
+Experimento 7 (diapo 17). eda/grafico_decisiones.py ahora emite también los 6 PNG individuales
+tamaño-diapo (singles()). Portada actualizada: 838 corridas y CUARTO nombre Juan Bautista
+Albertoni Salini (los 4 siguen a confirmar por Fer). Guión renumerado completo (24 secciones,
+~30 min — al límite del rango: ensayar y recortar 16/17B/20 si aprieta), referencias cruzadas
+corregidas. Verificado con screenshots headless (diapos 12/14/15/16, claro).
