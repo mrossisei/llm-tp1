@@ -547,3 +547,23 @@ galería; el link bueno sigue siendo el de siempre); zoo byte-idéntico (sin cam
 grupos; entrega actualizada (análisis 838, figuras bert_transfer + resumen, guión: bullet
 nuevo "¿y con un preentrenado de verdad?" + corridas 838). Capítulo experimental CERRADO
 (ahora sí, con el arco de transfer completo).
+
+## 24/08 — Plan de Juan: flujo de experimentos por eje → mapa de decisiones + figura
+
+Juan propuso ordenar los experimentos como flujo lógico de decisiones sobre la base ganadora
+(cabezas, bloques, encodings, d_model, algoritmos de embedding) y "fijarse si ya no hay algún
+experimento de este estilo ya hecho". Lo hay: TODOS — es la historia de las tandas 1–3 (más
+5–8 como exploración). Lo que faltaba era el soporte visual por decisión para la presentación
+(los gráficos eran globales). Hecho:
+
+- eda/grafico_decisiones.py → graficos/decisiones_por_eje.png: 6 paneles "una decisión por
+  eje" (formulación / encoding / cabezas / bloques / d_model / pre-entrenamiento), opción
+  elegida en teal, alternativas violeta, contexto de otra base en gris. Números del CSV.
+- entrega/presentacion/mapa_decisiones.md: el índice eje-por-eje (por qué se probó, configs,
+  números, decisión, § de analisis.md) que implementa el plan de Juan sobre lo ya corrido.
+  Incluye el matiz metodológico lindo: cabezas INTERACTÚA con encoding (emb: h1 gana; ordinal:
+  h4 gana) → por eso se decide por val sobre la base final.
+- guion.md diapo 12: referencia a la figura como paraguas de las diapos 11–14.
+
+Cero GPU. El guión ya era experimento-por-experimento (diapos 11–14); esto lo hace defendible
+pregunta por pregunta.

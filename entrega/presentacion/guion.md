@@ -198,6 +198,12 @@ más que cuatro pobres; d64 suma poco; más paciencia en el early stopping (8→
 24 configs tabulares. Pero al combinar los ganadores individuales, no suman: meseta en ~0.816.
 La lección que nos llevó al experimento decisivo: **el eje ganador no era capacidad**.
 
+`→ en pantalla`: `graficos/decisiones_por_eje.png` — los 6 paneles "una decisión por eje"
+(formulación · encoding · cabezas · bloques · d_model · pre-entrenamiento), con la opción
+elegida marcada. Es la figura paraguas de las diapos 11–14: cada panel es una decisión con sus
+alternativas medidas, y sirve para volver a ella en las preguntas. Índice detallado por eje
+(por qué se probó, configs, números, decisión): `mapa_decisiones.md`.
+
 ## 13 · Experimento 3: la codificación de las categóricas — [2.5 min]
 
 La sugerencia del enunciado era investigar codificaciones — one-hot y alternativas. El menú que
