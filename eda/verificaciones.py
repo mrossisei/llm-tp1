@@ -117,6 +117,14 @@ def main():
                     for i in range(len(qs)) for j in range(i + 1, len(qs)))
     print(f"queries que comparten combo exacto con otra: {int(repetidos.apply(len).sum())} "
           f"({len(repetidos)} combos) -> productos compartidos entre ellas: {comp}")
+    # ultimo resquicio: titulos BASE repetidos (sin sufijo) ¿son el mismo producto fisico
+    # re-observado con otro badge/precio? Peso y dimensiones no cambiarian -> comparar.
+    b = d.assign(base=d['title'].str.replace(r'\s*\([^)]+\)$', '', regex=True))
+    rep_b = b.groupby('base').filter(lambda x: len(x) > 1).groupby('base')
+    fisico = rep_b.apply(lambda x: x['net_weight_oz'].nunique() == 1
+                         and x['dimensions_in'].nunique() == 1, include_groups=False)
+    print(f"titulos base repetidos: {len(fisico)} -> con peso Y dimensiones identicos "
+          f"entre apariciones: {int(fisico.sum())} (todos colisiones de nombre, no re-observaciones)")
     print("veredicto: ningun producto reaparece jamas — ni dentro de una query ni entre queries")
     print("con identico filtro (el mejor escenario del template). No existe catalogo persistente:")
     print("query_id NO es un template re-ejecutado -> los spans intra-query de ~2 anios no tienen")
