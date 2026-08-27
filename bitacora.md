@@ -582,3 +582,24 @@ tamaño-diapo (singles()). Portada actualizada: 838 corridas y CUARTO nombre Jua
 Albertoni Salini (los 4 siguen a confirmar por Fer). Guión renumerado completo (24 secciones,
 ~30 min — al límite del rango: ensayar y recortar 16/17B/20 si aprieta), referencias cruzadas
 corregidas. Verificado con screenshots headless (diapos 12/14/15/16, claro).
+
+## 26/08 — ¿query_id es un template re-ejecutado? No: nada se repite jamás (chequeo de Fer)
+
+Pregunta de Fer: si para una misma query apareciera el mismo producto más de una vez, se
+confirmaría que query_id es un *template* (una combinación exacta de filtros ejecutada muchas
+veces a lo largo del tiempo) — y eso les daría una lectura física a los timestamps intra-query
+de 2 años. Si no, gana la sospecha de que los timestamps están directamente mal.
+
+Chequeo agregado a eda/verificaciones.py (sección 2.6b). No hay product_id → identidad =
+las 14 columnas catalográficas. Resultado: **10.000 productos únicos en 10.000 filas** — cero
+repeticiones dentro de una query y cero en todo el dataset. El único título repetido dentro de
+una query (q_000239) es una colisión del generador de nombres: dos productos con precio, peso y
+dimensiones distintos. Y el mejor escenario para el template también falla: 26 combos exactos de
+filtros se repiten (55 queries, el precio del filtro viene de una grilla — 393 mínimos
+distintos), y esas queries comparten **0 productos y 0 títulos** entre sí.
+
+Veredicto: no existe catálogo persistente → query_id NO es un template re-ejecutado → los spans
+intra-query de ~2 años no tienen ninguna lectura física posible → timestamp = ruido del
+generador. Cierra la dicotomía que propuesta §2.6 dejaba abierta (bullet actualizado ahí, más
+la pregunta a la cátedra de §11 afilada, más una oración en guion.md §4). Sexta vindicación del
+EDA: el descarte de timestamp ya no es "sospecha fuerte" sino conclusión demostrada.

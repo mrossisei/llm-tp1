@@ -213,6 +213,14 @@ padding, que es contenido central de la materia.
   búsqueda recurrente, o el timestamp es ruido sintético. Además BTR por año/día de semana/hora ≈
   constante. Decisión: **no usar timestamp como feature** en v1 (probar features cíclicos como
   ablación de descarte) y reportarlo como hallazgo de calidad de datos.
+  **Resolución de la dicotomía (26/08, verificaciones 2.6b, chequeo de Fer):** la rama "template"
+  queda **descartada**. No hay `product_id`; tomando como identidad las 14 columnas catalográficas
+  hay **10.000 productos únicos en 10.000 filas** — ningún producto reaparece jamás, ni dentro de
+  una query ni entre las 55 queries que comparten un combo *exacto* de filtros (0 productos y 0
+  títulos en común — el mejor escenario posible para el template). Un template re-ejecutado
+  durante 2 años volvería a mostrar el mismo catálogo; acá no existe catálogo persistente →
+  **el timestamp es ruido del generador**. (El único título repetido dentro de una query es una
+  colisión de nombres: dos productos con precio/peso/dimensiones distintos.)
 - **Redundancias verificadas:** `net_weight_oz` ≈ número de `package_size` (corr 0.995, ratio
   mediano 1.00) → conservamos `net_weight_oz` + `unit_of_measure`. `filter_category` y
   `filter_storage_type` duplican atributos del producto (2.1). La descripción duplica el sufijo del
@@ -660,6 +668,8 @@ Cambios mínimos sobre nuestra arquitectura A:
   exactamente la doble lectura de §2.3.1? (Llevar los números: 0.76 vs 0.16 de PR-AUC.)
 - [ ] Confirmar que el promedio de corridas con distintas seeds (sin CV) alcanza (dijeron que sí).
 - [ ] ¿El timestamp intra-query de 2 años es intencional (trampa de EDA) o artefacto del generador?
+  (Ya descartamos que `query_id` sea un template re-ejecutado: ningún producto aparece dos veces
+  en todo el dataset, ni siquiera entre queries con filtros idénticos — verificaciones 2.6b.)
 
 ## 12. Referencias
 

@@ -69,8 +69,11 @@ producto×búsqueda.
 
 Calidad de datos: los timestamps están rotos — una misma búsqueda tiene eventos separados por
 hasta dos años — así que ni split temporal ni features de tiempo (después lo verificamos:
-agregar hora/día empeora). Y hay redundancias: package_size ≈ peso, dimensiones ≈ envase,
-descripción ≈ sufijo.
+agregar hora/día empeora). Y descartamos la lectura alternativa de que `query_id` fuera un
+template re-ejecutado en el tiempo: ningún producto aparece dos veces en todo el dataset
+(10.000/10.000 únicos), ni siquiera entre queries con filtros idénticos — no hay catálogo
+persistente, el timestamp es ruido del generador. Y hay redundancias: package_size ≈ peso,
+dimensiones ≈ envase, descripción ≈ sufijo.
 
 `→ en pantalla`: la tabla de tiers; el gráfico de la U.
 

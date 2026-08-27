@@ -87,6 +87,41 @@ def main():
     print(f"corr net_weight_oz vs numero de package_size: {np.corrcoef(pkg, oz['net_weight_oz'])[0, 1]:.3f}")
     print(f"nulos en allergens: {df_raw['allergens'].isna().mean():.4f} (unico campo con nulos)")
 
+    seccion("2.6b ¿query_id es un template re-ejecutado? (chequeo de productos repetidos)")
+    # Si query_id fuera un template (combinacion exacta de filtros) ejecutado muchas veces a lo
+    # largo del tiempo, el MISMO producto deberia reaparecer entre ejecuciones. No hay product_id:
+    # identidad = las 14 columnas catalograficas (todo menos filtros, eventos y timestamp).
+    catalogo = [c for c in df_raw.columns if c not in
+                ('query_id', 'timestamp', 'cart', 'bought', 'filter_category',
+                 'filter_price_min', 'filter_price_max', 'filter_storage_type')]
+    d = df_raw.assign(pid=df_raw[catalogo].fillna('NULO').astype(str).agg('|'.join, axis=1))
+    print(f"identidad de producto = {len(catalogo)} columnas catalograficas (no hay product_id)")
+    print(f"productos unicos: {d['pid'].nunique()} en {len(d)} filas -> "
+          f"repetidos en TODO el dataset: {len(d) - d['pid'].nunique()}")
+    rep_p = d.groupby('query_id')['pid'].apply(lambda s: s.duplicated().sum())
+    rep_t = d.groupby('query_id')['title'].apply(lambda s: s.duplicated().sum())
+    print(f"queries con producto repetido adentro: {int((rep_p > 0).sum())} de {rep_p.size}")
+    print(f"queries con TITULO repetido adentro: {int((rep_t > 0).sum())} "
+          "(colision del generador de nombres: precio/peso/dimensiones distintos)")
+    fcols = ['filter_category', 'filter_price_min', 'filter_price_max', 'filter_storage_type']
+    uq = d.drop_duplicates('query_id')
+    combo = uq[fcols].astype(str).agg('|'.join, axis=1)
+    print(f"combos EXACTOS de filtros distintos: {combo.nunique()} en {len(uq)} queries "
+          f"(el filtro de precio esta sobre una grilla: {uq['filter_price_min'].nunique()} minimos distintos)")
+    por_combo = uq.groupby(combo.values)['query_id'].apply(list)
+    repetidos = por_combo[por_combo.apply(len) > 1]
+    comp = 0
+    for qs in repetidos:
+        sets = [set(d.loc[d['query_id'] == q, 'pid']) for q in qs]
+        comp += sum(len(sets[i] & sets[j])
+                    for i in range(len(qs)) for j in range(i + 1, len(qs)))
+    print(f"queries que comparten combo exacto con otra: {int(repetidos.apply(len).sum())} "
+          f"({len(repetidos)} combos) -> productos compartidos entre ellas: {comp}")
+    print("veredicto: ningun producto reaparece jamas — ni dentro de una query ni entre queries")
+    print("con identico filtro (el mejor escenario del template). No existe catalogo persistente:")
+    print("query_id NO es un template re-ejecutado -> los spans intra-query de ~2 anios no tienen")
+    print("lectura fisica posible -> timestamp = ruido del generador (cierra la dicotomia de 2.6)")
+
     seccion("7.1 Overlap de productos entre splits (split por query, seed 42)")
     tr, va, te = split_by_query(df, seed=42)
     base = lambda s: s.str.replace(r'\s*\([^)]+\)$', '', regex=True)
