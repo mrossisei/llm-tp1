@@ -6,7 +6,8 @@ son la diapositiva 16 (inits), la mitad B de la 17 (palabras/w2v) y la 20 (dejar
 de aprendizaje).
 
 La presentación es `presentacion.html` (abrir en un navegador; flechas ← → para navegar,
-imprimir a PDF desde el navegador si Campus pide archivo). Cada sección de este guión indica
+imprimir a PDF desde el navegador si Campus pide archivo; `presentacion.pptx` es la misma
+presentación exportada, con este guión como notas del orador). Cada sección de este guión indica
 **[tiempo]**, el texto sugerido para decir, y `→ en pantalla` con qué señalar.
 
 ---

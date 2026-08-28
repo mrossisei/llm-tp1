@@ -4,3 +4,4 @@ numpy
 scikit-learn
 matplotlib
 transformers  # 8va tanda: encoder preentrenado externo (MiniLM)
+python-pptx  # entrega/presentacion/exportar_pptx.py: presentacion.html -> .pptx (solo local, usa google-chrome)

@@ -1,4 +1,4 @@
-# Genera presentacion.html: 20 diapositivas autocontenidas (imagenes embebidas).
+# Genera presentacion.html: 24 diapositivas autocontenidas (imagenes embebidas).
 # Navegacion: flechas / espacio / Home / End. Imprimir a PDF desde el navegador.
 # El guion hablado con tiempos esta en guion.md.
 import base64

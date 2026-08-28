@@ -38,9 +38,12 @@ entrega/
 │   ├── resumen_resultados.csv  # las 91 configuraciones agregadas (media ± desvío, 6 seeds)
 │   └── graficos/            # curva de aprendizaje, atención, importancia, calibración, resumen
 └── presentacion/
-    ├── presentacion.html    # 20 diapositivas autocontenidas (abrir en el navegador; ← →)
-    ├── guion.md             # guión hablado con tiempos (~27 min) + apéndice para preguntas
-    └── generar.py           # regenera las diapositivas
+    ├── presentacion.html    # 24 diapositivas autocontenidas (abrir en el navegador; ← →)
+    ├── presentacion.pptx    # la misma presentación exportada a PowerPoint (diseño intacto, guión como notas)
+    ├── guion.md             # guión hablado con tiempos (~30 min) + apéndice para preguntas
+    ├── mapa_decisiones.md   # índice eje por eje de los experimentos (decisión y números de cada uno)
+    ├── generar.py           # regenera las diapositivas (fuente del HTML)
+    └── exportar_pptx.py     # regenera el .pptx desde el HTML (Chrome headless + python-pptx)
 ```
 
 ## Cómo correr
