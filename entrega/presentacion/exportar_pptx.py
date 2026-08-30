@@ -23,11 +23,18 @@ GUION = AQUI / 'guion.md'
 SALIDA = AQUI / 'presentacion.pptx'
 
 
+MAC_CHROME = ('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+              '/Applications/Chromium.app/Contents/MacOS/Chromium')
+
+
 def chrome():
     for b in ('google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'):
         if shutil.which(b):
             return b
-    raise SystemExit('no encuentro google-chrome ni chromium en el PATH')
+    for ruta in MAC_CHROME:  # macOS no deja el binario en el PATH
+        if Path(ruta).exists():
+            return ruta
+    raise SystemExit('no encuentro google-chrome ni chromium')
 
 
 def renderizar(binario, n, destino, escala):
@@ -46,7 +53,22 @@ def limpiar(md):
     md = md.replace('`', '')
     md = re.sub(r'^---\s*$', '', md, flags=re.M)
     md = re.sub(r'^#+\s*', '', md, flags=re.M)
+    md = re.sub(r'^> ?', '', md, flags=re.M)          # citas del guion
+    md = re.sub(r'^\|.*\|\s*$', '', md, flags=re.M)  # tablas: ilegibles en la vista de notas
     return re.sub(r'\n{3,}', '\n\n', md).strip()
+
+
+def rotular(html):
+    """Un rotulo por diapositiva, en orden. Usa el eyebrow; si no hay (portada, divisorias),
+    cae al <h1>/<h2>. Sirve de texto alternativo de la imagen en el .pptx."""
+    etiquetas = []
+    for sec in re.findall(r'<section class="slide[^"]*">(.*?)</section>', html, re.S):
+        m = (re.search(r'<div class="eyebrow">([^<]*)</div>', sec)
+             or re.search(r'<h2[^>]*>(.*?)</h2>', sec, re.S)
+             or re.search(r'<h1[^>]*>(.*?)</h1>', sec, re.S))
+        etiquetas.append(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', m.group(1))).strip()
+                         if m else 'portada')
+    return etiquetas
 
 
 def notas(n):
@@ -76,9 +98,9 @@ def main():
     args = ap.parse_args()
 
     html = HTML.read_text()
-    eyebrows = re.findall(r'<div class="eyebrow">([^<]*)</div>', html)
     equipo = re.search(r'<p class="equipo">([^<]*)</p>', html)
-    n = len(eyebrows)
+    etiquetas = rotular(html)  # una por diapositiva, incluidas portada y divisorias
+    n = len(etiquetas)
     binario = chrome()
     textos = notas(n)
 
@@ -88,15 +110,15 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         carpeta = args.png_dir or Path(tmp)
         carpeta.mkdir(parents=True, exist_ok=True)
-        for i, eyebrow in enumerate(eyebrows, 1):
+        for i, etiqueta in enumerate(etiquetas, 1):
             png = carpeta / f's{i:02d}.png'
             renderizar(binario, i, png, args.escala)
             s = prs.slides.add_slide(blanco)
             pic = s.shapes.add_picture(str(png), 0, 0, prs.slide_width, prs.slide_height)
             pic.name = f'diapo {i:02d}'
-            pic._element._nvXxPr.cNvPr.set('descr', eyebrow)  # texto alternativo
+            pic._element._nvXxPr.cNvPr.set('descr', etiqueta)  # texto alternativo
             s.notes_slide.notes_text_frame.text = textos.get(i, '')
-            print(f'  {eyebrow}')
+            print(f'  {i:02d}  {etiqueta}')
         cp = prs.core_properties
         cp.title = 'Predicción de Buy Through Rate con Transformers'
         cp.subject = 'TP1 · 73.69 Large Language Models'

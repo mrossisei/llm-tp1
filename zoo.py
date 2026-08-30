@@ -209,6 +209,44 @@ def fig_feat():
     return f.render()
 
 
+def fig_feat_ancho():
+    """Igual que fig_feat() pero en dos columnas, para la diapositiva apaisada de la
+    presentacion: entrada y tokenizacion a la izquierda, transformer y cabezal a la derecha,
+    unidas por un puente horizontal a la altura de la fila de tokens."""
+    f = Fig('fa', w=1560)
+    A, B = 400, 1150
+
+    b = f.box(20, title='1 impresión', w=430, cx=A, cls='bx-data',
+              lines=('x_cat: 7 índices categóricos · x_num: 6 valores (z-score)',))
+    y = f.arrow(b['bot'], x=A)
+    b = f.box(y, title='FeatureTokenizer', w=620, cx=A, cls='bx-tok', lines=FTK_LINES)
+    y = f.arrow(b['bot'], x=A)
+    row = f.tokens(y, [('CLS', 'k-cls', 44)] + CAT_CELLS + NUM_CELLS, cx=A)
+    for i, s in enumerate(('(B, 14, 32)',
+                           'sin positional: un set de features no tiene orden',
+                           'sin máscara: los 14 tokens son siempre reales')):
+        f.text(A, row['bot'] + 20 + i * 15, s, 'shape')
+
+    mid = row['y'] + row['h'] / 2  # el puente sale y entra a media altura
+    blk = f.box(mid - 45.75, title='Bloque Transformer', w=560, cx=B, cls='bx-blk', badge='×2',
+                lines=('LayerNorm → atención multi-cabeza (4 cabezas de dim 8) → + residual',
+                       'cada token arma Q, K, V · pesos = softmax(Q·Kᵀ / √8) · mezcla los V',
+                       'LayerNorm → FFN: Linear 32→128 → ReLU → Linear 128→32 → + residual'))
+    f.parts.append(f'<line x1="{row["x"] + row["w"] + 6:.1f}" y1="{mid:.1f}" '
+                   f'x2="{blk["x"] - 4:.1f}" y2="{mid:.1f}" class="flow" '
+                   f'marker-end="url(#arr-fa)"/>')
+
+    y = f.arrow(blk['bot'], x=B, labels=('(B, 14, 32)',))
+    b = f.box(y, w=380, cx=B, cls='bx-proc',
+              lines=('LayerNorm final → quedarse con el token [CLS]',))
+    y = f.arrow(b['bot'], x=B, labels=('(B, 32)',))
+    b = f.box(y, w=190, cx=B, cls='bx-mlp', lines=('Linear 32 → 1',))
+    y = f.arrow(b['bot'], 30, x=B, labels=('logit (B,)',))
+    f.cx = B  # outnode dibuja centrado en self.cx
+    f.outnode(y, side='loss: BCE (pos_weight opcional)')
+    return f.render()
+
+
 def fig_mlp():
     f = Fig('fm')
     y = 20
@@ -461,6 +499,7 @@ def fig_familias():
 # ---------------------------------------------------------------- html
 
 FIGS = {
+    'feat_ancho': fig_feat_ancho(),
     'p0': fig_preproc(), 'feat': fig_feat(), 'mlp': fig_mlp(), 'text': fig_text(),
     'hybrid': fig_hybrid(), 'fusion': fig_fusion(), 'tower': fig_tower(),
     'listwise': fig_listwise(), 'listwise_texto': fig_listwise_texto(),

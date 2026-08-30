@@ -91,8 +91,8 @@ def graficar(ckpt_path):
                          fontsize=9, color='#1B2530')
             ax.tick_params(length=0)
     fig.colorbar(im, ax=axes, shrink=0.75, label='peso de atención promedio (test)')
-    fig.suptitle(f'¿Quién atiende a quién? — {ckpt_path.stem}\n'
-                 'fila = token que consulta · columna = token atendido', fontsize=10)
+    # sin titulo: la presentacion ya lo pone en el encabezado de la slide
+    fig.suptitle('fila = token que consulta · columna = token atendido', fontsize=10)
     out = REPO / 'graficos' / f'atencion_{ckpt_path.stem}.png'
     out.parent.mkdir(exist_ok=True)
     fig.savefig(out, dpi=130, bbox_inches='tight')

@@ -1,449 +1,815 @@
 # Guión de la presentación — TP1: Predicción de BTR con Transformers
 
-**Duración total: ~30 minutos** (rango pedido: 25–30; ensayar con reloj). Los tiempos por
-diapositiva están calibrados para hablar tranquilo; si el reloj aprieta, los recortes seguros
-son la diapositiva 16 (inits), la mitad B de la 17 (palabras/w2v) y la 20 (dejar solo la curva
-de aprendizaje).
+**Duración medida: ~32 min de habla pura**, ~36 min con pausas y transiciones. El rango pedido
+es 25–30, así que **hay que recortar** — abajo está la ruta corta. Está escrito **para decir en
+voz alta**, no para leer: frases cortas, sin subordinadas largas, con los tecnicismos justos. Lo
+que no está acá va en el apéndice de preguntas, al final.
 
-La presentación es `presentacion.html` (abrir en un navegador; flechas ← → para navegar,
-imprimir a PDF desde el navegador si Campus pide archivo; `presentacion.pptx` es la misma
-presentación exportada, con este guión como notas del orador). Cada sección de este guión indica
-**[tiempo]**, el texto sugerido para decir, y `→ en pantalla` con qué señalar.
+El mazo tiene **29 pantallas**, todas se presentan — incluidas 4 divisorias de sección y el
+cierre. El apéndice de preguntas de este archivo no tiene diapositiva: es solo para responder.
+
+La presentación es `presentacion.html` (navegador, flechas ← →; imprimir a PDF si Campus pide
+archivo). `presentacion.pptx` es la misma, con este guión como notas del orador.
+
+Cada sección indica **[tiempo]**, el texto hablado, y `→ en pantalla` qué señalar.
+
+## Ruta corta — para entrar en 28 minutos
+
+Estás en **~33 min de habla · ~37 con pausas**. Hay que sacar unos 7 min. Recortá en este orden:
+
+| # | Sección | Qué recortar | Ahorro |
+|---|---|---|---|
+| 19 | Experimento 6 · inits | la sección entera — se menciona en una frase en la 21 | 0.9 min |
+| 21 | Desafíos | contar los cuatro paneles en 1.2 min | 0.6 min |
+| 20 | Experimento 7 · texto | quedarse con «recuperable pero redundante» y el gráfico | 0.6 min |
+| 8 | Métricas | saltear el párrafo de por qué no split temporal ni por producto | 0.6 min |
+| 10 | Arquitectura | narrar el diagrama en 2 min en vez de 2.5 | 0.5 min |
+| 7 | ¿Best Seller? | la tríada se explica en un minuto | 0.5 min |
+| 11 | Alternativas | nombrar las tres sin desarrollar el porqué de cada una | 0.5 min |
+| 5 | EDA (2) | las tres tarjetas de la derecha, más rápido | 0.4 min |
+
+**Lo que no se toca nunca** — por rubro o por peso propio: la 5 (el hallazgo del sufijo), la 10
+(la arquitectura), la 18 (el encoding, el experimento decisivo), la 21 (desafíos: el enunciado la
+pide como punto propio de la presentación), la 25 (overfitting/underfitting: la pide el ejercicio
+2.3) y la 27 (el ejercicio teórico de personalización).
+
+La **19 (inits)** es el primer recorte porque no responde a ningún punto del enunciado: es un eje
+secundario con resultado negativo. Si la salteás, decilo en una frase dentro de la 21 —
+«pre-entrenar tampoco aportó» — y listo.
 
 ---
 
-## 1 · Portada — [0.5 min]
-
-Buenas. Vamos a presentar el TP1: predicción de Buy Through Rate en un e-commerce de
-supermercado, con un sistema basado en Transformers. La estructura sigue el enunciado:
-formulación y EDA, el diseño del sistema con sus experimentos, y al final el ejercicio teórico
-de personalización.
-
-## 2 · El problema y la formulación — [1.5 min]
-
-El BTR es una métrica de negocio: compras sobre impresiones en la página de resultados — la
-probabilidad de que un producto mostrado se compre. El objetivo es identificar qué productos
-promocionar.
-
-La primera decisión del TP es la formulación, y conviene explicitarla: el dataset es un log de
-**eventos** — cada fila es un producto impreso en una búsqueda concreta. Entonces formulamos
-**clasificación binaria por impresión**: el modelo estima p(bought | producto, contexto de
-búsqueda). El BTR de negocio por producto sale de **agregar** esas probabilidades sobre sus
-impresiones, y "qué promociono" es rankear por esa agregación. Dos consecuencias: las métricas
-correctas son las de clasificación binaria por fila (PR-AUC/ROC-AUC, como sugiere el enunciado),
-y no hace falta ningún umbral — el uso final es un ranking.
-
-`→ en pantalla`: el diagrama fila→p→agregación.
-
-## 3 · EDA (1): la estructura y la primera trampa — [2 min]
-
-10.000 impresiones, 2.012 búsquedas de 1 a 8 productos, 13% de positivos. Los filtros de la
-búsqueda son constantes dentro de cada query — son contexto de la búsqueda, no del producto — y
-verificamos que el 100% de los productos impresos cumple su filtro: eso significa que
-`filter_category` y `filter_storage_type` no informan nada por sí solos a nivel fila.
-
-La primera trampa: `cart`. Comprado implica carrito en el **100%** de las filas — es el funnel
-impresión→carrito→compra, o sea, es *parte del resultado del mismo evento*, no un atributo
-disponible al momento de decidir qué promocionar. Usarlo sería leakage: p(bought|cart=False) es
-exactamente 0 y el modelo degeneraría a mirar solo eso. Queda afuera. (Spoiler: más adelante lo
-probamos como *label auxiliar* de multi-task — que no es leakage porque nunca es input — y
-tampoco aportó.)
-
-`→ en pantalla`: tabla de estructura + el 100% de bought⟹cart. Alternativa/apertura:
-`graficos/matriz_asociacion.png` — la matriz de asociación completa (la fila del target es un
-desierto con un pico: status 0.75, todo lo demás <0.09) + el PCA 2D donde las clases NO se
-separan; en una imagen queda claro dónde vive la señal antes de contar cómo la extraemos.
-
-## 4 · EDA (2): la señal dominante está escondida en el texto — [2.5 min]
-
-El hallazgo central del EDA. El título termina en un sufijo entre paréntesis — "(Best Seller)",
-"(Top Rated)" — en el 95% de las filas, y ese sufijo define **tiers de BTR brutales**: cuatro
-sufijos compran entre 0.63 y 0.68; otros cuatro, 0.02–0.04; los once restantes y el sin-sufijo,
-**0.000 exacto**. Y ojo: no es sentimiento — "Highly Rated" suena tan positivo como "Top Rated"
-y compra 50 veces menos. Hay que aprender la partición exacta, no la valencia. La última oración
-de la descripción repite lo mismo en prosa (verificado por crosstab).
-
-Segundo efecto: el precio tiene una **U invertida** dentro del rango filtrado — se compra más en
-el medio del rango que en los extremos — y está condicionada al tier. Eso motiva `price_rel`: la
-posición relativa del precio dentro del rango que pidió el usuario. Es una señal *relacional*
-producto×búsqueda.
-
-Calidad de datos: los timestamps están rotos — una misma búsqueda tiene eventos separados por
-hasta dos años — así que ni split temporal ni features de tiempo (después lo verificamos:
-agregar hora/día empeora). Y descartamos la lectura alternativa de que `query_id` fuera un
-template re-ejecutado en el tiempo: ningún producto aparece dos veces en todo el dataset
-(10.000/10.000 únicos), ni siquiera entre queries con filtros idénticos — no hay catálogo
-persistente, el timestamp es ruido del generador. Y hay redundancias: package_size ≈ peso,
-dimensiones ≈ envase, descripción ≈ sufijo.
-
-`→ en pantalla`: la tabla de tiers; el gráfico de la U.
-
-## 5 · Features y preprocesamiento — [2 min]
-
-Con ese EDA, la selección queda así. Entran **7 categóricas** — incluida `listing_status`, que
-*derivamos* parseando el sufijo del título con una regex — y **6 numéricas**, incluida
-`price_rel` derivada. Preprocesamiento por tipo: categóricas → codificación (era LA decisión
-abierta: el enunciado sugiere investigar one-hot y alternativas — le dedicamos un experimento
-entero, diapositiva 15); numéricas → z-score con estadísticos de train, con log1p previo en las
-dos sesgadas a derecha (price, peso). Todo se ajusta **solo con train**; los niveles no vistos
-van a un índice UNK.
-
-Quedan afuera: `cart` (leakage), `query_id` (solo particiona), timestamp (roto), los filtros
-redundantes, package/dimensiones/ingredientes (redundantes con el peso). Punto metodológico que
-nos importa: **cada descarte fue después verificado por ablación** — reintroducir esos campos
-midió delta ≈ 0. No descartamos en papel; descartamos y comprobamos.
-
-`→ en pantalla`: la tabla feature→preprocesamiento→justificación.
-
-## 6 · ¿Es válido usar "Best Seller"? Dos familias — [1.5 min]
-
-Discusión conceptual que tuvimos en el equipo: esos badges se asignan *después* de vender mucho
-— ¿no es circular usarlos? Nuestra resolución: distinguir tres clases de información. Outcome
-del mismo evento (`cart`): leakage estricto, nunca. **Estado del producto al momento de la
-impresión** (los badges): disponible al predecir y plausiblemente causal — prueba social — así
-que es válido para *predecir*, pero es circular para *decidir promociones* y ciego al producto
-nuevo. Atributos intrínsecos: válidos siempre.
-
-Entonces entrenamos **dos familias**: *catálogo* (con estado — responde qué promocionar hoy) e
-*intrínseca* (sin el estado, ni parseado ni escondido en el texto — responde qué esperar de un
-producto nuevo). Adelanto el resultado porque encuadra todo: con estado se llega a ~0.82; sin
-estado, **nadie** — ni el GBM — pasa de ~0.16, porque el 61% de las filas vive en tiers de BTR
-exactamente cero. Eso no es un bug del modelo: es un hallazgo sobre el dataset.
-
-## 7 · Métricas y protocolo experimental — [2.5 min]
-
-**Métricas.** Con 13% de positivos, accuracy es inútil (el 87% se consigue diciendo siempre
-"no"). La principal es **PR-AUC** — el azar da 0.131, así que hay mucho rango — y **ROC-AUC**
-como complementaria, tal como sugiere el enunciado. Sin umbral: el uso es ranking; igual
-medimos y guardamos **las 16 métricas** en cada época y corrida — y una de ellas lo confirma: el
-F1 máximo se alcanza en umbral ~0.40, no 0.5 — cualquier umbral fijo hubiera sido arbitrario.
-Overfitting/underfitting: las curvas train/val por época están guardadas para todas las
-corridas; el early stopping corta por PR-AUC de **validación** con paciencia 20.
-
-**Partición.** Por `query_id`, 70/15/15: una búsqueda entera cae del mismo lado — un split
-aleatorio por fila filtraría información de la página. ¿Por qué no temporal? Timestamps rotos.
-¿Por producto? Lo verificamos: 99% de los títulos son únicos, y restringir test a productos
-jamás vistos da métricas idénticas — el modelo no recibe identidad del producto, no hay canal
-para memorizar.
-
-**Varianza.** Seguimos la priorización de la cátedra: **promedio de ejecuciones** — 6 seeds por
-configuración — antes que cross-validation. Y como cierre de robustez igual corrimos GroupKFold
-5×6: da 0.821 ± 0.012, consistente. Disciplina en todo el TP: los hiperparámetros se eligen
-mirando validación; test se reporta al final.
-
-## 8 · La arquitectura: dónde va el transformer y por qué — [3 min]
-
-La pregunta del enunciado: ¿dónde, cómo y por qué un transformer? Nuestra respuesta sale del
-EDA: la señal de este problema es **relacional** — el precio importa *en relación al rango del
-filtro*; la U del precio está condicionada *al tier*. Un modelo lineal tiene que recibir esos
-cruces hechos a mano; la **self-attention los computa de a pares, en forma aprendida** — es la
-generalización de las feature crosses. Por eso la arquitectura base es un **FT-Transformer**:
-cada feature es un token.
-
-¿Cómo puede la atención comparar un precio con una marca? Porque no hace falta que los tokens
-sean "del mismo tipo" — hace falta que vivan en el **mismo espacio ℝ^d**, y eso es exactamente
-lo que hace el tokenizador de features: cada numérica entra como x·w+b con vectores aprendidos,
-cada categórica con su codificación. Es el mismo principio por el que en un LLM conviven
-"perro", una coma y un número.
-
-El resto es un encoder estándar, y acá está el mapeo con la teoría de las clases 1 y 2:
-usamos los **mismos bloques de la demo de la cátedra** — Head, MultiHeadAttention, FeedForward,
-Block pre-LN con residuales — con dos adaptaciones justificadas. Uno: **sin máscara causal** —
-esto es clasificación de un conjunto, no generación autoregresiva; atención bidireccional como
-BERT. Dos: el escalado por √d_k se hace **una** vez, como el paper (la demo escalaba dos veces).
-Agregamos un token **[CLS]** de lectura — no aporta información, la *recolecta*: como atiende a
-todo en cada capa, su estado final es el resumen para clasificar (clase 2, BERT). Y **sin
-positional encoding**: un conjunto de features no tiene orden — la identidad de cada columna ya
-vive en sus parámetros propios. No lo asumimos: lo medimos, agregar PE da delta ≈ 0. Tamaño
-inicial siguiendo la sugerencia del enunciado: d_model=32 (<100), 4 cabezas, 2 bloques.
-
-`→ en pantalla`: el diagrama completo de la arquitectura (del CSV a p(bought)).
-
-## 9 · Alternativas consideradas — y medidas — [1.5 min]
-
-Antes de comprometernos evaluamos dónde MÁS podía ir el transformer, porque "que use un
-transformer" no fija dónde. Las tres alternativas serias: (a) **el texto crudo como tokens** —
-la demo literal, caracteres de título+descripción; la señal está ahí, pero el EDA mostró que se
-extrae con una regex — gastar atención cuadrática sobre 257 tokens para eso es caro; (b)
-**los productos de la página como tokens** (listwise) — modela la competencia dentro de la
-búsqueda, pero el EDA midió competencia débil (se compran varios productos por página); (c)
-**el transformer solo como encoder de texto** + un MLP clasificador. Elegimos features-como-
-tokens como base… pero no descartamos en papel: **implementamos y corrimos las tres** (y dos
-variantes más). Los resultados les dan la razón a los diagnósticos del EDA — los vemos en la
-diapositiva 17 y en la tabla final.
-
-## 10 · Baselines: la vara — [1 min]
-
-Escalera de complejidad antes del transformer, con el mismo split y las mismas métricas:
-regresión **logística** 0.698 — la vara lineal; **GBM** 0.762 — la vara no lineal fuerte,
-árboles con interacciones; y un **MLP** denso con exactamente los mismos embeddings de entrada
-que el transformer: 0.746. Regla de honestidad que nos pusimos: si el transformer no supera
-esto, la capa de atención no se justifica.
-
-## 11 · Experimento 1: ¿la atención aporta? — [2 min]
-
-La comparación central, apareada por seed (mismo split): transformer vs MLP **con la misma
-entrada** — la única diferencia es qué mezcla los tokens. Resultado: **+0.048, gana en 5 de 6
-seeds**, con el MLP teniendo 4,5 veces más parámetros. La atención aporta y no es cuestión de
-tamaño.
-
-Dos refinamientos honestos que nos parecieron importantes. Uno: al MLP le probamos también
-one-hot crudo en vez de embeddings y mejoró a 0.797 — parte del déficit del MLP era su entrada;
-contra el *mejor* MLP posible, la ventaja del mejor transformer es +0.027. Sigue ganando, con la
-vara más alta. Dos: ¿la atención solo "descubrió" el cruce precio×tier que ya sabíamos del EDA?
-Le dimos ese cruce a mano a la logística: mejora +0.015, pero eso explica **solo el 12%** del
-gap — la atención aprende bastante más que esa única interacción.
-
-## 12 · Experimento 2: ¿cuántas cabezas? — [1 min]
-
-**Por qué variarlo**: multi-head significa varias "consultas" en subespacios distintos, en
-paralelo; la pregunta es si este problema las necesita o si hay una sola señal dominante. El
-resultado tiene una sorpresa metodológica que vale la pena contar: con embeddings, **una cabeza
-grande le gana a cuatro chicas** (0.816 vs 0.798 — una consulta rica vale más que cuatro
-pobres, coherente con el EDA); pero sobre la base ordinal, **cuatro cabezas ganan** (0.824 vs
-0.800). Es decir: **el eje interactúa con el encoding**, y por eso ninguna decisión se hereda
-de otra base — cada una se re-decide por validación sobre la base final.
-
-`→ en pantalla`: la diapo trae el gráfico del eje (`decision_cabezas.png`): elegida en verde,
-alternativas en violeta, la serie de la otra base en gris.
-
-## 13 · Experimento 3: ¿cuánta profundidad? — [0.75 min]
-
-**Por qué variarlo**: más bloques es componer atención sobre atención — y con 13 features que
-ya se ven todas a un salto, la hipótesis era que no hace falta. Confirmado: 1 bloque pierde
-poco (0.801), **2 ganan (0.824)**, 4 no suman (0.811, con el doble de parámetros). Adelanto de
-la interpretabilidad: el CLS ya concentra 0.75 de su atención en el status en la capa 1. Del
-protocolo: más paciencia en el early stopping (8→20) mejora 21/24 configs tabulares.
-
-`→ en pantalla`: `decision_bloques.png`.
-
-## 14 · Experimento 4: ¿qué d_model? — [1 min]
-
-**Por qué variarlo**: dimensionar el embedding al problema (13 features, 10k filas) y no al
-hábito de los papers. Resultado: **meseta amplia** — d8 (1.937 params) 0.814, d16 (6.945)
-0.815, d32 (26.177) 0.824, d64 (105k, embeddings) 0.815; d32 se elige por validación. El
-epílogo fuerte (7ª tanda): d16 con 1 bloque —3.713 parámetros— **empata al campeón**, y
-destilando del deep-ensemble el nivel campeón aguanta hasta 1.937 (curva completa en backup).
-Cierre de los tres ejes de capacidad: **el experimento decisivo no era capacidad: era la
-codificación de la entrada** — transición a la diapo siguiente.
-
-`→ en pantalla`: `decision_dmodel.png`. Figura paraguas de los 6 ejes para preguntas:
-`decisiones_por_eje.png`; índice detallado: `mapa_decisiones.md`.
-
-## 15 · Experimento 5: la codificación de las categóricas — [2.5 min]
-
-La sugerencia del enunciado era investigar codificaciones — one-hot y alternativas. El menú que
-implementamos y corrimos, todo lo demás fijo: primero, un resultado teórico que ahorra un
-experimento: **one-hot seguido de proyección lineal aprende exactamente la misma matriz que un
-embedding** — son el mismo modelo para el transformer; por eso one-hot solo se prueba como
-entrada cruda al MLP. Después: **embedding aprendido** por columna (el estándar FT-Transformer),
-**target encoding** (nivel → BTR promedio suavizado de train), **ordinal** (nivel → su *rango*
-al ordenar por ese BTR, normalizado), **frequency** y **hashing**.
-
-Resultado — y acá está la sorpresa del TP: **ordinal global gana: 0.824**, por encima del
-embedding (0.798) y del target (0.813). Los contraejemplos calibran el porqué: frequency (0.22)
-y hashing (0.50) *destruyen* la señal — la frecuencia no correlaciona con comprar, y las
-colisiones del módulo mezclan tiers. La regla: la codificación debe **preservar la relación
-nivel→propensión**. ¿Y por qué ordinal le gana al embedding, si el embedding puede aprender
-cualquier cosa? Porque en 10k filas, "poder aprender cualquier cosa" es overfitting: el rango
-inyecta como *prior* el orden que el embedding tendría que aprender, con un escalar en vez de
-una tabla — 26k parámetros totales. Y le gana a target porque los rangos equiespaciados están
-mejor condicionados que las magnitudes apelmazadas (0.65/0.03/0.000). Reflexión honesta: nuestra
-hipótesis previa era exactamente la inversa (embedding ≥ target ≥ ordinal) — los datos nos
-corrigieron, y esa corrección es el mejor modelo del TP.
-
-`→ en pantalla`: tabla del menú con resultados; el campeón resaltado.
-
-## 16 · Experimento 6: ¿arrancar de pesos informados? — [1 min]
-
-**Por qué variarlo**: es la promesa del pre-entrenamiento (clase 3) en miniatura — ¿un init
-informado le gana al aleatorio? Tres formas, todas con modelos propios: **MLM estilo BERT**
-sobre los feature-tokens (20 épocas enmascarando features, sin labels) suma +0.011 sobre
-embeddings pero **nada sobre ordinal** — el prior ya hace ese trabajo de regularización;
-**w2v-init** (skipgram propio) regulariza la variante words (+0.010) sin alcanzar a chars; el
-autoencoder replica el patrón del MLM. Decisión: init aleatoria. (Si preguntan por transfer
-desde un preentrenado DE VERDAD: 8ª tanda en el apéndice — MiniLM congelado resta, fine-tuneado
-repara, nada supera 0.824.)
-
-`→ en pantalla`: `decision_init.png`.
-
-## 17 · Experimento 7: ¿y el texto? — [2.5 min]
-
-La señal nace en el texto — ¿el transformer puede leerla solo, sin nuestra regex? Corrimos el
-arco completo. **Texto puro** (caracteres como tokens, la demo adaptada de decoder a encoder):
-0.652 — muy por encima del techo sin-señal (0.16): *encontró el sufijo solo*; muy por debajo del
-tabular: leer caracteres con 36k parámetros cuesta. **Híbrido** (features + 256 caracteres en
-una secuencia): 0.705 — ¡peor que tabular solo! Los 256 tokens de texto *diluyen* la atención
-sobre los 13 que importan. Pero el dato fino: al híbrido, sacarle el token parseado no le cuesta
-nada — **recupera desde los caracteres crudos lo que extraía la regex**; a la torre (texto
-comprimido a un solo embedding + MLP) sí le cuesta −0.04: su cuello de botella de 32 dims no
-deja pasar la señal entera. Y la **fusión** — comprimir el texto a UN token que entra a la
-secuencia tabular — cura la dilución por completo (+0.069 sobre el híbrido, 6 de 6) pero empata
-exacto con la torre: una vez comprimido, cruzar por atención o por concatenación da igual.
-
-Conclusión de diseño: el texto crudo es *recuperable* pero *redundante* cuando el EDA ya parseó
-la señal — y la moraleja del tokenizador: probamos word-level y word2vec pre-entrenado (la
-conexión clase 1→2: el pre-training regulariza, +0.010) y aún así el tokenizador chico de
-caracteres de la demo resultó el correcto a esta escala.
-
-`→ en pantalla`: el gráfico de barras del arco textual.
-
-## 18 · Desafíos encontrados — [2 min]
-
-Cuatro que valen la pena contar. **El causal degenerado**: la ablación "¿importa la máscara
-causal?" dio ROC exactamente 0.500. No era "causal es peor": con máscara causal, nuestro [CLS]
-en la posición 0 solo podía verse a sí mismo — el modelo predecía una constante (verificado:
-p=0.2214 para todo test). El fix es ponerlo al final, como lee GPT; con eso la respuesta real
-es "la bidireccionalidad da igual acá". Nos llevamos la lección de arquitectura: los decoders
-leen desde el último token, los encoders pueden poner el CLS adelante. **Las trampas del
-dataset**: cart y los timestamps rotos — el EDA los cazó antes de que muerdan. **El cómputo**:
-la familia de texto es inviable en CPU (atención 257²); armamos una suite de experimentos
-resumible que corre todo en una GPU consumer y deja cada corrida registrada con sus 16 métricas.
-**Hipótesis refutadas con datos** — las contamos porque el método importa: bins por cuantiles
-para la U del precio (el FFN ya la captura), pos_weight para el desbalance (daña: PR-AUC es de
-ranking), mean pooling (CLS gana 6/6), positional en features (Δ≈0, como predice la teoría).
-
-## 19 · El modelo final — [2 min]
-
-**FT-Transformer con encoding ordinal**: 13 feature-tokens + [CLS], d_model 32, 4 cabezas, 2
-bloques pre-LN, sin positional, BCE, AdamW, early stopping por validación con paciencia 20.
-**26.177 parámetros** — el más chico del top 5.
-
-Cómo lo elegimos, con disciplina: por validación había un empate técnico entre cuatro configs
-(Δ < 0.002 — validación no puede distinguirlas). Desempatamos por **parsimonia**: menos
-parámetros, menor desvío entre seeds, y el menor gap val→test. Recién después miramos test, que
-confirma. Números finales: **PR-AUC test 0.824 ± 0.018** (6 seeds) · GroupKFold 5×6 **0.821 ±
-0.012** · ROC 0.975 · F1 máximo 0.784 en umbral 0.40 · y con ensemble — de configuraciones o de
-inicializaciones, dos rutas independientes que convergen — **0.834**. Contra las varas: GBM
-0.762, mejor MLP 0.797.
-
-## 20 · Robustez — [1.5 min]
-
-Tres verificaciones sobre el modelo final. **Curva de aprendizaje**: 0.758 → 0.780 → 0.817 →
-0.824 al 25/50/75/100% de los datos — casi saturada (el último cuarto aporta +0.007), y con el
-75% de los datos ya le gana al GBM entrenado con todo. **Varianza**: una grilla de 5
-inicializaciones × 6 splits mostró que el ±0.018 es mitad lotería del split, mitad
-inicialización — valida el protocolo de promediar seeds, y esa mitad de init es justo lo que el
-ensemble elimina. **Calibración**: ECE ~0.01 y temperatura ≈ 1 — importa porque el BTR de
-negocio es el *promedio* de las probabilidades: nuestro promedio es un estimador confiable, sin
-corrección.
-
-`→ en pantalla`: la curva de aprendizaje.
-
-## 21 · ¿El modelo mira donde debe? — [2 min]
-
-Con 14 tokens, la matriz de atención se puede *mirar*. En la capa 1, el [CLS] pone el **75% de
-su atención en el token de estado**, y la familia de precio se consulta entre sí — `price` y
-`filter_min` atienden a `price_rel`: la señal relacional, literal en el mapa. La capa 2 mezcla.
-Y como "attention is not explanation", lo contrastamos con un diagnóstico independiente basado
-en resultados: **importancia por permutación** — destruir `listing_status` cuesta 0.68 de
-PR-AUC; `price_rel`, 0.14; `allergens`, 0.05; el resto, ~0. Dos métodos independientes, la misma
-historia — que es exactamente la del EDA. El círculo cierra.
-
-Y la traducción al negocio: en las páginas de test con al menos una compra, el producto que el
-modelo rankea primero fue efectivamente comprado el **91%** de las veces (azar: 27%).
-
-`→ en pantalla`: mapa de atención + barras de importancia, lado a lado.
-
-## 22 · Ejercicio 3: personalización (teórico) — [2.5 min]
-
-¿Cómo haríamos que el BTR dependa de *quién* busca? Hoy nuestro modelo es
-p(bought | producto, búsqueda); personalizar es condicionar también al usuario:
-p(bought | producto, búsqueda, **usuario**). Hace falta primero **dato nuevo**: `user_id` y su
-historial de eventos — el dataset actual no lo trae.
-
-La extensión natural de NUESTRA arquitectura: así como el texto entra como tokens, **el
-historial del usuario entra como tokens** — sus últimas compras/búsquedas, cada una codificada
-con el mismo tokenizador de productos — y la secuencia los atiende (estilo BST/SASRec, que es
-exactamente esto en producción). El usuario que compra comida de perro todos los meses tiene
-esos productos en su historial; cuando aparecen en la página, la atención cruza historial ↔
-candidato y sube su probabilidad. La alternativa clásica que conecta con la clase 2:
-**embeddings de usuario y producto entrenados con negative sampling** — item2vec/two-tower,
-skipgram donde el "contexto" son los productos con los que el usuario interactuó — útil como
-*retrieval* si el catálogo fuera enorme, con nuestro modelo como *ranker* encima. Y el detalle
-que este TP nos dejó bien aprendido: el usuario nuevo sin historial es el mismo problema que el
-producto nuevo sin estado — cold-start — y el fallback es exactamente el modelo que ya tenemos,
-que no depende del usuario.
-
-## 23 · Conclusiones — [1 min]
-
-Cinco, cortas. **El EDA mandó**: la señal estaba escondida en un sufijo de texto, y todo el
-diseño sale de haberla encontrado. **La formulación correcta valió más que el modelo grande**:
-el campeón tiene 26k parámetros. **La atención aporta, medida con vara honesta**: +0.048 contra
-su gemelo sin atención, +0.027 contra el mejor MLP. **La mejor codificación fue un prior
-simple**: el encoding ordinal derivado de los datos le ganó al embedding — y refutó nuestra
-propia hipótesis, que es lo que uno quiere de un experimento. **Y el modelo es auditable**: la
-atención mira el estado, la permutación lo confirma, la calibración permite leer el promedio de
-p como BTR, y elige bien el producto a promocionar el 91% de las veces. Número final: PR-AUC
-0.824 ± 0.018 — 0.834 en ensemble — contra 0.762 del GBM. Gracias — preguntas.
+## 1 · Portada — [30 s]
+
+> "Buenas. Vamos a presentar el TP1: predicción de Buy Through Rate en un e-commerce de
+> supermercado, usando Transformers.
+>
+> Lo vamos a contar en cuatro partes. Primero el problema: qué predecimos y qué encontramos en
+> los datos. Después el modelo, dónde metimos el transformer y por qué ahí. Tercero los
+> experimentos, que es donde decidimos cada pieza midiendo. Y al final los resultados, con el
+> ejercicio teórico de personalización."
 
 ---
 
-### Apéndice para preguntas (no se presenta, se defiende)
+## 2 · Divisoria — El problema — [5 s]
 
-- **¿Por qué PR-AUC y no F1?** F1 requiere umbral; el uso es ranking. Igual: F1 máx 0.784 @ 0.40.
-- **¿Overfitting?** Curvas train/val por época en cada corrida (panel); early stopping por val;
-  gap val→test ≈ +0.01/0.03 (selección normal); dropout 0.1; el encoding ordinal es en sí
-  regularización (y MLM sobre features, probado, regulariza a los embeddings +0.011 pero no
-  agrega sobre ordinal).
-- **¿Por qué no CV desde el inicio?** La cátedra pidió priorizar promedio de corridas; CV 5×6 al
-  final: 0.821 ± 0.012, consistente.
-- **¿El split por producto?** Verificado: métricas idénticas sobre productos jamás vistos.
-- **¿El estado no es hacer trampa?** Familia intrínseca medida: sin estado, techo ~0.16 para
-  cualquier modelo (61% de filas en tiers de BTR = 0). Es información de estado del catálogo,
-  válida al predecir, circular para promover — por eso las dos familias.
-- **¿Multi-task con cart?** Probado (λ ∈ {0.1, 0.3, 0.5} como label auxiliar): dentro del ruido.
-- **¿Probaron especializar los pesos por feature? ¿O achicar más?** Sí (5ª tanda, exploratoria,
-  posterior al cierre de la selección): desatar W_q/W_k/W_v/FFN por posición empata con el
-  campeón (y SÍ ayuda +0.02, 6/6, sobre embeddings — el beneficio existe pero es redundante con
-  el prior ordinal); y el modelo admite compresión 7×: `min_d16l1` (d16, 1 bloque, **3.713
-  parámetros**) empata al final. Bonus metodológico: la config con mejor validación de todo el
-  proyecto (pf_ffn, 245k params) NO es mejor en test — sobreajuste de selección en vivo, la
-  razón por la que la selección se cerró con procedimiento pre-registrado.
-- **¿Probaron regularización? (weight decay, dropout, residuales…)** Sí (6ª tanda, exploratoria):
-  el campeón SIN ninguna regularización explícita (wd 0 + dropout 0) rinde igual (−0.000, 4/6) —
-  a 26k parámetros, early stopping + el prior ordinal ya regularizan; agregar MÁS regularización
-  daña (dropout 0.3 −0.011, feature-dropout 0.2 −0.029, label smoothing −0.015). Y las ablaciones
-  miden por qué cada pieza del bloque está ahí: **sin residuales el modelo casi no entrena**
-  (PR 0.23, −0.59) y sin LayerNorm pierde −0.037 (0/6).
-- **¿Transfer learning? (clase 3)** Las tres técnicas, con nuestros checkpoints: *feature
-  extraction* — tronco del campeón congelado + cabeza lineal nueva **empata o gana en 6/6**
-  (la representación es linealmente separable; todo el valor está en el tronco); el mismo probe
-  sobre un tronco pre-entrenado SOLO con MLM (sin labels) da 0.16 — el self-supervised puro no
-  captura la tarea en 10k filas, su valor era como inicialización; *fine-tuning anclado* (L2-SP,
-  la "KL penalty") no ayuda — no hay pre-entrenado fuerte que retener; *knowledge distillation* —
-  entrenar contra las probabilidades del deep-ensemble (0.833) converge más rápido (47 vs 64
-  épocas) y su mejor fruto es la compresión: medimos la curva completa "PR vs parámetros" en
-  dos ramas (353 → 26.177, figura `curva_compresion.png`) y **las soft labels corren el piso
-  un nivel — el nivel campeón aguanta hasta 1.937 parámetros destilando (0.8282, +0.014 sobre
-  plain, 5/6; 13× menos que el campeón)**, a 353 params ambas ramas caen juntas (no hay dónde
-  guardar el conocimiento). El ensemble sigue siendo la única forma medida de llegar a 0.834.
-- **¿Y transfer desde un preentrenado DE VERDAD? (BERT/MiniLM)** Probado (8ª tanda, figura
-  `bert_transfer.png`): MiniLM (22M params) embebe title+description y entra como UN token
-  extra del transformer propio, congelado vs fine-tuneado. **Congelado RESTA en todos lados**
-  (solo, 0.567, pierde hasta con la logística cruda 0.660): la partición de tiers es
-  *anti-semántica* — "Highly Rated" suena igual que "Top Rated" y compra 50× menos, y la
-  geometría preentrenada acerca justo lo que hay que separar. **El fine-tuning la repara (6/6
-  en ambos pares)**: sin el regex, el encoder fine-tuneado lee el status desde el texto crudo
-  mejor que nuestros encoders entrenados de cero (0.798 vs tower 0.775 / hybrid 0.735) — la
-  promesa de la clase 3 cumplida donde tenía margen. Y sin status en el texto, MiniLM confirma
-  el EDA: 0.128 ≈ azar (quinta vindicación). Nada supera 0.824: cuando la señal se puede
-  extraer limpia (regex + categórica), extraerla vale más que 22M de parámetros.
-- **¿Y las herramientas de SIA? (Kohonen, PCA, autoencoders)** Medidas (6ª tanda): la celda BMU
-  de un SOM como feature extra RESTA (−0.017; el mapa organiza las numéricas pero el BTR por
-  celda queda en 0.09–0.20 alrededor de la base 0.13 — la señal vive en el status, figura
-  `som_btr.png`); el AE como pre-training del tronco replica el patrón del MLM (algo en
-  embeddings, nada sobre ordinal); y comprimir la entrada a 16 dims con PCA o AE ANTES de mirar
-  el target destruye la señal (PR 0.20–0.23 vs 0.75 end-to-end): la representación óptima para
-  reconstruir no es la óptima para predecir — la lección de representation learning, medida.
-- **¿Hicieron matriz de correlación / relación con el target / PCA del dataset?** Sí — matriz
-  de asociación mixta (|Spearman| numéricas, V de Cramér categóricas, η cruzadas) + PCA 2D:
-  `graficos/matriz_asociacion.png` (análisis §14). La fila del target: status 0.75, todo lo
-  demás <0.09 (converge con permutación y atención). Los bloques de redundancia (unit↔pkg_unit
-  1.00, category↔filtros 0.95–0.99, price↔price_rel 0.80) son los descartes de propuesta §2.6,
-  verificados luego con feat_extras. El PCA no separa las clases (la señal no vive en la
-  varianza — coherente con sia_pca_mlp). Salvedad honesta: la U invertida del precio es
-  invisible para medidas monótonas; por eso el EDA fue por variable, y la matriz lo confirma
-  sin reemplazarlo. Y "(Best Seller)" del título ya era feature desde el día 1 (listing_status).
-- **¿Cuántas corridas hay detrás?** 838 (116 configuraciones × 6 seeds + grillas), todas con las
-  16 métricas por época, reproducibles con la suite del repo.
+> "El problema."
+
+`→ en pantalla`: pantalla oscura, número grande, «qué predecimos, con qué datos, y cómo lo medimos».
+
+---
+
+## 3 · El problema y la formulación — [1.3 min]
+
+> "Primero: qué es el BTR.
+>
+> Es compras sobre impresiones. De todas las veces que mostramos un producto, cuántas terminaron
+> en compra. Es una métrica de negocio — sirve para decidir qué promocionar.
+>
+> Lo primero que tuvimos que decidir fue **qué predice el modelo exactamente**. Y no es obvio,
+> porque el dataset no es una lista de productos. Es un registro de eventos: cada fila es un
+> producto que apareció en una búsqueda. El mismo producto puede estar en varias búsquedas, y
+> cada vez es una fila distinta.
+>
+> Así que lo planteamos así: el modelo mira **una impresión** y dice qué probabilidad hay de que
+> la compren.
+>
+> *(señalando el diagrama)* Fila del CSV, entra al modelo, sale una probabilidad. Y si querés el
+> BTR de un producto, promediás las probabilidades de todas sus impresiones. Eso te da el ranking.
+>
+> Esto trae dos consecuencias que van a volver más adelante. Una: las métricas tienen que ser de
+> clasificación, fila por fila. Nada de accuracy — ya vamos a ver por qué. Y dos, esta es
+> importante: **no elegimos ningún umbral**. Nunca decimos 'si pasa de 0.5, lo compran'. Solo
+> ordenamos."
+
+`→ en pantalla`: el flujo fila → p → agregación.
+
+---
+
+## 4 · EDA (1): la estructura y la primera trampa — [1.4 min]
+
+> "Vamos a los datos.
+>
+> Diez mil impresiones, repartidas en dos mil búsquedas de entre uno y ocho productos. Trece por
+> ciento de compras. Y los filtros de la búsqueda son constantes dentro de cada query — o sea,
+> son contexto de la búsqueda, no del producto. Verificamos que el cien por ciento de los
+> productos mostrados cumple su filtro, así que `filter_category` y `filter_storage_type` no
+> aportan nada a nivel fila.
+>
+> Ahora, la primera trampa. Y esta es importante.
+>
+> *(señalando el panel rojo)* La columna `cart`. Si un producto se compró, **siempre** estuvo en
+> el carrito. Cien por ciento de las filas, sin excepción.
+>
+> Eso parece una feature buenísima, y de hecho lo es — pero es trampa. `cart` es parte del mismo
+> embudo: impresión, carrito, compra. Es un resultado del evento, no algo que sepamos cuando
+> tenemos que decidir qué promocionar. En producción esa columna llega vacía.
+>
+> Y es peor que eso: si el carrito está en falso, la compra es cero. Siempre. Así que el setenta
+> por ciento del dataset queda resuelto de una. El modelo aprendería a mirar solo eso.
+>
+> Entonces `cart` queda afuera. Más adelante la usamos de otra forma — como etiqueta auxiliar,
+> que no es leakage porque el modelo la predice en vez de recibirla — pero tampoco aportó."
+
+`→ en pantalla`: la tabla de estructura y el panel rojo del leakage.
+
+---
+
+## 5 · EDA (2): la señal está escondida en el texto — [2.0 min]
+
+> "Este es el hallazgo central del trabajo.
+>
+> Miramos los títulos de los productos y notamos que terminan con algo entre paréntesis. 'Best
+> Seller'. 'Top Rated'. 'New Listing'. Pasa en el noventa y cinco por ciento de las filas. No era
+> una columna: había que sacarlo del texto con una expresión regular.
+>
+> Y cuando lo separamos, aparece esto.
+>
+> *(señalando la tabla)* Hay veinte sufijos distintos, y se parten en tres grupos limpios. Cuatro
+> compran entre el sesenta y tres y el sesenta y ocho por ciento. Otros cuatro compran entre el
+> dos y el cuatro. Y los once restantes, más los que no tienen sufijo: **cero exacto**. Ninguna
+> compra.
+>
+> Esa sola columna parte el dataset al medio.
+>
+> Pero acá está lo que más nos sorprendió: **no es cuestión de sentimiento**. 'Highly Rated'
+> suena tan bien como 'Top Rated', y compra cincuenta veces menos. Si hubiéramos ordenado los
+> niveles a ojo, por lo que parecen significar, nos equivocábamos feo. Hay que aprender la
+> partición exacta de los datos, no la valencia de las palabras. Esto vuelve en la diapositiva
+> de codificación, que es el experimento decisivo.
+>
+> *(señalando las tarjetas de la derecha)* Tres cosas más del EDA.
+>
+> El precio tiene efecto de **U invertida** dentro del rango que filtró el usuario: se compra más
+> en el medio que en los extremos. Y está condicionado al tier. Por eso derivamos `price_rel`, la
+> posición del precio dentro del rango — que es una señal relacional entre el producto y la
+> búsqueda.
+>
+> Los **timestamps están rotos**: dentro de una misma búsqueda hay eventos separados por hasta
+> dos años. Es imposible. Así que ni split temporal ni features de tiempo. Después lo verificamos:
+> agregar hora y día empeora.
+>
+> Y hay **redundancias**: el tamaño del envase es el peso, las dimensiones son el envase, la
+> descripción repite el sufijo."
+
+`→ en pantalla`: la tabla de tiers, y las tres tarjetas.
+
+---
+
+## 6 · Features y preprocesamiento — [1.5 min]
+
+> "Con ese EDA, esto es lo que entra al modelo.
+>
+> Siete columnas categóricas y seis numéricas. Trece en total.
+>
+> Dos de ellas las derivamos nosotros. `listing_status`, que es el sufijo del título que acabamos
+> de ver. Y `price_rel`, la posición del precio en el rango filtrado. Ninguna de las dos venía en
+> el CSV.
+>
+> El preprocesamiento va por tipo. *(señalando el encabezado de cada panel)* Las numéricas van
+> a media cero — z-score, con logaritmo antes en las dos que están sesgadas, precio y peso. Y las
+> categóricas, cada nivel a un número. Ahí nos detuvimos, porque el enunciado sugería investigar
+> one-hot y alternativas. Le dedicamos un experimento entero, es la diapositiva dieciocho.
+>
+> Un punto que nos importa: **todo se ajusta solo con train**. Los vocabularios, los promedios,
+> las tablas de codificación. Si los calculáramos con todo el dataset estaríamos filtrando
+> información de test. Y los niveles que aparecen en test y no estaban en train van a un valor
+> especial de 'desconocido'.
+>
+> *(señalando el panel de abajo)* Y lo que queda afuera. Cada etiqueta roja dice por qué:
+> `cart` es leakage, `query_id` solo sirve para partir, el timestamp está roto, los dos filtros
+> son constantes dentro de la búsqueda, y las últimas cuatro repiten algo que ya tenemos.
+>
+> Acá hay algo metodológico que queremos remarcar: **no descartamos en papel**. Cada descarte lo
+> volvimos a meter y medimos. Todos dieron diferencia cero."
+
+`→ en pantalla`: los dos paneles de arriba con las trece features en pastillas — las dos verdes
+son las que derivamos — y abajo el panel rojo de descartes.
+
+---
+
+## 7 · ¿Es válido usar "Best Seller"? — [1.5 min]
+
+> "Acá tuvimos una discusión en el equipo que vale la pena contar.
+>
+> Esos badges se asignan **después** de que un producto vendió mucho. Entonces, ¿no es circular
+> usarlos para predecir ventas?
+>
+> Lo resolvimos separando tres tipos de información.
+>
+> Uno: resultado del mismo evento. Eso es `cart`. Leakage estricto, nunca se usa.
+>
+> Dos: **estado del producto al momento de mostrarlo**. Los badges están acá. Cuando el buscador
+> arma la página, el badge ya existe — está disponible. Y además es plausiblemente causal: la
+> gente compra más lo que tiene prueba social. Así que es válido para **predecir**. Pero sí es
+> circular para **decidir promociones**, y es ciego al producto nuevo que todavía no tiene badge.
+>
+> Tres: atributos intrínsecos, marca, peso, categoría. Válidos siempre.
+>
+> Entonces entrenamos **dos familias de modelos**. Una con estado, que responde 'qué promociono
+> hoy'. Y otra sin estado, ni parseado ni escondido en el texto, que responde 'qué esperar de un
+> producto nuevo'.
+>
+> *(señalando las tarjetas)* Y el resultado encuadra todo el trabajo. Con estado llegamos a
+> ochenta y dos. Sin estado, **nadie** pasa de dieciséis. Ni el GBM, ni nada.
+>
+> Y eso no es un problema del modelo. Es un hallazgo sobre el dataset: el sesenta y un por ciento
+> de las filas vive en tiers donde el BTR es cero exacto. Sin esa columna, no hay nada que
+> aprender."
+
+---
+
+## 8 · Métricas y protocolo — [2.0 min]
+
+> "Cómo medimos.
+>
+> Con trece por ciento de positivos, el accuracy no sirve. Un modelo que diga 'nadie compra nada'
+> acierta el ochenta y siete por ciento y no encuentra un solo comprador.
+>
+> Así que la métrica principal es **PR-AUC** — precisión y recall — que es la que sugiere el
+> enunciado. Mide qué tan bien el modelo **ordena**, sin tener que elegir ningún umbral. Y el
+> piso no es cero coma cinco: es la tasa de compra, cero coma ciento treinta y uno. Contra eso
+> comparamos siempre.
+>
+> Aparte reportamos ROC-AUC, y guardamos log-loss y Brier para ver la calidad de las
+> probabilidades.
+>
+> Sin umbral, como dijimos. Aunque igual lo medimos: el F1 máximo cae en cero cuarenta, no en cero
+> cinco. O sea que cualquier umbral fijo hubiera sido arbitrario.
+>
+> Guardamos **dieciséis métricas por época** en cada corrida. Eso nos deja ver overfitting y
+> underfitting en las curvas de train y validación, para todas las corridas.
+>
+> *(pasando al panel de la derecha)* Y cómo particionamos.
+>
+> Por `query_id`, setenta quince quince. Una búsqueda entera cae del mismo lado. Si partiéramos
+> fila por fila, productos de la misma página quedarían en train y en test, y estaríamos filtrando
+> el contexto.
+>
+> ¿Por qué no temporal? Timestamps rotos. ¿Por producto? Lo verificamos: el noventa y nueve por
+> ciento de los títulos son únicos, y si restringimos test a productos nunca vistos las métricas
+> son idénticas. El modelo no recibe identidad del producto, así que no tiene cómo memorizar.
+>
+> Sobre la varianza: seguimos lo que priorizó la cátedra, que es promediar corridas. **Seis
+> semillas por configuración.** Y como cierre igual corrimos validación cruzada, cinco por seis:
+> da cero ochocientos veintiuno con desvío cero cero doce. Consistente.
+>
+> Y una disciplina que mantuvimos todo el trabajo: los hiperparámetros se eligen mirando
+> **validación**. Test se reporta al final, y nada más."
+
+---
+
+## 9 · Divisoria — El modelo — [5 s]
+
+> "El modelo."
+
+`→ en pantalla`: pantalla oscura, número grande, «dónde va el transformer, y por qué ahí».
+
+---
+
+## 10 · La arquitectura: dónde va el transformer y por qué — [2.5 min]
+
+> "La pregunta del enunciado es dónde, cómo y por qué un transformer. Nuestra respuesta sale del
+> EDA.
+>
+> La señal de este problema es **relacional**. El precio no importa por sí solo, importa en
+> relación al rango que filtró el usuario. Y la U del precio está condicionada al tier del
+> producto. O sea: lo que importa son los cruces entre features.
+>
+> Un modelo lineal necesita que le des esos cruces hechos a mano. La self-attention los computa
+> sola, de a pares, y aprendidos. Es la generalización de las feature crosses.
+>
+> Por eso elegimos un **FT-Transformer**: cada feature es un token.
+>
+> Ahora, la pregunta natural: ¿cómo puede la atención comparar un precio con una marca? Y la
+> respuesta es que no hace falta que los tokens sean del mismo tipo. Hace falta que vivan en el
+> **mismo espacio**. Y eso es exactamente lo que hace el tokenizador: cada numérica entra como x
+> por w más b, cada categórica con su codificación, y las dos salen como vectores del mismo
+> tamaño. Es el mismo principio por el que en un modelo de lenguaje conviven la palabra 'perro',
+> una coma y un número.
+>
+> *(recorriendo el diagrama)* De ahí para arriba es un encoder estándar. Usamos los mismos
+> bloques de la demo de la cátedra: atención multi-cabeza, el MLP interno, bloques pre-LN con
+> conexiones residuales.
+>
+> Con dos adaptaciones, y las dos justificadas.
+>
+> La primera: **sacamos la máscara causal**. Esto es clasificar un conjunto, no generar texto. No
+> hay 'siguiente token' que adivinar. Atención bidireccional, como BERT.
+>
+> La segunda: el escalado por raíz de d_k se hace **una** vez, como en el paper. La demo lo
+> aplicaba dos veces, y eso aplana la atención de más.
+>
+> Agregamos un token **CLS** de lectura. No aporta información: la recolecta. Como atiende a todo
+> en cada capa, su estado final es el resumen que va al clasificador. Es lo que hace BERT.
+>
+> Y **sin positional encoding**. Un conjunto de features no tiene orden — el precio no está
+> 'antes' que la marca. La identidad de cada columna ya vive en sus propios parámetros. Eso no lo
+> asumimos: lo medimos, y agregarlo da diferencia cero.
+>
+> El tamaño arranca donde sugiere el enunciado: d_model treinta y dos, cuatro cabezas, dos
+> bloques."
+
+`→ en pantalla`: el diagrama completo, del CSV a p(bought).
+
+---
+
+## 11 · Alternativas consideradas — y medidas — [1.2 min]
+
+> "Antes de comprometernos con eso, evaluamos dónde **más** podía ir el transformer. Porque 'usá
+> un transformer' no te dice dónde ponerlo.
+>
+> Tres alternativas serias.
+>
+> Una: **el texto crudo como tokens**. Los caracteres del título y la descripción, que es la demo
+> literal. La señal está ahí, sin duda. Pero el EDA ya nos mostró que se extrae con una expresión
+> regular — gastar atención cuadrática sobre doscientos cincuenta y siete tokens para eso es caro.
+>
+> Dos: **los productos de la página como tokens**. Eso modela la competencia dentro de la
+> búsqueda. Pero el EDA midió competencia débil: en muchas páginas se compra más de un producto.
+>
+> Tres: **el transformer solo como encoder de texto**, y un MLP arriba que clasifica. El problema
+> es que comprime toda la señal a un cuello de botella antes de decidir.
+>
+> Elegimos features-como-tokens de base. Pero no las descartamos en papel: **implementamos y
+> corrimos las tres**, más dos variantes. Los resultados les dan la razón a los diagnósticos del
+> EDA, y los vemos en la diapositiva veinte."
+
+---
+
+## 12 · Baselines: la vara — [35 s]
+
+> "Antes del transformer, armamos una escalera de complejidad. Mismo split, mismas métricas,
+> mismas seis semillas.
+>
+> Regresión **logística**: cero seiscientos noventa y ocho. Esa es la vara lineal.
+>
+> Un **MLP** denso, con exactamente los mismos embeddings de entrada que el transformer: cero
+> setecientos cuarenta y seis.
+>
+> Y un **GBM**, que es la vara no lineal fuerte — árboles con interacciones: cero setecientos
+> sesenta y dos.
+>
+> Y nos pusimos una regla de honestidad: **si el transformer no supera esto, la capa de atención
+> no se justifica.**"
+
+---
+
+## 13 · Divisoria — Los experimentos — [35 s]
+
+> "Los experimentos. Siete preguntas, y ninguna la contestamos de memoria.
+>
+> Antes de arrancar, la base. *(señalando la lista)* Todo lo que viene mueve **un solo eje** y
+> deja el resto quieto: el mismo tamaño de vector por feature, el mismo optimizador, el mismo
+> batch, la misma paciencia. Y **seis semillas** en cada configuración.
+>
+> Así, cuando algo cambia, sabemos qué lo cambió.
+>
+> Esa lista de abajo la van a ver repetida al pie de cada experimento, con lo que varía marcado
+> a la derecha."
+
+`→ en pantalla`: pantalla oscura, el 3 grande, y los diez hiperparámetros con su explicación en
+una línea cada uno.
+
+---
+
+## 14 · Experimento 1: ¿la atención aporta? — [1.3 min]
+
+> "Esta es la comparación central.
+>
+> Transformer contra MLP, **con la misma entrada**. Los mismos feature-tokens. Lo único que
+> cambia es qué los mezcla: atención o capas densas. Y apareado por semilla, así que comparamos
+> corrida contra corrida.
+>
+> Resultado: **más cero cero cuarenta y ocho**, ganando en cinco de seis semillas. Y el MLP tenía
+> cuatro veces y media más parámetros. Así que no es cuestión de tamaño.
+>
+> Pero le hicimos dos refinamientos, porque nos parecía una vara fácil.
+>
+> *(señalando la primera tarjeta)* Primero: al MLP le probamos one-hot crudo en vez de
+> embeddings, y mejoró a cero setecientos noventa y siete. O sea, parte de su déficit era la
+> entrada, no la arquitectura. Contra el **mejor** MLP posible, la ventaja del transformer baja a
+> más cero cero veintisiete. Sigue ganando, pero con la vara más alta.
+>
+> *(segunda tarjeta)* Y segundo: nos preguntamos si la atención no estaría simplemente
+> descubriendo el cruce precio por tier que ya sabíamos del EDA. Así que se lo dimos a mano a la
+> logística. Mejora, pero eso explica **solo el doce por ciento** del gap. La atención aprende
+> bastante más que esa única interacción."
+
+---
+
+## 15 · Experimento 2: ¿cuántas cabezas? — [0.9 min]
+
+> "Multi-head significa varias consultas en paralelo, cada una en su propio subespacio. La
+> pregunta era si este problema las necesita, o si hay una sola señal dominante y con una alcanza.
+>
+> Y acá tuvimos una sorpresa metodológica.
+>
+> Con **embeddings**, una cabeza grande le gana a cuatro chicas: cero ochocientos dieciséis contra
+> cero setecientos noventa y ocho. Una consulta rica vale más que cuatro pobres — que es
+> coherente con el EDA, donde hay una señal que manda.
+>
+> Pero sobre la base **ordinal**, que es la que terminó ganando, **cuatro cabezas ganan**: cero
+> ochocientos veinticuatro contra cero ochocientos.
+>
+> O sea: el eje **interactúa con la codificación**. Y de ahí sacamos una regla para todo el
+> trabajo: ninguna decisión se hereda de otra base. Cada una se vuelve a decidir por validación
+> sobre la base final."
+
+`→ en pantalla`: el **4** en verde grande arriba a la derecha, el gráfico a la izquierda, y al
+pie la base con «varía · cabezas 1 / 2 / 4» en la pastilla lila.
+
+---
+
+## 16 · Experimento 3: ¿cuánta profundidad? — [35 s]
+
+> "Más bloques es componer atención sobre atención. Pero con trece features que ya se ven todas
+> de un salto, la hipótesis era que no hace falta mucha profundidad.
+>
+> Confirmado. Un bloque pierde poco. **Dos ganan.** Cuatro no suman nada, con el doble de
+> parámetros.
+>
+> Y esto se conecta con la interpretabilidad, que vemos al final: el CLS ya concentra el setenta y
+> cinco por ciento de su atención en el estado **en la primera capa**. No necesita más capas para
+> encontrar lo que importa."
+
+`→ en pantalla`: el **2** en verde, y al pie «varía · bloques 1 / 2 / 4».
+
+---
+
+## 17 · Experimento 4: ¿qué d_model? — [0.8 min]
+
+> "Acá la idea era dimensionar el embedding al problema — trece features, diez mil filas — y no
+> al hábito de los papers, que usan quinientos doce.
+>
+> Lo que encontramos es una **meseta amplia**. De ocho a sesenta y cuatro, los resultados son
+> parecidos. La señal cabe en poquísimos parámetros. Treinta y dos se elige por validación, pero
+> sin mucho margen.
+>
+> Y hay un epílogo fuerte. Un modelo de dieciséis dimensiones con un solo bloque —**tres mil
+> setecientos parámetros**— empata al campeón. Y destilando de un ensamble, el nivel campeón
+> aguanta hasta **mil novecientos**.
+>
+> Cerrando los tres ejes de capacidad: cabezas, profundidad y dimensión. Ninguno movió mucho la
+> aguja. El experimento decisivo no era la capacidad. Era **la codificación de la entrada**."
+
+`→ en pantalla`: el **32** en verde, y al pie «varía · d_model 8 / 16 / 32 / 64».
+
+---
+
+## 18 · Experimento 5: la codificación de las categóricas — [2.2 min]
+
+> "Y este es el experimento decisivo del trabajo.
+>
+> El enunciado sugería investigar codificaciones, one-hot y alternativas. Implementamos y corrimos
+> cinco, con todo lo demás fijo.
+>
+> Antes que nada, un resultado teórico que nos ahorró un experimento: **one-hot seguido de una
+> capa lineal aprende exactamente la misma matriz que un embedding**. Multiplicar un vector
+> one-hot por una matriz te devuelve una fila de esa matriz, que es lo que hace el lookup del
+> embedding. Son el mismo modelo. Así que one-hot solo lo probamos como entrada cruda al MLP.
+>
+> Las que sí probamos: **embedding aprendido** por columna, que es el estándar. **Target
+> encoding**, cada nivel a su BTR promedio suavizado de train. **Ordinal**, cada nivel a su
+> **rango** al ordenar por ese BTR. **Frecuencia** y **hashing**.
+>
+> *(señalando el gráfico)* Y acá está la sorpresa: gana el **ordinal**, cero ochocientos
+> veinticuatro. Por encima del target, cero ochocientos trece, y bastante por encima del embedding,
+> cero setecientos noventa y ocho.
+>
+> ¿Por qué gana, si el embedding puede aprender cualquier cosa? Justamente por eso. Con diez mil
+> filas, 'poder aprender cualquier cosa' es sobreajustar. Una marca que aparece doce veces no
+> alcanza para aprenderle treinta y dos números. El rango le inyecta el orden como **prior**, con
+> un solo escalar por nivel.
+>
+> Y le gana al target porque los rangos quedan equiespaciados, mientras que las magnitudes están
+> apelmazadas: cero sesenta y cinco, cero cero tres, cero exacto. Los rangos están mejor
+> condicionados.
+>
+> Los dos que fallan calibran la regla. **Frecuencia** da cero veintidós — codifica qué tan común
+> es un nivel, y eso no tiene nada que ver con comprarlo. **Hashing** da cero cincuenta — las
+> colisiones mezclan tiers distintos. La regla que sacamos es: la codificación tiene que
+> **preservar la relación nivel-propensión**.
+>
+> Y una reflexión honesta: nuestra hipótesis previa era exactamente la inversa. Pensábamos que el
+> embedding iba a ganar. **Los datos nos corrigieron**, y esa corrección terminó siendo el mejor
+> modelo del trabajo."
+
+`→ en pantalla`: el gráfico ocupa toda la pantalla y la única frase escrita es «nuestra hipótesis
+era la inversa». **Esta diapositiva no tiene texto de apoyo**: todo el argumento lo lleva la voz.
+Es la más importante del mazo — no la apures.
+
+---
+
+## 19 · Experimento 6: ¿arrancar de pesos informados? — [0.8 min]
+
+> "Este es el pre-entrenamiento de la clase tres, en miniatura. La pregunta: ¿un arranque
+> informado le gana a uno aleatorio?
+>
+> Probamos tres formas, todas con modelos propios.
+>
+> **MLM estilo BERT** sobre los feature-tokens: veinte épocas enmascarando features, sin usar
+> etiquetas. Sobre embeddings suma un poco. Sobre ordinal, **nada** — el prior ordinal ya hace ese
+> trabajo de regularización.
+>
+> **w2v-init**, un skipgram propio, regulariza la variante de palabras pero no alcanza a la de
+> caracteres. Y el autoencoder repite el mismo patrón.
+>
+> Decisión: inicialización aleatoria.
+>
+> Y si preguntan por transfer desde un preentrenado **de verdad**: lo probamos con MiniLM, está
+> en el apéndice. Congelado **resta**. Fine-tuneado repara. Y aun así nada supera nuestro cero
+> ochocientos veinticuatro, con veintidós millones de parámetros contra veintiséis mil."
+
+---
+
+## 20 · Experimento 7: ¿y el texto? — [1.4 min]
+
+> "La señal nace en el texto. Entonces la pregunta obvia: ¿el transformer puede leerla solo, sin
+> nuestra expresión regular?
+>
+> Corrimos el arco completo.
+>
+> **Texto puro**, caracteres como tokens — la demo adaptada de decoder a encoder: cero seiscientos
+> cincuenta y dos. Muy por encima del techo sin señal, que era dieciséis. O sea que **encontró el
+> sufijo solo**. Pero muy por debajo del tabular: leer caracteres con treinta y seis mil
+> parámetros cuesta caro.
+>
+> **Híbrido**, features y doscientos cincuenta y seis caracteres en una sola secuencia: cero
+> setecientos cinco. Peor que el tabular solo. Los tokens de texto **diluyen** la atención sobre
+> los trece que importan.
+>
+> Pero acá hay un dato fino, y es lindo. Al híbrido, sacarle el token parseado no le cuesta nada.
+> O sea que **reconstruye desde los caracteres crudos lo que nosotros extraíamos con la regex**.
+>
+> Y la **fusión** —comprimir el texto a un solo token que entra a la secuencia tabular— cura la
+> dilución por completo. Pero empata exacto con la torre. Conclusión: una vez que comprimís,
+> cruzar por atención o por concatenación da igual. Lo que importa es comprimir.
+>
+> La conclusión de diseño: el texto crudo es **recuperable**, pero **redundante** cuando el EDA ya
+> parseó la señal."
+
+---
+
+## 21 · Desafíos encontrados — [1.8 min]
+
+> "Cuatro cosas que nos pasaron y vale la pena contar.
+>
+> *(panel uno)* **El causal degenerado.** Hicimos la ablación de 'qué pasa si dejamos la máscara
+> causal', y dio ROC exactamente cero coma cinco. Exactamente. Eso no es 'causal anda peor', eso
+> es que algo está roto.
+>
+> Y el diagnóstico fue este: con máscara causal, nuestro CLS está en la posición cero, así que
+> solo puede verse a sí mismo. No ve ninguna feature. El modelo predecía una constante — la misma
+> probabilidad para todo el test.
+>
+> El arreglo es ponerlo al final, que es desde donde lee GPT. Y con eso la respuesta real aparece:
+> la bidireccionalidad acá **da igual**. La lección que nos llevamos: los decoders leen desde el
+> último token, los encoders pueden poner el CLS adelante — pero las dos cosas tienen que ser
+> coherentes.
+>
+> *(panel dos)* **Las trampas del dataset**: `cart` y los timestamps rotos. El EDA los cazó antes
+> de que mordieran.
+>
+> *(panel tres)* **El cómputo.** La familia de texto es inviable en CPU, por la atención
+> cuadrática sobre doscientos cincuenta y siete tokens. Armamos una suite de experimentos
+> resumible que corre en una GPU de consumo, y deja cada corrida registrada con sus dieciséis
+> métricas. Ochocientas treinta y ocho corridas en total.
+>
+> *(panel cuatro)* Y **hipótesis que refutamos con datos**. Las contamos porque el método importa:
+> bins por cuantiles para la U del precio — el MLP interno ya la captura. Pesos por clase para el
+> desbalance — daña, porque PR-AUC es de ranking. Mean pooling en vez de CLS — el CLS gana seis de
+> seis. Y positional encoding en features — diferencia cero, como predice la teoría."
+
+---
+
+## 22 · Divisoria — Resultados — [5 s]
+
+> "Resultados."
+
+`→ en pantalla`: pantalla oscura, número grande, «qué quedó en pie y qué aprendimos».
+
+---
+
+## 23 · El modelo final — [1.3 min]
+
+> "El modelo final: un **FT-Transformer con codificación ordinal**.
+>
+> Trece feature-tokens más el CLS. Dimensión treinta y dos, cuatro cabezas, dos bloques pre-LN,
+> sin positional. Una capa lineal de treinta y dos a uno, y sigmoide. **Veintiséis mil ciento
+> setenta y siete parámetros** — el más chico de los cinco mejores.
+>
+> Entrenamiento: AdamW, batch doscientos cincuenta y seis, early stopping por PR-AUC de validación
+> con paciencia veinte. Corta cerca de la época sesenta y cuatro.
+>
+> Cómo lo elegimos, y esto nos importa. En **validación** había un empate técnico entre cuatro
+> configuraciones, con diferencias menores a dos milésimas. Validación no puede distinguirlas. Así
+> que desempatamos por **parsimonia**: menos parámetros, menor desvío entre semillas, y menor gap
+> entre validación y test. Recién **después** miramos test, que confirma la elección.
+>
+> *(señalando los números)* PR-AUC en test: cero ochocientos veinticuatro, con desvío cero cero
+> dieciocho, sobre seis semillas. Validación cruzada cinco por seis: cero ochocientos veintiuno.
+> Con ensamble, cero ochocientos treinta y cuatro — y llegamos ahí por dos rutas independientes,
+> ensamblando configuraciones o ensamblando inicializaciones.
+>
+> Contra las varas: GBM cero setecientos sesenta y dos, mejor MLP cero setecientos noventa y
+> siete."
+
+---
+
+## 24 · Robustez — [1.0 min]
+
+> "Tres verificaciones sobre el modelo final.
+>
+> *(señalando la curva)* **Curva de aprendizaje.** Entrenamos con el veinticinco, cincuenta,
+> setenta y cinco y cien por ciento de los datos. La curva está casi saturada: el último cuarto
+> aporta siete milésimas. Y con el setenta y cinco por ciento de los datos ya le ganamos al GBM
+> entrenado con todo.
+>
+> **Varianza.** Hicimos una grilla de cinco inicializaciones por seis splits, para separar de
+> dónde viene el desvío. Y es mitad lotería del split, mitad inicialización. Eso valida el
+> protocolo de promediar semillas. Y esa mitad de inicialización es justo lo que el ensamble
+> elimina.
+>
+> **Calibración.** ECE de cero coma cero uno, temperatura cerca de uno. Y esto importa por lo que
+> dijimos al principio: el BTR de negocio es el **promedio** de las probabilidades. Si el modelo
+> no estuviera calibrado, ese promedio no significaría nada. Está calibrado, así que se puede leer
+> directo, sin corrección."
+
+---
+
+## 25 · Overfitting y underfitting — [40 s]
+
+> "El enunciado pide mirar overfitting y underfitting, así que acá están las curvas del modelo
+> final.
+>
+> *(señalando el gráfico)* Train sube sostenido. Validación sube, se aplana, y ahí el early
+> stopping corta — la línea punteada — y restaura ese checkpoint. Nunca entrenamos de más.
+>
+> El gap entre train y validación es moderado y estable. No se abre. Eso descarta overfitting
+> descontrolado. Y como las dos suben bien al principio, tampoco hay underfitting.
+>
+> El dato que lo cierra: del valor de validación al de test hay **once milésimas** de diferencia.
+> Es el gap más chico de las cuatro configuraciones finalistas. O sea que la elección por
+> validación no nos engañó.
+>
+> Estas curvas las tenemos para las ochocientas treinta y ocho corridas, no solo para esta."
+
+`→ en pantalla`: la curva de train y validación con la vertical punteada del early stopping.
+
+---
+
+## 26 · ¿El modelo mira donde debe? — [1.3 min]
+
+> "Con catorce tokens, la matriz de atención se puede **mirar** directamente. No hace falta
+> ninguna técnica sofisticada.
+>
+> *(señalando el mapa)* En la primera capa, el CLS pone el **setenta y cinco por ciento** de su
+> atención en el token de estado. Y la familia del precio se consulta entre sí: el precio y el
+> mínimo del filtro atienden a `price_rel`. Esa es la señal relacional, literal en el mapa. La
+> segunda capa ya mezcla todo.
+>
+> Ahora, hay una crítica conocida a esto — 'attention is not explanation'. La atención te muestra
+> dónde mira el modelo, no necesariamente qué usa. Así que lo contrastamos con un diagnóstico
+> independiente, basado en resultados.
+>
+> *(segundo gráfico)* **Importancia por permutación**: rompemos una feature y medimos cuánto se
+> cae el modelo. Destruir `listing_status` cuesta sesenta y ocho centésimas de PR-AUC. `price_rel`
+> cuesta catorce. Alergenos, cinco. El resto, cero.
+>
+> Dos métodos independientes, la misma historia. Y es exactamente la del EDA. El círculo cierra.
+>
+> Y la traducción a negocio: en las páginas de test donde hubo al menos una compra, el producto
+> que nuestro modelo pone primero fue efectivamente el comprado el **noventa y uno por ciento** de
+> las veces. El azar da veintisiete."
+
+`→ en pantalla`: a la izquierda el mapa de atención a lo alto; a la derecha el gráfico de
+permutación y, debajo, los tres recuadros — atención, permutación, negocio. Señalá el mapa,
+después el gráfico, y cerrá con el recuadro de negocio.
+
+---
+
+## 27 · Ejercicio 3: personalización — [1.6 min]
+
+> "El ejercicio teórico: cómo haríamos que el BTR dependa de **quién** busca.
+>
+> Hoy nuestro modelo estima la probabilidad dado el producto y la búsqueda. Personalizar es
+> condicionar también al usuario.
+>
+> Lo primero es que hace falta **dato nuevo**: un identificador de usuario y su historial de
+> eventos. El dataset actual no lo trae.
+>
+> *(panel izquierdo)* Y la extensión natural de **nuestra** arquitectura es directa. Así como
+> evaluamos meter el texto como tokens, acá **el historial del usuario entra como tokens**: sus
+> últimas compras y búsquedas, cada una codificada con el mismo tokenizador de productos. Y la
+> secuencia los atiende.
+>
+> El ejemplo concreto: alguien que compra comida de perro todos los meses tiene esos productos en
+> su historial. Cuando aparecen en la página, la atención cruza historial contra candidato y le
+> sube la probabilidad. Esto en producción existe y se llama BST o SASRec — es exactamente esto.
+>
+> *(panel derecho arriba)* La alternativa clásica, que conecta con la clase dos: **embeddings de
+> usuario y producto entrenados con negative sampling**. Item2vec o two-tower — un skipgram donde
+> el contexto son los productos con los que el usuario interactuó. Eso sirve como **retrieval** si
+> el catálogo fuera enorme, con nuestro modelo de ranker arriba.
+>
+> *(panel derecho abajo)* Y el detalle que este trabajo nos dejó bien aprendido: el usuario nuevo
+> sin historial es exactamente el mismo problema que el producto nuevo sin badge. Cold-start. Y el
+> fallback es justo el modelo que ya tenemos, que no depende del usuario."
+
+---
+
+## 28 · Conclusiones — [1.5 min]
+
+> "Cinco conclusiones.
+>
+> **Una: el EDA mandó.** La señal dominante no era ninguna columna del CSV. Estaba escondida en
+> el sufijo del título, entre paréntesis. La sacamos con una expresión regular y partió el dataset
+> en tres grupos limpios. Todo lo que hicimos después sale de haberla encontrado.
+>
+> **Dos: la formulación valió más que el tamaño.** El modelo campeón tiene veintiséis mil
+> parámetros. Lo que movió la aguja no fue agregar capacidad — la probamos y no alcanzó — sino
+> decidir bien qué entra y cómo se codifica.
+>
+> **Tres: la atención aporta, y lo medimos con vara honesta.** Cuarenta y ocho milésimas contra
+> su gemelo sin atención, con la misma entrada y las mismas semillas. Y contra el mejor MLP
+> posible, que tiene cuatro veces y media más parámetros, veintisiete milésimas. Sigue ganando.
+>
+> **Cuatro: el mejor encoding fue el más simple.** Ordinal — un número por nivel, ordenado por su
+> tasa de compra. Le ganó a embeddings, a target y a hashing. Y refutó nuestra propia hipótesis,
+> que es exactamente lo que uno quiere de un experimento.
+>
+> **Y cinco: el modelo es auditable.** La atención y la importancia por permutación coinciden en
+> qué mira. Las probabilidades están calibradas. Y en la práctica elige bien el producto a
+> promocionar el noventa y uno por ciento de las veces, contra veintisiete del azar."
+
+`→ en pantalla`: las cinco numeradas, cada una con su titular y su explicación. Leé el titular en
+voz alta y contá la explicación con tus palabras — no la leas.
+
+---
+
+## 29 · Gracias — [5 s]
+
+> "Eso es todo. Gracias, y quedamos para preguntas."
+
+`→ en pantalla`: pantalla oscura, «Gracias» grande, «Preguntas» y los tres nombres. Queda ahí
+mientras contestan.
+
+---
+
+# Apéndice para preguntas
+
+No se presenta. Es para tener las respuestas a mano.
+
+**¿Por qué PR-AUC y no F1?**
+F1 necesita umbral; el uso es ranking. Igual lo medimos: F1 máximo 0.784 en umbral 0.40 — o sea
+que 0.5 hubiera sido arbitrario.
+
+**¿Por qué no ROC como principal?**
+Con 13% de positivos el ROC oculta fallas. Ejemplo propio: el encoding por hashing tiene ROC 0.88
+—suena razonable— y PR-AUC 0.498, que es un colapso.
+
+**¿Hay overfitting?**
+Curvas de train y validación por época en cada corrida. Early stopping por validación. Gap de
+validación a test entre 0.01 y 0.03, que es selección normal. Y el encoding ordinal es en sí una
+regularización.
+
+**¿Por qué no validación cruzada desde el principio?**
+La cátedra pidió priorizar promedio de corridas. Igual la hicimos al final: GroupKFold 5×6 da
+0.821 ± 0.012, consistente con el 0.824.
+
+**¿Y el split por producto?**
+Verificado: métricas idénticas restringiendo test a productos nunca vistos. El modelo no recibe
+identidad de producto.
+
+**¿Usar el estado no es hacer trampa?**
+Es información de estado del catálogo: está disponible al momento de predecir, así que es válida
+para predecir. Sí es circular para decidir promociones. Por eso medimos las dos familias — sin
+estado, el techo es 0.16 para cualquier modelo, porque el 61% de las filas tiene BTR cero exacto.
+
+**¿Probaron multi-task con `cart`?**
+Sí, como etiqueta auxiliar con λ en 0.1, 0.3 y 0.5. No es leakage porque el modelo la predice en
+vez de recibirla. No mejoró: el mejor da 0.809 contra 0.824. Probablemente porque `bought` implica
+`cart`, así que la tarea auxiliar no agrega información.
+
+**¿Probaron regularización?**
+Sí, barrido completo con 6 semillas: dropout, weight decay, feature dropout, label smoothing.
+Ninguna aporta — sin dropout da 0.828, con dropout 0.1 da 0.824, sin nada 0.824, todo dentro de un
+desvío de 0.02. La interpretación es que el early stopping ya evita el sobreajuste. Lo que sí se
+ve es el daño del exceso: dropout 0.3 baja a 0.813.
+
+**¿Probaron achicar más el modelo?**
+Sí. `min_d16l1` —dimensión 16, un bloque, 3.713 parámetros— empata al campeón. Y destilando del
+ensamble, un student de **1.937 parámetros** llega a 0.828. Compresión de 13×.
+
+**¿Transfer desde un preentrenado de verdad?**
+MiniLM. Congelado como token: 0.751. Congelado más MLP: 0.773. Fine-tuneado, con 22,7 millones de
+parámetros: 0.811. Ninguno supera nuestros 26 mil parámetros en 0.824. La razón es que el dataset
+es sintético y el wording no correlaciona con el comportamiento — "Top Rated" y "Highly Rated"
+suenan iguales para BERT y difieren 30× en compra.
+
+**¿Por qué 26k parámetros y no más?**
+Porque lo medimos. La meseta de d_model va de 8 a 64 sin diferencias significativas, 4 bloques no
+superan a 2, y la config con mejor **validación** de todo el proyecto (245k parámetros) NO es
+mejor en test. Eso último es sobreajuste de selección, y es la razón por la que cerramos la
+selección con un procedimiento fijado de antemano.
