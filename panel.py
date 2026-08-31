@@ -140,6 +140,10 @@ def canon(c):
     tembft = c.get('text_emb_finetune') or '-'
     templr = ffloat(num('text_emb_lr', 1e-5)) if tembft != '-' else '-'
 
+    # ---- 9na tanda: encoder de ingredientes (solo aplica donde hay IngredientEncoder) ----
+    il = str(int(num('ing_layer', 1))) \
+        if (arch == 'ing_tower' or (arch == 'transformer' and form == 'ing_fusion')) else '-'
+
     return '|'.join([
         arch, form, drops, strip, nmode, nbins, str(int(c['d_model'])), nh, nl,
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
@@ -148,7 +152,7 @@ def canon(c):
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
         frac, init, mlm, cv, pf,
         wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-        som, ae, ael, pca, temb, tembft, templr,
+        som, ae, ael, pca, temb, tembft, templr, il,
     ])
 
 
@@ -163,7 +167,7 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'sin_layernorm', 'init_from', 'freeze_backbone', 'reinit_head', 'l2sp',
               'distill_from', 'distill_alpha', 'embed_from', 'som_feature',
               'pretrain_ae', 'ae_latent', 'pca',
-              'text_emb', 'text_emb_finetune', 'text_emb_lr']
+              'text_emb', 'text_emb_finetune', 'text_emb_lr', 'ing_layer']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
@@ -175,7 +179,8 @@ CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 
                 'freeze_backbone': False, 'reinit_head': False, 'l2sp': 0.0,
                 'distill_from': '', 'distill_alpha': 1.0, 'embed_from': '',
                 'som_feature': 0, 'pretrain_ae': 0, 'ae_latent': 0, 'pca': 0,
-                'text_emb': '', 'text_emb_finetune': '', 'text_emb_lr': 1e-5}
+                'text_emb': '', 'text_emb_finetune': '', 'text_emb_lr': 1e-5,
+                'ing_layer': 1}
 
 
 def cfg_dict(c):
@@ -837,6 +842,10 @@ function canonKey(c){
   const tembft = c.text_emb_finetune || '-';
   const templr = tembft!=='-' ? ffloat(numo(c.text_emb_lr, 1e-5)) : '-';
 
+  // ---- 9na tanda: encoder de ingredientes (solo aplica donde hay IngredientEncoder) ----
+  const il = (arch==='ing_tower' || (arch==='transformer' && form==='ing_fusion'))
+    ? String(Math.trunc(numo(c.ing_layer,1))) : '-';
+
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
@@ -844,7 +853,7 @@ function canonKey(c){
     catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
     frac, init, mlm, cv, pf,
     wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-    som, ae, ael, pca, temb, tembft, templr].join('|');
+    som, ae, ael, pca, temb, tembft, templr, il].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)

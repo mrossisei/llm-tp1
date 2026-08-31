@@ -894,3 +894,60 @@ Con esto el capítulo experimental cierra en **838 corridas, 116/116 configuraci
 modelo final sigue siendo `feat_ordinal` (0.824 / ensemble 0.834); la 8ª tanda es el epílogo
 de transfer learning: probamos las tres técnicas de la clase con checkpoints propios (§13) y
 el caso canónico con un preentrenado externo (§15) — y el campeón sobrevivió a todos.
+
+## 16. 9ª tanda: el transformer de INGREDIENTES como encoder de conjunto (corrida 31/08)
+
+Idea de Fer. `ingredients` quedó afuera de la v1 porque la *cantidad* no mostró señal (corr
+0.02 con bought; `feat_extras` la reintrodujo como numérica y dio Δ≈0), pero la **identidad**
+y las interacciones ingrediente×ingrediente nunca se midieron. Además es el caso de libro de
+"transformer como pieza": un **encoder de conjunto** — [ING] + un token por ingrediente
+(vocabulario de train con UNK, 21+2 entradas), embeddings aprendidos, atención bidireccional
+todos-contra-todos y **sin positional encoding** porque la lista no tiene orden conocido —
+cuya salida entra a otra arquitectura. Verificado antes de correr: la salida es exactamente
+invariante al orden de los ingredientes (Δ máx 6e-8 bajo permutación).
+
+**Hipótesis registrada antes de correr** (comentario en `experimentos.py`): hay spread por
+ingrediente (BTR 0.06 Seafood … 0.19 Baby-safe, base 0.13), pero los ingredientes co-ocurren
+en recetas fijas por categoría (Milk+Cream+Cultures n=1003 = dairy; Yeast+Wheat flour+Water+
+Sugar n=917 = bakery), así que lo esperable era que category/allergens ya lo capturen y todo
+dé **Δ≈0 vs `feat_ordinal`**; `ing_solo` separa "no hay señal" de "la señal ya la tenían
+otras columnas". La selección sigue cerrada (4ª tanda): esto caracteriza, no busca campeón.
+
+5 configs × 6 seeds = 30 corridas (868 totales, 121/121 configuraciones):
+
+| config | qué es | val PR-AUC | test PR-AUC | Δval vs campeón (pareado) |
+|---|---|---|---|---|
+| `feat_ordinal` (ref) | el campeón | 0.8345 ± 0.041 | 0.8239 ± 0.018 | — |
+| `ing_hybrid` | un token por ingrediente en la secuencia tabular | 0.8359 ± 0.030 | 0.8192 ± 0.018 | **+0.001** (3/6) |
+| `ing_fusion` | encoder de conjunto → [ING] como token 15 | 0.8248 ± 0.059 | 0.8173 ± 0.031 | −0.010 (3/6) |
+| `ing_fusion_l2` | ídem con encoder de 2 capas | 0.8248 ± 0.041 | 0.8120 ± 0.055 | −0.010 (2/6) |
+| `ing_tower` | encoder de conjunto → vector → MLP | 0.8206 ± 0.026 | 0.7935 ± 0.028 | −0.014 (2/6) |
+| `ing_solo` | SOLO los ingredientes | 0.1565 ± 0.016 | 0.1398 ± 0.009 | −0.678 (0/6) |
+
+**Lectura (decisión sobre validación, como siempre):**
+
+1. **Hipótesis confirmada: Δ≈0.** `ing_hybrid` +0.001 y `ing_fusion` −0.010 en val son empates
+   estadísticos (3/6 seeds cada uno, desvíos 0.03–0.06). La identidad de los ingredientes no
+   agrega nada que el modelo no tuviera.
+2. **`ing_solo` resuelve la disyuntiva registrada — y en la dirección fuerte: no hay señal
+   accesible.** 0.140 de test ≈ azar (0.131), ROC 0.525. Ni siquiera llega al techo
+   intrínseco sin estado (~0.16, §2.3.1): los ingredientes no ven el sufijo de estado, y lo
+   poco intrínseco que codifican (la categoría, vía recetas fijas) no alcanza ni para eso.
+   El spread por ingrediente del EDA (0.06–0.19) era la categoría disfrazada: Seafood "predice"
+   poco comprar porque *es* la categoría seafood, que ya está en la fila.
+3. **`ing_tower` repite la lección del cuello de botella** (−0.014 val, 0/6 en test, −0.030):
+   comprimir a un vector antes de decidir vuelve a perder contra dejar que la atención del
+   modelo principal vea los tokens — tercera vez que el patrón torre pierde (texto §8, MiniLM
+   congelado §15.1, ingredientes acá). Y entrena 99 épocas vs 64 del campeón: más lento y peor.
+4. **Más capacidad no fabrica señal**: `ing_fusion_l2` (2 capas, el doble de parámetros del
+   encoder) = `ing_fusion` en val, peor y más variable en test. Consistente con todo §11-13:
+   cuando la señal no existe, la capacidad extra solo agrega varianza.
+
+**Qué queda del experimento**: la *pieza* funciona — el encoder de conjunto se entrena
+end-to-end, es invariante al orden por construcción y se acopla igual que `fusion` (token
+extra) o `tower` (vector) — pero este dataset no tiene nada para darle: las recetas son
+deterministas por categoría, así que ingrediente ≡ categoría, y la categoría ya es una columna.
+El resultado negativo es el bueno para la defensa: muestra que "agregarle un transformer" a un
+campo no crea información, y que la ablación del EDA (descartar `ingredients` por Δ≈0 en
+cantidad) también valía para la identidad. El modelo final sigue siendo `feat_ordinal`
+(0.824 / ensemble 0.834).
