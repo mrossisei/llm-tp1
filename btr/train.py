@@ -15,6 +15,12 @@ Arquitecturas (--arch) y formulaciones (--formulation), ver propuesta.md 4:
   tower                    transformer SOLO como encoder de texto -> embedding
                            que se concatena con lo tabular y clasifica un MLP
   listwise                 los tokens son los productos de la misma pagina
+  transformer + ing        SOLO los ingredientes como tokens (conjunto, 9na tanda)
+  transformer + ing_fusion encoder de conjunto de ingredientes -> su [ING] entra
+                           como un token mas de la secuencia tabular
+  transformer + ing_hybrid un token POR ingrediente en la secuencia tabular
+  ing_tower                encoder de ingredientes -> embedding que se concatena
+                           con lo tabular y clasifica un MLP (espejo de tower)
 
 Ejes transversales: --drop-features listing_status (modelo sin el estado
 parseado), --strip-status (texto sin sufijo ni oracion de estado: la variante
@@ -39,10 +45,11 @@ from sklearn.metrics import (
     confusion_matrix, log_loss, matthews_corrcoef, precision_recall_curve, roc_auc_score,
 )
 
-from .data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, MAX_TEXT_LEN, NUM_FEATURES,
-                   TARGET, _palabras, load_dataset, prepare, prepare_listwise,
+from .data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, MAX_INGREDIENTS, MAX_TEXT_LEN,
+                   NUM_FEATURES, TARGET, _palabras, load_dataset, prepare, prepare_listwise,
                    split_by_query, strip_status_from_text)
-from .model import BTRTransformer, ListwiseTransformer, MLPBaseline, TextTowerModel
+from .model import (ING_FORMULATIONS, BTRTransformer, IngredientTowerModel,
+                    ListwiseTransformer, MLPBaseline, TextTowerModel)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EVAL_BATCH = 1024        # con secuencias largas no entra todo el split en un forward
@@ -565,6 +572,8 @@ def run_name(args, seed):
         parts.append('clslast')
     if args.cart_aux:
         parts.append(f"cartaux{args.cart_aux:g}")
+    if args.ing_layer != 1:
+        parts.append(f"il{args.ing_layer}")
     for flag in ('positional', 'causal', 'pos_weight'):
         if getattr(args, flag):
             parts.append(flag.replace('_', ''))
@@ -686,6 +695,11 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
                       sin_residual=args.sin_residual, sin_layernorm=args.sin_layernorm,
                       feature_dropout=args.feature_dropout, text_emb_dim=text_emb_dim,
                       hf_model=args.text_emb_finetune,
+                      ing_vocab_size=(prep.ing_vocab_size
+                                      if args.formulation in ING_FORMULATIONS else None),
+                      max_ingredients=(MAX_INGREDIENTS
+                                       if args.formulation in ING_FORMULATIONS else 0),
+                      ing_layer=args.ing_layer,
                       **encod, **common)
         model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
@@ -705,6 +719,12 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
         if args.listwise_texto:
             config.update(char_vocab_size=prep.char_vocab_size, max_text_len=prep.max_text_len)
         model = ListwiseTransformer(**config, bin_edges=bin_edges)
+    elif args.arch == 'ing_tower':
+        config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
+                      ing_vocab_size=prep.ing_vocab_size, max_ingredients=MAX_INGREDIENTS,
+                      n_head=args.n_head, ing_layer=args.ing_layer,
+                      cart_lambda=args.cart_aux, **encod, **common)
+        model = IngredientTowerModel(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     else:
         raise SystemExit(f'arquitectura desconocida: {args.arch}')
     return model, config
@@ -714,6 +734,7 @@ def run(csv_path, seed, args, device):
     """Una corrida completa: prepara datos, entrena, guarda resultados/pesos."""
     torch.manual_seed(seed if args.init_seed is None else args.init_seed)
     listwise = args.arch == 'listwise'
+    usa_ing = args.formulation in ING_FORMULATIONS or args.arch == 'ing_tower'
     if args.pretrain_mlm and (args.arch != 'transformer' or args.formulation != 'features'
                               or args.cls_position != 'first'):
         raise SystemExit('--pretrain-mlm es solo para transformer features con CLS al inicio')
@@ -774,7 +795,7 @@ def run(csv_path, seed, args, device):
         raise SystemExit('--ae-latent/--pca: la entrada pasa a ser [one-hot|numericas] '
                          'comprimida; no se combina con otros encodings/extras')
     if args.som_feature and (listwise or args.arch == 'tower'
-                             or (args.arch == 'transformer' and args.formulation == 'text')
+                             or (args.arch == 'transformer' and args.formulation in ('text', 'ing'))
                              or args.cat_encoding == 'onehot'):
         raise SystemExit('--som-feature agrega una categorica a la rama tabular '
                          '(features/hybrid/fusion o mlp sin onehot)')
@@ -804,6 +825,13 @@ def run(csv_path, seed, args, device):
     if args.text_emb_finetune and not (args.arch == 'transformer'
                                        and args.formulation == 'features'):
         raise SystemExit('--text-emb-finetune: solo transformer formulation features')
+    # ---- guards de la 9na tanda (ingredientes como conjunto) ----
+    if args.formulation in ING_FORMULATIONS and args.arch != 'transformer':
+        raise SystemExit('las formulaciones ing_* son del transformer; para encoder de '
+                         'ingredientes + MLP usar --arch ing_tower')
+    if usa_ing and (args.text_emb or args.text_emb_finetune or args.w2v_init):
+        raise SystemExit('ingredientes: la lista ocupa el slot del texto; no se combina '
+                         'con --text-emb/--text-emb-finetune/--w2v-init')
     extras = tuple(f.strip() for f in args.extra_features.split(',') if f.strip())
     if extras == ('all',):
         extras = EXTRA_ALL  # congelado: ver data.EXTRA_ALL
@@ -824,7 +852,8 @@ def run(csv_path, seed, args, device):
                                          extra_features=extras, include_cart=args.cart_aux > 0,
                                          text_tokens=args.text_tokens,
                                          train_frac=args.train_frac,
-                                         cv_k=args.cv_k, cv_fold=args.cv_fold)
+                                         cv_k=args.cv_k, cv_fold=args.cv_fold,
+                                         use_ingredients=usa_ing)
         max_products = None
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
@@ -1114,9 +1143,11 @@ def build_parser():
     parser.add_argument('--seed-start', type=int, default=42, help='primera seed de la serie')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--tag', default='', help='prefijo para el nombre de la corrida')
-    parser.add_argument('--arch', choices=['transformer', 'mlp', 'tower', 'listwise'],
+    parser.add_argument('--arch', choices=['transformer', 'mlp', 'tower', 'listwise',
+                                           'ing_tower'],
                         default='transformer')
-    parser.add_argument('--formulation', choices=['features', 'text', 'hybrid', 'fusion'],
+    parser.add_argument('--formulation', choices=['features', 'text', 'hybrid', 'fusion',
+                                                  'ing', 'ing_fusion', 'ing_hybrid'],
                         default='features',
                         help='que es un token (solo aplica a --arch transformer)')
     parser.add_argument('--max-text-len', type=int, default=MAX_TEXT_LEN)
@@ -1141,6 +1172,9 @@ def build_parser():
                         help='multi-task: peso de la BCE auxiliar sobre cart (0 = apagado)')
     parser.add_argument('--listwise-texto', action='store_true',
                         help='listwise: enriquecer el token de producto con la torre de texto')
+    parser.add_argument('--ing-layer', type=int, default=1,
+                        help='bloques del encoder de conjunto de ingredientes '
+                             '(ing_fusion / ing_tower; la lista tiene <= 5 items)')
     parser.add_argument('--text-tokens', default='chars', choices=['chars', 'words'],
                         help='tokenizacion del texto: caracteres (demo) o palabras (5b)')
     parser.add_argument('--w2v-init', action='store_true',

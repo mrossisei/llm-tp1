@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (77 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (121 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -329,6 +329,37 @@ EXPERIMENTOS |= {
                         '--batch-size', '128'], 'texto'),
     'bert_ft_sin':    ([*ORD, '--drop-features', 'listing_status',
                         '--text-emb-finetune', HF, '--batch-size', '128'], 'texto'),
+}
+
+
+# ---- 9na tanda (31/08): el transformer de INGREDIENTES como pieza (idea de Fer) ----
+# ingredients quedo afuera de la v1 porque la CANTIDAD no mostro senal (EDA: corr
+# 0.02 con bought; feat_extras la reintrodujo como numerica y dio delta ~ 0), pero
+# la IDENTIDAD y las interacciones ingrediente x ingrediente nunca se midieron.
+# Ademas es el caso de libro de "transformer como pieza": un encoder de CONJUNTO
+# ([ING] + un token por ingrediente, vocabulario de TRAIN con UNK, embeddings
+# aprendidos, atencion bidireccional todos-contra-todos y SIN positional encoding,
+# porque la lista no tiene orden conocido) cuya salida entra a otra arquitectura.
+# Hipotesis registrada ANTES de correr: hay spread por ingrediente (BTR 0.06
+# Seafood ... 0.19 Baby-safe, base 0.13), pero los ingredientes co-ocurren en
+# recetas fijas por categoria (Milk+Cream+Cultures n=1003 = dairy; Yeast+Wheat
+# flour+Water+Sugar n=917 = bakery), asi que lo esperable es que category/allergens
+# ya lo capturen y todo de delta ~ 0 vs feat_ordinal (0.824); ing_solo separa "no
+# hay senal" de "la senal ya la tenian otras columnas". La seleccion sigue cerrada
+# (4ta tanda): esto caracteriza, no busca campeon.
+EXPERIMENTOS |= {
+    # ¿cuanto predicen los ingredientes POR SI SOLOS? (referencia: tasa base 0.13)
+    'ing_solo':      (['--formulation', 'ing', *PAC], 'tabular'),
+    # la salida del encoder de conjunto como UN token mas de NUESTRO transformer
+    # (el mecanismo de fusion, con encoder propio de ingredientes)
+    'ing_fusion':    ([*ORD, '--formulation', 'ing_fusion'], 'tabular'),
+    # sin encoder aparte: un token POR ingrediente en la secuencia tabular
+    # (la atencion cruza ingrediente x feature directamente)
+    'ing_hybrid':    ([*ORD, '--formulation', 'ing_hybrid'], 'tabular'),
+    # la salida del encoder de conjunto entra a un MLP (espejo del tower de texto)
+    'ing_tower':     ([*ORD, '--arch', 'ing_tower'], 'tabular'),
+    # ¿profundidad del encoder? (default 1 bloque: la lista tiene <= 5 items)
+    'ing_fusion_l2': ([*ORD, '--formulation', 'ing_fusion', '--ing-layer', '2'], 'tabular'),
 }
 
 

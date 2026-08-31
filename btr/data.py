@@ -15,6 +15,9 @@ Implementa las decisiones de propuesta.md (secciones 2 y 6):
   title + '\n' + description a nivel caracteres, igual que la demo de la
   catedra: vocabulario de chars de train, PAD=0, UNK=1, truncado a max_text_len
   (el titulo entra entero: el sufijo de estado esta al final y mide <= 81 chars).
+- Para las formulaciones de INGREDIENTES (9na tanda) la lista se codifica como
+  CONJUNTO: vocabulario de ingredientes de train (PAD=0, UNK=1 para no vistos),
+  un indice por item, padded a MAX_INGREDIENTS; viaja en el slot del texto.
 """
 
 import re as _re_mod
@@ -51,6 +54,7 @@ TARGET = 'bought'
 TARGET_AUX = 'cart'  # target auxiliar para multi-task (--cart-aux); NUNCA es input
 PAD_IDX, UNK_IDX = 0, 1  # reservados del vocabulario de caracteres
 MAX_TEXT_LEN = 256       # p95 de title+description = 243 chars
+MAX_INGREDIENTS = 5      # largo maximo de la lista de ingredientes (maximo global del CSV)
 STATUS_SUFFIX_RE = r'\s*\([^)]+\)$'  # "(Best Seller)" etc. al final del titulo
 
 
@@ -139,6 +143,8 @@ class Preprocessor:
     cat_features: list = None   # None -> CAT_FEATURES (instancias viejas)
     num_features: list = None   # None -> NUM_FEATURES
     include_cart: bool = False  # True -> y de shape (N, 2): [bought, cart] (--cart-aux)
+    ing_vocab: dict = None      # ingrediente -> indice (0=PAD, 1=UNK); formulaciones ing_*
+    use_ingredients: bool = False  # True -> el 3er tensor es la lista de ingredientes, no texto
 
     @property
     def cats(self):
@@ -150,7 +156,8 @@ class Preprocessor:
 
     @classmethod
     def fit(cls, train_df, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False, text_tokens='chars'):
+            extra_features=(), include_cart=False, text_tokens='chars',
+            use_ingredients=False):
         desconocidos = set(extra_features) - set(EXTRA_FEATURES)
         if desconocidos:
             raise ValueError(f'extra_features desconocidos: {sorted(desconocidos)} '
@@ -171,14 +178,25 @@ class Preprocessor:
         else:
             chars = sorted(set('\n'.join(train_df['title']) + '\n'.join(train_df['description'])))
             char_vocab = {c: i + 2 for i, c in enumerate(chars)}  # 0=PAD, 1=UNK
+        ing_vocab = None
+        if use_ingredients:
+            # vocabulario de INGREDIENTES de train (mismo contrato que el de chars:
+            # nada de test entra al vocabulario; los no vistos caen en UNK)
+            items = sorted({t.strip() for lst in train_df['ingredients'].str.split(',')
+                            for t in lst})
+            ing_vocab = {v: i + 2 for i, v in enumerate(items)}  # 0=PAD, 1=UNK
         return cls(vocabs=vocabs, num_mean=num.mean(axis=0), num_std=num.std(axis=0) + 1e-8,
                    char_vocab=char_vocab, max_text_len=max_text_len, strip_status=strip_status,
                    cat_features=cats, num_features=nums, include_cart=include_cart,
-                   text_tokens=text_tokens)
+                   text_tokens=text_tokens, ing_vocab=ing_vocab, use_ingredients=use_ingredients)
 
     @property
     def char_vocab_size(self):
         return len(self.char_vocab) + 2  # + PAD + UNK
+
+    @property
+    def ing_vocab_size(self):
+        return len(self.ing_vocab) + 2  # + PAD + UNK
 
     @staticmethod
     def _numeric_raw_static(df, num_features):
@@ -207,9 +225,13 @@ class Preprocessor:
             axis=1,
         )
         x_num = (self._numeric_raw(df) - self.num_mean) / self.num_std
-        x_text = np.stack([
-            self._encode_text(t, d) for t, d in zip(df['title'], df['description'])
-        ])
+        if getattr(self, 'use_ingredients', False):
+            # las formulaciones ing_* viajan en el slot del texto (como --text-emb)
+            x_text = np.stack([self._encode_ingredients(s) for s in df['ingredients']])
+        else:
+            x_text = np.stack([
+                self._encode_text(t, d) for t, d in zip(df['title'], df['description'])
+            ])
         if getattr(self, 'include_cart', False):
             y = df[[TARGET, TARGET_AUX]].to_numpy()
         else:
@@ -232,6 +254,17 @@ class Preprocessor:
         ids = [self.char_vocab.get(t, UNK_IDX) for t in toks]
         return np.array(ids + [PAD_IDX] * (self.max_text_len - len(ids)), dtype=np.int64)
 
+    def _encode_ingredients(self, ingredients):
+        """'Wheat flour, Yeast, Salt' -> indices del vocabulario de train, PAD al final.
+
+        La lista no tiene orden conocido (el orden escrito no significa nada), asi
+        que quien consuma esto NO debe usar positional encoding (IngredientEncoder
+        en btr/model.py trata la lista como conjunto).
+        """
+        ids = [self.ing_vocab.get(t.strip(), UNK_IDX)
+               for t in ingredients.split(',')][:MAX_INGREDIENTS]
+        return np.array(ids + [PAD_IDX] * (MAX_INGREDIENTS - len(ids)), dtype=np.int64)
+
     def bin_edges(self, train_df, n_bins=16):
         """Bordes por cuantiles de train para numeric_mode='bins' (en escala ya normalizada)."""
         x_num = (self._numeric_raw(train_df) - self.num_mean) / self.num_std
@@ -242,7 +275,7 @@ class Preprocessor:
 
 def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
             extra_features=(), include_cart=False, text_tokens='chars',
-            train_frac=1.0, cv_k=0, cv_fold=0):
+            train_frac=1.0, cv_k=0, cv_fold=0, use_ingredients=False):
     """Pipeline completo: carga -> split por query -> fit en train -> tensores.
 
     train_frac < 1 submuestrea las QUERIES de train (curva de aprendizaje; val y
@@ -257,7 +290,7 @@ def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
         train_df = train_df[train_df['query_id'].isin(set(qs[:int(len(qs) * train_frac)]))]
     prep = Preprocessor.fit(train_df, max_text_len=max_text_len, strip_status=strip_status,
                             extra_features=extra_features, include_cart=include_cart,
-                            text_tokens=text_tokens)
+                            text_tokens=text_tokens, use_ingredients=use_ingredients)
     return prep, train_df, {
         'train': prep.transform(train_df),
         'val': prep.transform(val_df),
