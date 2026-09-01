@@ -144,6 +144,9 @@ def canon(c):
     il = str(int(num('ing_layer', 1))) \
         if (arch == 'ing_tower' or (arch == 'transformer' and form == 'ing_fusion')) else '-'
 
+    # ---- 10ma tanda: cabeza del MLP configurable ----
+    mh = (str(c.get('mlp_hidden') or '').replace(' ', '') or '-') if arch == 'mlp' else '-'
+
     return '|'.join([
         arch, form, drops, strip, nmode, nbins, str(int(c['d_model'])), nh, nl,
         ffloat(c.get('dropout', 0.1)), pool, posit, caus, posw, maxlen,
@@ -152,7 +155,7 @@ def canon(c):
         catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
         frac, init, mlm, cv, pf,
         wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-        som, ae, ael, pca, temb, tembft, templr, il,
+        som, ae, ael, pca, temb, tembft, templr, il, mh,
     ])
 
 
@@ -167,7 +170,7 @@ CFG_FIELDS = ['arch', 'formulation', 'drop_features', 'strip_status', 'max_text_
               'sin_layernorm', 'init_from', 'freeze_backbone', 'reinit_head', 'l2sp',
               'distill_from', 'distill_alpha', 'embed_from', 'som_feature',
               'pretrain_ae', 'ae_latent', 'pca',
-              'text_emb', 'text_emb_finetune', 'text_emb_lr', 'ing_layer']
+              'text_emb', 'text_emb_finetune', 'text_emb_lr', 'ing_layer', 'mlp_hidden']
 
 CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 'first',
                 'cart_aux': 0.0, 'listwise_texto': False, 'cat_feature_encoding': '',
@@ -180,7 +183,7 @@ CFG_DEFAULTS = {'cat_encoding': 'embedding', 'hash_buckets': 8, 'cls_position': 
                 'distill_from': '', 'distill_alpha': 1.0, 'embed_from': '',
                 'som_feature': 0, 'pretrain_ae': 0, 'ae_latent': 0, 'pca': 0,
                 'text_emb': '', 'text_emb_finetune': '', 'text_emb_lr': 1e-5,
-                'ing_layer': 1}
+                'ing_layer': 1, 'mlp_hidden': ''}
 
 
 def cfg_dict(c):
@@ -846,6 +849,9 @@ function canonKey(c){
   const il = (arch==='ing_tower' || (arch==='transformer' && form==='ing_fusion'))
     ? String(Math.trunc(numo(c.ing_layer,1))) : '-';
 
+  // ---- 10ma tanda: cabeza del MLP configurable ----
+  const mh = arch==='mlp' ? (String(c.mlp_hidden||'').replace(/ /g,'')||'-') : '-';
+
   return [arch, form, drops, strip, nmode, nbins, String(Math.trunc(c.d_model)), nh, nl,
     ffloat(c.dropout??0.1), pool, posit, caus, posw, maxlen,
     String(Math.trunc(c.epochs??60)), String(Math.trunc(c.batch_size??256)),
@@ -853,7 +859,7 @@ function canonKey(c){
     catenc, buckets, clspos, cart, extras, lwtext, catfe, ttok, w2v,
     frac, init, mlm, cv, pf,
     wd, fdrop, lsm, sinres, sinln, ifrom, frz, rih, l2sp, dst, dsta, efrom,
-    som, ae, ael, pca, temb, tembft, templr, il].join('|');
+    som, ae, ael, pca, temb, tembft, templr, il, mh].join('|');
 }
 
 // auto-test contra las claves generadas en Python (guardia anti-drift)

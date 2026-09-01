@@ -727,7 +727,7 @@ class MLPBaseline(nn.Module):
     def __init__(self, cat_cardinalities, n_numeric, d_model=32, dropout=0.1,
                  numeric_mode='linear', bin_edges=None, pos_weight=None,
                  cat_encoding='embedding', cat_tables=None, hash_buckets=8,
-                 cart_lambda=0.0, cat_modes=None):
+                 cart_lambda=0.0, cat_modes=None, mlp_hidden=None):
         super().__init__()
         self.cart_lambda = cart_lambda
         self.onehot = cat_encoding == 'onehot'
@@ -746,12 +746,16 @@ class MLPBaseline(nn.Module):
                                               numeric_mode, bin_edges,
                                               cat_encoding, cat_tables, hash_buckets, cat_modes)
             in_dim = self.tokenizer.n_tokens * d_model
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, 8 * d_model), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(8 * d_model, 2 * d_model), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(2 * d_model, 1),
-        )
-        self.cart_head = nn.Linear(2 * d_model, 1) if cart_lambda else None
+        # cabeza configurable (tanda 10): --mlp-hidden 'N,N,...'; default = 8d,2d (la de siempre)
+        hid = ([int(x) for x in str(mlp_hidden).split(',') if x.strip()]
+               if mlp_hidden else [8 * d_model, 2 * d_model])
+        capas, prev = [], in_dim
+        for h in hid:
+            capas += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
+            prev = h
+        capas.append(nn.Linear(prev, 1))
+        self.net = nn.Sequential(*capas)
+        self.cart_head = nn.Linear(prev, 1) if cart_lambda else None
         self.register_buffer(
             'pos_weight',
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,

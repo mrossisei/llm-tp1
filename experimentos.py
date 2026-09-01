@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (121 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (154 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -360,6 +360,32 @@ EXPERIMENTOS |= {
     'ing_tower':     ([*ORD, '--arch', 'ing_tower'], 'tabular'),
     # ¿profundidad del encoder? (default 1 bloque: la lista tiene <= 5 items)
     'ing_fusion_l2': ([*ORD, '--formulation', 'ing_fusion', '--ing-layer', '2'], 'tabular'),
+}
+
+# ---- 10ma tanda (01/09): grilla d_model x cabezas + la cabeza del MLP (defensa) ----
+# (a) Grilla d_model {32,64,128} x n_head {1,2,4,8}, n_layer=2 y protocolo PAC, una
+# vez por encoding (ordinal y embedding): el mapa capacidad x reparto de cabezas
+# completo, para dos heatmaps de la defensa. La celda d32h4 ordinal ES feat_ordinal
+# (ya corrida): se reutiliza y no se duplica, para no engordar su grupo del panel.
+# Las 12 de embedding corren todas (feat_base es 60/8, otra clave; aca protocolo
+# unificado 300/20).
+# (b) La cabeza del MLP del Exp. 1, ahora configurable (--mlp-hidden): ancho,
+# profundidad y dropout sobre encoding ordinal — "el mejor MLP que pudimos".
+EXPERIMENTOS |= {
+    **{f'gc_o_d{d}h{h}': ([*ORD, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+       for d in (32, 64, 128) for h in (1, 2, 4, 8) if not (d == 32 and h == 4)},
+    **{f'gc_e_d{d}h{h}': ([*PAC, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+       for d in (32, 64, 128) for h in (1, 2, 4, 8)},
+    'mlp_ordinal':    (['--arch', 'mlp', *ORD], 'tabular'),
+    'mlp_ord_h256':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '256'], 'tabular'),
+    'mlp_ord_h128':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '128'], 'tabular'),
+    'mlp_ord_ancho':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '512,256'], 'tabular'),
+    'mlp_ord_prof3':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '256,128,64'], 'tabular'),
+    'mlp_ord_prof4':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '256,128,64,32'], 'tabular'),
+    'mlp_ord_do2':    (['--arch', 'mlp', *ORD, '--dropout', '0.2'], 'tabular'),
+    'mlp_ord_do3':    (['--arch', 'mlp', *ORD, '--dropout', '0.3'], 'tabular'),
+    'mlp_ord_grande': (['--arch', 'mlp', *ORD, '--mlp-hidden', '1024,256', '--dropout', '0.2'], 'tabular'),
+    'mlp_ord_mini':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '64,32'], 'tabular'),
 }
 
 

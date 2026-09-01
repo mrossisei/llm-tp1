@@ -574,6 +574,8 @@ def run_name(args, seed):
         parts.append(f"cartaux{args.cart_aux:g}")
     if args.ing_layer != 1:
         parts.append(f"il{args.ing_layer}")
+    if getattr(args, 'mlp_hidden', ''):
+        parts.append('mh' + args.mlp_hidden.replace(',', 'x'))
     for flag in ('positional', 'causal', 'pos_weight'):
         if getattr(args, flag):
             parts.append(flag.replace('_', ''))
@@ -704,7 +706,8 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight,
         model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'mlp':
         config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
-                      cart_lambda=args.cart_aux, **encod, **common)
+                      cart_lambda=args.cart_aux, mlp_hidden=(args.mlp_hidden or None),
+                      **encod, **common)
         model = MLPBaseline(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     elif args.arch == 'tower':
         config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
@@ -1258,6 +1261,9 @@ def build_parser():
     parser.add_argument('--pca', type=int, default=0, metavar='K',
                         help='--arch mlp: reemplazar la entrada por las K primeras '
                              'componentes principales de [one-hot|numericas]')
+    parser.add_argument('--mlp-hidden', default='', metavar='N,N,...',
+                        help='--arch mlp: capas ocultas de la cabeza, p. ej. 256,128 '
+                             '(default: 8d,2d = 256,64)')
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--lr', type=float, default=1e-3)
