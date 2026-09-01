@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (154 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (148 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -372,10 +372,15 @@ EXPERIMENTOS |= {
 # (b) La cabeza del MLP del Exp. 1, ahora configurable (--mlp-hidden): ancho,
 # profundidad y dropout sobre encoding ordinal — "el mejor MLP que pudimos".
 EXPERIMENTOS |= {
+    # celdas que YA corrieron en tandas previas (misma clave canonica) y se
+    # reutilizan tal cual para el heatmap, sin duplicar corridas:
+    #   ordinal:  d32h4 = feat_ordinal · d32h1 = camp_ordinal_h1
+    #   embedding: d32h1/h2/h4 = pac20_feat_h1/h2/base · d64h1 = camp_d64h1 · d64h4 = pac20_feat_d64
     **{f'gc_o_d{d}h{h}': ([*ORD, '--d-model', str(d), '--n-head', str(h)], 'tabular')
-       for d in (32, 64, 128) for h in (1, 2, 4, 8) if not (d == 32 and h == 4)},
+       for d in (32, 64, 128) for h in (1, 2, 4, 8) if (d, h) not in {(32, 4), (32, 1)}},
     **{f'gc_e_d{d}h{h}': ([*PAC, '--d-model', str(d), '--n-head', str(h)], 'tabular')
-       for d in (32, 64, 128) for h in (1, 2, 4, 8)},
+       for d in (32, 64, 128) for h in (1, 2, 4, 8)
+       if (d, h) not in {(32, 1), (32, 2), (32, 4), (64, 1), (64, 4)}},
     'mlp_ordinal':    (['--arch', 'mlp', *ORD], 'tabular'),
     'mlp_ord_h256':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '256'], 'tabular'),
     'mlp_ord_h128':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '128'], 'tabular'),
