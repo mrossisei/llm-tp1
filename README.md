@@ -90,25 +90,23 @@ probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 .venv/bin/python experimentos.py --resumen           # media ± desvío por configuración
 ```
 
-Los experimentos son **barridos** sobre la configuración base (d_model 32, 4 cabezas, 2 bloques,
-dropout 0.1, AdamW lr 1e-3, weight decay 0.01, batch 256, paciencia 20, 6 seeds); una corrida
-equivalente ya hecha (mismo nombre canónico, aunque tenga otro tag) se reutiliza y no se repite.
-Los experimentos `mejor_*` heredan `MEJOR_ARQ` (la mejor arquitectura, una sola línea de
-`experimentos.py`). Al terminar una tanda: commitear `salidas/resultados/` y pushear (los
-checkpoints de `salidas/pesos/` quedan solo en la máquina local).
+Los experimentos son **barridos** encadenados: en cada uno nos quedamos con la configuración de
+mayor PR-AUC de validación y el siguiente parte de ella (`MEJOR_ARQ`, una sola línea de
+`experimentos.py`; hoy d_model 32, 16 cabezas, 4 bloques, ordinal). Una corrida equivalente ya
+hecha (mismo nombre canónico, aunque tenga otro tag) se reutiliza y no se repite. Al terminar una
+tanda: commitear `salidas/resultados/` y pushear (los checkpoints de `salidas/pesos/` quedan solo
+en la máquina local).
 
 | experimento | barrido | configs | figura |
 |---|---|---|---|
 | Capacidad | d_model {32, 64, 128, 256} × cabezas {1, 2, 4, 8, 16}, por encoding (ordinal / embedding) | `gc_o_*`, `gc_e_*` + celdas previas | `grilla.png` |
 | Profundidad | d_model {32, 64, 128, 256} × bloques {1, 2, 4, 8}, con las cabezas que mejor dieron | `gl_o_*` | `grilla_bloques.png` |
-| Encoding de las categóricas | {ordinal, embedding, target, frecuencia, hashing} × d_model {16, 32, 64} | `feat_*`, `ge_*` | `encoding.png` |
-| Pre-entrenamiento MLM | épocas {0, 5, 10, 20, 40} × encoding | `*_mlm20`, `gm_*` | `mlm.png` |
-| Regularización | dropout {0, 0.1, 0.2, 0.3} × weight decay {0, 1e-3, 1e-2, 1e-1} | `reg_*`, `gr_*` | `regularizacion.png` |
-| Optimización | learning rate {1e-4, 3e-4, 1e-3, 3e-3} × batch {64, 128, 256, 512} | `go_*` | `optimizacion.png` |
-| Ingredientes (la alternativa) | encoder de conjunto (1 / 2 bloques), un token por ingrediente, solo ingredientes | `ing_*` | `ingredientes.png` |
-| Transfer learning | título sin badge embebido por MiniLM-L6 / mpnet-base / bge-large (congelados), MiniLM fine-tuneado, solo el título | `tl_*` | `transfer.png` |
-| Ingredientes sobre la mejor arquitectura (preparado) | encoder de conjunto chico / base / grande (d_model, cabezas, bloques del encoder) vs sin ingredientes | `mejor_ing_*` | `ingredientes_mejor.png` |
-| Tiempo sobre la mejor arquitectura (preparado) | hora y día de la semana como (sin, cos) o como categóricas, vs sin tiempo | `mejor_tiempo_*` | `tiempo.png` |
+| Encoding de las categóricas | {ordinal, embedding, target} × d_model {32, 64, 128}, con las cabezas y bloques de la ganadora | `enc_*` | `encoding.png` |
+| Pre-entrenamiento MLM | épocas {0, 5, 10, 20, 40} × encoding, sobre la ganadora | `mlm_*` | `mlm.png` |
+| Optimización | learning rate {1e-4, 3e-4, 1e-3} × batch {64, 128, 256}, sobre la ganadora | `opt_*` | `optimizacion.png` |
+| Ingredientes (la alternativa) | encoder de conjunto chico / base / grande vs sin ingredientes, sobre la ganadora; control solo ingredientes | `ing_*` | `ingredientes.png` |
+| Transfer learning | título sin badge embebido por MiniLM-L6 / mpnet-base / bge-large (congelados), MiniLM fine-tuneado, solo el título; sobre la ganadora | `tl_*` | `transfer.png` |
+| Tiempo | hora y día de la semana como (sin, cos) o como categóricas, vs sin tiempo; sobre la ganadora | `tiempo_*` | `tiempo.png` |
 | Robustez del modelo final | curva de aprendizaje, 6 splits × 6 inits, GroupKFold 5×6, calibración, ensembles | `curva_*`, `robu_*`, `cv5_*` | `curva_aprendizaje.png` |
 | Hipótesis refutadas | causal (y causal con CLS al final), bins, positional, mean pooling, pos_weight | `pac20_feat_*`, `feat_causal_last` | — |
 

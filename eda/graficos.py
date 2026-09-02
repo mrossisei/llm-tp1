@@ -11,6 +11,7 @@ reproduce con test. Las celdas que todavia no corrieron quedan en blanco. import
 atencion() recalculan sobre los checkpoints de salidas/pesos/ del modelo final.
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def guardar(fig, nombre):
 # ---------- 2b. grilla d_model x cabezas (dos heatmaps) y d_model x bloques (10ª y 11ª tandas) ----------
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Rectangle
-from experimentos import (D_ENC, D_GRILLA, DROPOUTS, H_GRILLA, L_GRILLA, LRS, BATCHES, MLM_EPOCAS, WDS,
+from experimentos import (D_ENC, D_GRILLA, H_GRILLA, L_GRILLA, LRS, BATCHES, MLM_EPOCAS, MEJOR_ARQ,
                           GrillaIncompleta, canon_mejor, celda_grilla, grupo_canonico, mejor_h)
 
 
@@ -111,7 +112,8 @@ def _params(grupo):
 
 
 def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabels, negrita=False, ns=None):
-    """datos[i][j] = (media, desvio) o None; la celda elegida va recuadrada; ns[i][j] = seeds de la celda."""
+    """datos[i][j] = (media, desvio) o None; la(s) celda(s) elegida(s) van recuadradas (una tupla o una
+    lista de tuplas); ns[i][j] = seeds de la celda."""
     M_ = np.array([[np.nan if c is None else c[0] for c in fila] for fila in datos])
     cmap = cmap.copy()
     cmap.set_bad('#FFFFFF')
@@ -131,8 +133,8 @@ def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabel
                     ha='center', va='center', fontsize=11.5 if n >= 6 else 10,
                     color='#E8F3EF' if claro else INK2)
     if elegida:
-        i, j = elegida
-        ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor=INK, linewidth=3.5, zorder=4))
+        for i, j in (elegida if isinstance(elegida, list) else [elegida]):
+            ax.add_patch(Rectangle((j - 0.5, i - 0.5), 1, 1, fill=False, edgecolor=INK, linewidth=3.5, zorder=4))
     ax.set_xticks(range(len(cols)), [str(c) for c in cols])
     ax.set_yticks(range(len(filas)), ylabels)
     ax.set_xlabel(xlabel)
@@ -189,8 +191,12 @@ def grilla(split=None, nombre='grilla.png'):
     norm = _norma(todos)
     fig, axes = plt.subplots(1, 2, figsize=(11.9, 3.55 if len(D_) == 3 else 4.3), gridspec_kw={'wspace': 0.42})
     for ax, (enc, titulo) in zip(axes, paneles):
-        _heatmap(ax, datos[enc], D_, H_, (D_.index(32), H_.index(4)) if enc == 'o' else None, titulo,
-                 CMAP_TEAL, norm, 'cabezas de atención',
+        # ordinal: se recuadra la mejor celda de cada fila (las cabezas con las que sigue el Exp. 2)
+        cajas = None
+        if enc == 'o':
+            cajas = [(i, max(range(len(H_)), key=lambda j: (datos[enc][i][j] or (-1,))[0])) for i in range(len(D_))
+                     if any(datos[enc][i])]
+        _heatmap(ax, datos[enc], D_, H_, cajas, titulo, CMAP_TEAL, norm, 'cabezas de atención',
                  [_ylabel(celda_grilla(enc, d, 4), d) for d in D_], negrita=(enc == 'o'))
     _colorbar(fig, axes, CMAP_TEAL, norm, split_es)
     guardar(fig, nombre)
@@ -227,7 +233,9 @@ def grilla_bloques(split=None, nombre='grilla_bloques.png'):
         print(f'  (grilla incompleta: faltan {faltan} celdas, quedan en blanco)')
     norm = _norma(todos)
     fig, ax = plt.subplots(figsize=(7.0, 4.3))
-    _heatmap(ax, datos, D_GRILLA, L_GRILLA, (0, L_GRILLA.index(2)), 'Encoding ordinal · cabezas: las mejores de cada d',
+    d_mejor = int(MEJOR_ARQ[MEJOR_ARQ.index('--d-model') + 1]); l_mejor = int(MEJOR_ARQ[MEJOR_ARQ.index('--n-layer') + 1])
+    _heatmap(ax, datos, D_GRILLA, L_GRILLA, (D_GRILLA.index(d_mejor), L_GRILLA.index(l_mejor)),
+             'Encoding ordinal · cabezas: las mejores de cada d — recuadro: la ganadora',
              CMAP_TEAL, norm, 'bloques (atención + FFN)',
              [f'{d} · {hs[d]} cab.' for d in D_GRILLA], negrita=True)
     ax.set_ylabel('d_model · cabezas')
@@ -240,11 +248,6 @@ def grilla_bloques_test():
 
 
 # ---------- 2c. barridos de la 12ª tanda: encoding x d_model, MLM, regularizacion, optimizacion ----------
-def _grupo(stem_sin_seed):
-    """Alias legible: el prefijo de archivo de un grupo (sin _seedNN)."""
-    return stem_sin_seed
-
-
 def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel, split, figsize=(7.0, 4.3),
                     negrita=True):
     """celdas[(fila, col)] = prefijo de archivo; dibuja un heatmap tolerante a celdas faltantes."""
@@ -270,34 +273,37 @@ def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel
     guardar(fig, nombre)
 
 
-ENCODINGS = [('ordinal', 'ordinal'), ('embedding', 'embedding'), ('target', 'target'),
-             ('freq', 'frecuencia'), ('hash8', 'hashing (8)')]
+def _canon(**cambios):
+    """Nombre canonico de la ganadora con cambios: d=..., enc='embedding'|'target'|'ordinal', sufijo='_mlm5'."""
+    canon = canon_mejor()                      # p. ej. features_d32_h16_l4_linear_catordinal
+    if 'd' in cambios:
+        canon = re.sub(r'_d\d+_', f'_d{cambios["d"]}_', canon, count=1)
+    if 'enc' in cambios:
+        canon = canon.replace('_catordinal', '')
+        if cambios['enc'] != 'embedding':
+            canon = canon + f'_cat{cambios["enc"]}'
+    if 'form' in cambios:
+        canon = canon.replace('features_', cambios['form'] + '_', 1)
+    return canon + cambios.get('sufijo', '')
 
 
-def celda_encoding(enc, d):
-    """Prefijo de archivo de la celda (encoding, d_model) del barrido encoding x d_model."""
-    fijas = {('ordinal', 16): 'min_d16_features_d16_h4_l2_linear_catordinal',
-             ('ordinal', 32): 'feat_ordinal_features_d32_h4_l2_linear_catordinal',
-             ('ordinal', 64): 'gc_o_d64h4_features_d64_h4_l2_linear_catordinal',
-             ('embedding', 16): 'pac20_feat_d16_features_d16_h4_l2_linear',
-             ('embedding', 32): 'pac20_feat_base_features_d32_h4_l2_linear',
-             ('embedding', 64): 'pac20_feat_d64_features_d64_h4_l2_linear',
-             ('target', 32): 'feat_target_features_d32_h4_l2_linear_cattarget',
-             ('freq', 32): 'feat_freq_features_d32_h4_l2_linear_catfreq',
-             ('hash8', 32): 'feat_hash8_features_d32_h4_l2_linear_cathashing8'}
-    if (enc, d) in fijas:
-        return fijas[(enc, d)]
-    suf = {'target': 'cattarget', 'freq': 'catfreq', 'hash8': 'cathashing8'}[enc]
-    return f'ge_{enc}_d{d}_features_d{d}_h4_l2_linear_{suf}'
+def _grupo(**cambios):
+    """El grupo ya corrido con ese nombre canonico (cualquier tag), o un prefijo que no existe."""
+    canon = _canon(**cambios)
+    return grupo_canonico(canon) or f'(falta)_{canon}'
+
+
+ENCODINGS = [('ordinal', 'ordinal (el elegido)'), ('embedding', 'embedding'), ('target', 'target')]
 
 
 def encoding(split=None, nombre='encoding.png'):
     split = split or SPLIT
     print(f'encoding x d_model ({split})')
-    celdas = {(et, d): celda_encoding(enc, d) for enc, et in ENCODINGS for d in D_ENC}
-    _heatmap_simple(nombre, 'Encoding de las categóricas × d_model', celdas, [et for _, et in ENCODINGS],
-                    list(D_ENC), (0, D_ENC.index(32)), 'd_model', 'encoding de las categóricas', split,
-                    figsize=(7.2, 4.6))
+    celdas = {(et, d): _grupo(enc=enc, d=d) for enc, et in ENCODINGS for d in D_ENC}
+    d_mejor = int(MEJOR_ARQ[MEJOR_ARQ.index('--d-model') + 1])
+    _heatmap_simple(nombre, 'Encoding de las categóricas × d_model (cabezas y bloques de la ganadora)', celdas,
+                    [et for _, et in ENCODINGS], list(D_ENC), (0, D_ENC.index(d_mejor)), 'd_model',
+                    'encoding de las categóricas', split, figsize=(7.2, 4.0))
 
 
 def encoding_test():
@@ -305,15 +311,7 @@ def encoding_test():
 
 
 def celda_mlm(enc, epocas):
-    base = ('feat_ordinal_features_d32_h4_l2_linear_catordinal' if enc == 'o'
-            else 'pac20_feat_base_features_d32_h4_l2_linear')
-    if epocas == 0:
-        return base
-    if epocas == 20:
-        return ('feat_ordinal_mlm20_features_d32_h4_l2_linear_catordinal_mlm20' if enc == 'o'
-                else 'feat_mlm20_features_d32_h4_l2_linear_mlm20')
-    return (f'gm_o_mlm{epocas}_features_d32_h4_l2_linear_catordinal_mlm{epocas}' if enc == 'o'
-            else f'gm_e_mlm{epocas}_features_d32_h4_l2_linear_mlm{epocas}')
+    return _grupo(enc='ordinal' if enc == 'o' else 'embedding', sufijo=f'_mlm{epocas}' if epocas else '')
 
 
 def mlm(split=None, nombre='mlm.png'):
@@ -355,47 +353,18 @@ def mlm_test():
     mlm('test', 'mlm_test.png')
 
 
-CAMPEON = 'feat_ordinal_features_d32_h4_l2_linear_catordinal'
-CANON = 'features_d32_h4_l2_linear_catordinal'   # la parte canonica del nombre, sin el tag
-
-
-def celda_reg(do, wd):
-    fijas = {('0.1', '0.01'): CAMPEON, ('0', '0.01'): f'reg_do0_{CANON}_do0',
-             ('0.3', '0.01'): f'reg_do03_{CANON}_do0.3', ('0.1', '0'): f'reg_wd0_{CANON}_wd0',
-             ('0.1', '0.001'): f'reg_wd1e3_{CANON}_wd0.001', ('0.1', '0.1'): f'reg_wd1e1_{CANON}_wd0.1',
-             ('0', '0'): f'reg_nada_{CANON}_do0_wd0'}
-    if (do, wd) in fijas:
-        return fijas[(do, wd)]
-    suf = (f'_do{do}' if do != '0.1' else '') + (f'_wd{wd}' if wd != '0.01' else '')
-    return f'gr_do{do}_wd{wd}_{CANON}{suf}'
-
-
-def regularizacion(split=None, nombre='regularizacion.png'):
-    split = split or SPLIT
-    print(f'regularizacion ({split})')
-    celdas = {(do, wd): celda_reg(do, wd) for do in DROPOUTS for wd in WDS}
-    _heatmap_simple(nombre, 'Regularización: dropout × weight decay', celdas, list(DROPOUTS), list(WDS),
-                    (DROPOUTS.index('0.1'), WDS.index('0.01')), 'weight decay (AdamW)', 'dropout', split)
-
-
-def regularizacion_test():
-    regularizacion('test', 'regularizacion_test.png')
-
-
 def celda_opt(lr, bs):
-    if (lr, bs) == ('0.001', '256'):
-        return CAMPEON
     suf = (f'_lr{float(lr):g}' if lr != '0.001' else '') + (f'_bs{bs}' if bs != '256' else '')
-    return f'go_lr{lr}_bs{bs}_{CANON}{suf}'
+    return _grupo(sufijo=suf)
 
 
 def optimizacion(split=None, nombre='optimizacion.png'):
     split = split or SPLIT
     print(f'optimizacion ({split})')
     celdas = {(lr, bs): celda_opt(lr, bs) for lr in LRS for bs in BATCHES}
-    _heatmap_simple(nombre, 'Optimización: learning rate × batch', celdas,
+    _heatmap_simple(nombre, 'Optimización: learning rate × batch (sobre la ganadora)', celdas,
                     [f'{float(lr):g}' for lr in LRS], list(BATCHES),
-                    (LRS.index('0.001'), BATCHES.index('256')), 'batch', 'learning rate', split)
+                    (LRS.index('0.001'), BATCHES.index('256')), 'batch', 'learning rate', split, figsize=(6.4, 4.3))
 
 
 def optimizacion_test():
@@ -441,57 +410,36 @@ def puntos(nombre, filas, xlabel, figsize=(7.3, 4.0), xlim=None):
 
 
 def ingredientes():
-    print('ingredientes')
+    """Ingredientes vs sin ingredientes sobre la ganadora, con tres tamanos del encoder (+ el control)."""
+    print('ingredientes sobre la ganadora')
     puntos('ingredientes.png', [
-        ('features (sin ingredientes)', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('+ encoder de conjunto · 1 bloque', 'ing_fusion_ing_fusion_d32_h4_l2_linear_catordinal', 'a'),
-        ('+ encoder de conjunto · 2 bloques', 'ing_fusion_l2_ing_fusion_d32_h4_l2_linear_catordinal_il2', 'a'),
-        ('+ un token por ingrediente', 'ing_hybrid_ing_hybrid_d32_h4_l2_linear_catordinal', 'a'),
+        ('sin ingredientes (la ganadora)', _grupo(), 'e'),
+        ('+ encoder chico · d16 · 2 cab. · 1 bloque', _grupo(form='ing_fusion', sufijo='_ingd16_ingh2'), 'a'),
+        ('+ encoder base · d y cabezas del modelo · 1 bloque', _grupo(form='ing_fusion'), 'a'),
+        ('+ encoder grande · d64 · 8 cab. · 2 bloques', _grupo(form='ing_fusion', sufijo='_il2_ingd64_ingh8'), 'a'),
         ('solo ingredientes', 'ing_solo_ing_d32_h4_l2_linear', 'c'),
-    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', xlim=(0.1, 0.9))
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.6, 4.0), xlim=(0.1, 0.9))
 
 
 def transfer():
-    print('transfer learning (titulo preentrenado)')
+    print('transfer learning (titulo preentrenado) sobre la ganadora')
     puntos('transfer.png', [
-        ('sin título (el modelo final)', CAMPEON, 'e'),
-        ('+ MiniLM-L6 · 22M · congelado', f'tl_minilm_{CANON}_temb-titulominilm', 'a'),
-        ('+ mpnet-base · 110M · congelado', f'tl_mpnet_{CANON}_temb-titulompnet', 'a'),
-        ('+ bge-large · 335M · congelado', f'tl_bge_{CANON}_temb-titulobge', 'a'),
-        ('+ MiniLM-L6 · fine-tuning', f'tl_minilm_ft_{CANON}_tembft-titulo', 'a'),
-        ('solo el título (bge-large)', 'tl_bge_solo_features_d32_h4_l2_linear_temb-titulobge_sin-all', 'c'),
+        ('sin título (la ganadora)', _grupo(), 'e'),
+        ('+ MiniLM-L6 · 22M · congelado', _grupo(sufijo='_temb-titulominilm'), 'a'),
+        ('+ mpnet-base · 110M · congelado', _grupo(sufijo='_temb-titulompnet'), 'a'),
+        ('+ bge-large · 335M · congelado', _grupo(sufijo='_temb-titulobge'), 'a'),
+        ('+ MiniLM-L6 · fine-tuning', _grupo(sufijo='_tembft-titulo'), 'a'),
+        ('solo el título (bge-large)', _grupo(enc='embedding', sufijo='_temb-titulobge_sin-all'), 'c'),
     ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.3, 4.3), xlim=(0.1, 0.9))
 
 
-# ---------- 2e. sobre la MEJOR arquitectura: ingredientes (3 tamanos de encoder) y tiempo (2 encodings) ----------
-def _sobre_mejor(sufijo):
-    """Prefijo de archivo del grupo con la mejor arquitectura + `sufijo` canonico (cualquiera sea su tag)."""
-    canon = canon_mejor()
-    if sufijo:
-        canon = canon.replace('features_', 'ing_fusion_') if sufijo.startswith('ing:') else canon
-        sufijo = sufijo.split(':', 1)[1] if ':' in sufijo else sufijo
-        canon = canon + sufijo
-    return grupo_canonico(canon) or f'(falta)_{canon}'
-
-
-def ingredientes_mejor():
-    """Ingredientes vs sin ingredientes sobre la mejor arquitectura, con tres tamanos del encoder."""
-    print('ingredientes sobre la mejor arquitectura')
-    puntos('ingredientes_mejor.png', [
-        ('sin ingredientes (la mejor arquitectura)', _sobre_mejor(''), 'e'),
-        ('+ encoder chico · d16 · 2 cab. · 1 bloque', _sobre_mejor('ing:_ingd16_ingh2'), 'a'),
-        ('+ encoder base · d y cabezas del modelo · 1 bloque', _sobre_mejor('ing:'), 'a'),
-        ('+ encoder grande · d64 · 8 cab. · 2 bloques', _sobre_mejor('ing:_il2_ingd64_ingh8'), 'a'),
-    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.6, 3.8))
-
-
 def tiempo():
-    """Hora y dia de la semana, ciclicas: sin tiempo vs (sin, cos) vs categorico, sobre la mejor arquitectura."""
-    print('tiempo (hora, dia de la semana) sobre la mejor arquitectura')
+    """Hora y dia de la semana, ciclicas: sin tiempo vs (sin, cos) vs categorico, sobre la ganadora."""
+    print('tiempo (hora, dia de la semana) sobre la ganadora')
     puntos('tiempo.png', [
-        ('sin tiempo (la mejor arquitectura)', _sobre_mejor(''), 'e'),
-        ('+ hora y día como (sin, cos) · un token cada una', _sobre_mejor('_tiempo-ciclico'), 'a'),
-        ('+ hora y día como categóricas · 24 + 7 niveles', _sobre_mejor('_tiempo-cat'), 'a'),
+        ('sin tiempo (la ganadora)', _grupo(), 'e'),
+        ('+ hora y día como (sin, cos) · un token cada una', _grupo(sufijo='_tiempo-ciclico'), 'a'),
+        ('+ hora y día como categóricas · 24 + 7 niveles', _grupo(sufijo='_tiempo-cat'), 'a'),
     ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.6, 3.4))
 
 
@@ -631,9 +579,8 @@ def atencion():
 
 if __name__ == '__main__':
     que = sys.argv[1:] or ['grilla', 'grilla_test', 'grilla_bloques', 'grilla_bloques_test',
-                           'encoding', 'encoding_test', 'mlm', 'mlm_test', 'regularizacion',
-                           'regularizacion_test', 'optimizacion', 'optimizacion_test',
-                           'ingredientes', 'transfer', 'ingredientes_mejor', 'tiempo', 'curva_aprendizaje',
+                           'encoding', 'encoding_test', 'mlm', 'mlm_test', 'optimizacion', 'optimizacion_test',
+                           'ingredientes', 'transfer', 'tiempo', 'curva_aprendizaje',
                            'curvas_entrenamiento', 'importancia', 'atencion']
     for q in que:
         globals()[q]()

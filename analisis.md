@@ -1146,3 +1146,33 @@ meseta y en la caída con batch 512; lr 3e-3 con batch 64 no fue "ruidoso y peor
 (un vector de 384–1024 dims proyectado a 32, sobre 7.000 filas); el control "solo el título" en
 0.153 confirma que el nombre sin badge no tiene señal propia. El fine-tuning (1 seed) no lo
 arregla.
+
+## 20. La regla de la cadena (02/09): en cada experimento se elige lo que más da, y el siguiente parte de ahí
+
+Decisión de Fer, que cambia el criterio de §8.2 (empate → parsimonia) por el más simple y
+defendible: **en cada experimento nos quedamos con la configuración de mayor PR-AUC de
+validación, y el experimento siguiente se corre sobre ella**. Con ese criterio:
+
+1. Exp. 1 (capacidad, grilla 4 × 5 por encoding): para cada d_model se conservan las cabezas que
+   más dieron (ordinal: 32 → 16, 64 → 8, 128 → 16, 256 → 16).
+2. Exp. 2 (profundidad, d_model × bloques con esas cabezas): la celda de más validación es
+   **32 · 16 cabezas · 4 bloques, 0.841 ± 0.028** (51k parámetros; test 0.825 ± 0.023). Esa es la
+   ganadora hasta acá: `MEJOR_ARQ` en `experimentos.py`.
+3. Los barridos de la 12ª tanda (§19) se habían corrido sobre 32·4·2 y quedan como historia: se
+   **repiten sobre 32·16·4** — encoding × d_model (solo ordinal / embedding / target, a d 32 / 64 /
+   128: con 16 cabezas d 16 serían cabezas de 1 dimensión, y frecuencia / hashing ya colapsaron),
+   MLM (5 / 10 / 20 / 40 épocas × encoding), optimización (lr 1e-4 / 3e-4 / 1e-3 × batch 64 / 128 /
+   256; se deja de barrer dropout × weight decay), transfer learning (los 3 congelados, el
+   fine-tuning y el control), ingredientes (3 encoders) y tiempo (2 codificaciones). 34 configs
+   nuevas; la suite reutiliza por nombre canónico lo que coincide (ordinal d32 y d128 con 16
+   cabezas y 4 bloques ya existen en la grilla de bloques).
+4. Si algún experimento supera a 32·16·4, se actualiza `MEJOR_ARQ` y se relanza lo que sigue; al
+   cerrar la cadena se repite la robustez (curva de aprendizaje, 6 × 6 inits, GroupKFold,
+   calibración, ensembles, interpretabilidad) sobre la ganadora final, que hoy sigue calculada
+   sobre 32·4·2 en las diapositivas de resultados.
+
+Por qué las diapositivas 18 y 19 no coincidían: el heatmap de encoding se calculaba sobre las
+seeds comunes de un barrido incompleto (42–44, donde el campeón da 0.821) y el de bloques sobre
+las 6 seeds (0.835). Con la cadena sobre 32·16·4 y 6 seeds, la celda "ordinal d 32" del Exp. 3
+es literalmente la ganadora del Exp. 2 (mismo grupo de resultados), así que muestra el mismo
+número.
