@@ -163,15 +163,16 @@ EXPERIMENTOS |= {
 }
 
 # ---- Exp. 7 TRANSFER LEARNING sobre la ganadora: el TITULO sin badge embebido por un preentrenado
-# (eda/embed_titulos.py -> salidas/embeddings/, congelado), en tres tamanos; fine-tuning del chico;
-# control solo-titulo. Hipotesis: sobre 32·4·2 el titulo RESTO (-0.02/-0.04); se espera lo mismo. ----
+# (eda/embed_titulos.py -> salidas/embeddings/, congelado), en tres tamanos, y el control
+# solo-titulo. El fine-tuning (--text-emb-finetune, el encoder de 22M en el grafo) es caro y NO se
+# repite: la presentacion usa las 3 seeds que corrieron sobre 32·4·2 (grupo tl_minilm_ft_*_tembft-titulo).
+# Hipotesis: sobre 32·4·2 el titulo RESTO (-0.02/-0.04); se espera lo mismo. ----
 EMB_TITULO = 'salidas/embeddings/titulo_{}.npy'
 EXPERIMENTOS |= {
     'tl_minilm':    ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('minilm')], 'tabular'),
     'tl_mpnet':     ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('mpnet')], 'tabular'),
     'tl_bge':       ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('bge')], 'tabular'),
     'tl_bge_solo':  ([*MEJOR_SIN_ENC, '--text-emb', EMB_TITULO.format('bge'), '--drop-features', 'all'], 'tabular'),
-    'tl_minilm_ft': ([*MEJOR_ARQ, '--text-emb-finetune', 'sentence-transformers/all-MiniLM-L6-v2'], 'texto'),
 }
 
 # ---- Exp. 8 TIEMPO sobre la ganadora: hora del dia y dia de la semana, ciclicas (btr/data.py):
