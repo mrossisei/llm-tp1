@@ -9,8 +9,7 @@ sigmoide. El BTR de un producto es el promedio de esas probabilidades.
 4 cabezas, 2 bloques pre-LN, **26.177 parámetros**. PR-AUC de test **0.824 ± 0.018** (6 seeds),
 GroupKFold 5×6 0.821 ± 0.012, ensemble 0.834. Varas: regresión logística 0.698, azar 0.131.
 
-- [`propuesta.md`](propuesta.md): el diseño — formulación del problema, EDA, decisiones y plan de experimentos.
-- [`analisis.md`](analisis.md): el análisis de cada tanda de experimentos, con la evidencia y las decisiones.
+Las figuras y los números de la presentación los produce `eda/` (ver abajo).
 
 ## Estructura
 
@@ -20,7 +19,7 @@ GroupKFold 5×6 0.821 ± 0.012, ensemble 0.834. Varas: regresión logística 0.6
 │   ├── data.py                #   carga, features derivados (listing_status, price_rel), split por query, tensores
 │   ├── model.py               #   bloques del transformer (demo de la cátedra), FT-Transformer, encoder de ingredientes
 │   └── train.py               #   entrenamiento, early stopping por PR-AUC de validación, 16 métricas, multi-seed
-├── experimentos.py            # la suite curada (138 configs × 6 seeds), resumible, con --resumen y --plan
+├── experimentos.py            # la suite curada de experimentos, resumible, con --resumen y --plan
 ├── modelo_final/              # SOLO el modelo final, autocontenido: data.py, model.py, train.py, predecir.py, pesos/
 ├── eda/                       # los scripts que producen los números y figuras de la presentación
 │   ├── verificaciones.py      #   reproduce el EDA y los baselines (logística, azar)
