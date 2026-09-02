@@ -158,11 +158,21 @@ class FeatureTokenizer(nn.Module):
 
     def __init__(self, cat_cardinalities, n_numeric, d_model,
                  numeric_mode='linear', bin_edges=None,
-                 cat_encoding='embedding', cat_tables=None, hash_buckets=8):
+                 cat_encoding='embedding', cat_tables=None, hash_buckets=8, n_cyclic=0):
         super().__init__()
         self.numeric_mode = numeric_mode
         self.cat_encoding = cat_encoding
         self.n_cat = len(cat_cardinalities)
+        # variables CICLICAS (--tiempo ciclico): cada una llega como el par (sin, cos) de su
+        # angulo, al final de x_num, y se vuelve UN token con una proyeccion afin R^2 -> d_model
+        # (la misma idea que la recta por numerica, en dos dimensiones): asi la hora 23 y la
+        # 0 quedan cerca, cosa que un escalar ordenado no puede
+        self.n_cyclic = n_cyclic
+        self.n_numeric = n_numeric
+        if n_cyclic:
+            self.cyc_weight = nn.Parameter(torch.empty(n_cyclic, 2, d_model))
+            self.cyc_bias = nn.Parameter(torch.zeros(n_cyclic, d_model))
+            nn.init.normal_(self.cyc_weight, mean=0.0, std=0.02)
         modes = [cat_encoding] * self.n_cat
         self.cat_modes = modes
         if all(m == 'embedding' for m in modes):
@@ -215,7 +225,7 @@ class FeatureTokenizer(nn.Module):
     def n_tokens(self):
         n_num = self.num_weight.shape[0] if self.numeric_mode == 'linear' \
             else len(self.num_bin_embeddings)
-        return self.n_cat + n_num
+        return self.n_cat + n_num + getattr(self, 'n_cyclic', 0)
 
     def _cat_tokens(self, x_cat):
         if isinstance(self.cat_embeddings, nn.ModuleList):  # todo embedding (camino original)
@@ -232,7 +242,19 @@ class FeatureTokenizer(nn.Module):
         return out
 
     def forward(self, x_cat, x_num):
-        # x_cat: (batch, n_cat) long; x_num: (batch, n_num) float
+        # x_cat: (batch, n_cat) long; x_num: (batch, n_num [+ 2 por ciclica]) float
+        n_cyc = getattr(self, 'n_cyclic', 0)
+        x_cyc = None
+        if n_cyc:
+            x_cyc = x_num[:, -2 * n_cyc:].reshape(-1, n_cyc, 2)
+            x_num = x_num[:, :-2 * n_cyc]
+        tokens = self._tokens(x_cat, x_num)
+        if n_cyc:
+            cyc_tokens = torch.einsum('bkc,kcd->bkd', x_cyc, self.cyc_weight) + self.cyc_bias
+            tokens = torch.cat([tokens, cyc_tokens], dim=1)
+        return tokens
+
+    def _tokens(self, x_cat, x_num):
         tokens = self._cat_tokens(x_cat)
         if self.numeric_mode == 'linear':
             # (batch, n_num, 1) * (n_num, d_model) -> (batch, n_num, d_model)
@@ -265,7 +287,7 @@ class IngredientEncoder(nn.Module):
     """
 
     def __init__(self, ing_vocab_size, max_ingredients, d_model, n_head=4, n_layer=1,
-                 dropout=0.1):
+                 dropout=0.1, d_out=None):
         super().__init__()
         self.ing_embedding_table = nn.Embedding(ing_vocab_size, d_model, padding_idx=PAD_IDX)
         self.cls = nn.Parameter(torch.empty(1, 1, d_model))
@@ -275,6 +297,9 @@ class IngredientEncoder(nn.Module):
             [Block(d_model, n_head, seq_len, dropout) for _ in range(n_layer)]
         )
         self.ln_f = nn.LayerNorm(d_model)
+        # el encoder puede tener su propia dimension (--ing-d-model); su [ING] se proyecta a la
+        # del transformer principal para entrar como un token mas
+        self.proj = nn.Linear(d_model, d_out) if d_out and d_out != d_model else None
 
     def forward(self, x_ing):
         # x_ing: (batch, max_ingredients) long, 0 = PAD
@@ -285,7 +310,8 @@ class IngredientEncoder(nn.Module):
                           x_ing != PAD_IDX], dim=1)
         for block in self.blocks:
             x = block(x, mask)
-        return self.ln_f(x)[:, 0]
+        out = self.ln_f(x)[:, 0]
+        return self.proj(out) if self.proj is not None else out
 
 
 class BTRTransformer(nn.Module):
@@ -301,7 +327,8 @@ class BTRTransformer(nn.Module):
                  use_positional=False, numeric_mode='linear', bin_edges=None,
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
                  cat_tables=None, hash_buckets=8, ing_vocab_size=None, max_ingredients=0,
-                 ing_layer=1, text_emb_dim=0, hf_model=''):
+                 ing_layer=1, ing_d_model=None, ing_head=None, n_cyclic=0,
+                 text_emb_dim=0, hf_model=''):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
@@ -322,7 +349,7 @@ class BTRTransformer(nn.Module):
         if formulation in ('features', 'ing_fusion', 'ing_hybrid'):
             self.tokenizer = FeatureTokenizer(
                 cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges,
-                cat_encoding, cat_tables, hash_buckets
+                cat_encoding, cat_tables, hash_buckets, n_cyclic=n_cyclic
             )
             seq_len += self.tokenizer.n_tokens
         # los INGREDIENTES como conjunto (idea de Fer).
@@ -338,8 +365,9 @@ class BTRTransformer(nn.Module):
         if formulation == 'ing_fusion':
             assert ing_vocab_size and max_ingredients, \
                 'ing_fusion requiere vocabulario de ingredientes (use_ingredients en data)'
-            self.ing_encoder = IngredientEncoder(ing_vocab_size, max_ingredients, d_model,
-                                                 n_head, ing_layer, dropout)
+            self.ing_encoder = IngredientEncoder(ing_vocab_size, max_ingredients,
+                                                 ing_d_model or d_model, ing_head or n_head,
+                                                 ing_layer, dropout, d_out=d_model)
             seq_len += 1
         elif formulation in ('ing', 'ing_hybrid'):
             assert ing_vocab_size and max_ingredients, \

@@ -1057,3 +1057,92 @@ grilla.png` (val), `grilla_test.png` y `mlp.png` (val).
 (empate en val, +0.014 en test 5/6, 26k vs 124k), los Exp. 2 y 4 viejos se funden en la
 grilla (dos heatmaps, val), y la vara "mejor MLP" del cierre pasa de 0.797 (one-hot) a 0.810
 (ordinal). El modelo final no cambia: `feat_ordinal` 0.824 / ensemble 0.834.
+
+## 18. 11ª tanda: la grilla de cabezas completa (h16, d256) y la grilla d_model × bloques (corrida 02/09)
+
+168 corridas (28 configs × 6 seeds; 1.198 totales). Las hipótesis registradas antes de correr
+(comentario de la 11ª tanda en `experimentos.py`): (1) con ordinal, h16 mejora a d128 y empeora a
+d32; con embedding no mueve nada; (2) d256 no supera a d32/d64; (3) en bloques, l8 peor que l2
+en todos los d y ningún (d, l) supera a la elegida por más del desvío.
+
+**Grilla d_model × cabezas, PR-AUC de validación (test entre paréntesis):**
+
+| ordinal | h1 | h2 | h4 | h8 | h16 |
+|---|---|---|---|---|---|
+| d 32 · 26k | 0.823 (0.800) | 0.827 (0.801) | **0.835 (0.824)** ← elegida | 0.831 (0.815) | 0.836 (0.822) |
+| d 64 · 102k | 0.810 (0.780) | 0.818 (0.781) | 0.819 (0.824) | 0.838 (0.822) | 0.823 (0.802) |
+| d 128 · 400k | 0.752 (0.719) | 0.800 (0.776) | 0.814 (0.795) | 0.825 (0.821) | 0.830 (0.816) |
+| d 256 · 1,6M | 0.728 (0.693) | 0.772 (0.737) | 0.808 (0.770) | 0.824 (0.801) | 0.830 (0.821) |
+
+| embedding | h1 | h2 | h4 | h8 | h16 |
+|---|---|---|---|---|---|
+| d 32 · 28k | 0.836 (0.816) | 0.815 (0.795) | 0.827 (0.798) | 0.833 (0.796) | 0.828 (0.800) |
+| d 64 · 106k | 0.832 (0.800) | 0.830 (0.808) | 0.832 (0.815) | 0.820 (0.796) | 0.834 (0.787) |
+| d 128 · 408k | 0.834 (0.813) | 0.834 (0.815) | 0.832 (0.811) | 0.818 (0.798) | 0.841 (0.803) |
+| d 256 · 1,6M | 0.792 (0.739) | 0.831 (0.785) | 0.826 (0.821) | 0.833 (0.799) | 0.821 (0.808) |
+
+1. **Hipótesis (1), a medias.** h16 mejora a d128 (0.825 → 0.830) y a d256 (0.824 → 0.830),
+   pero NO empeora a d32: 0.836 con cabezas de 2 dimensiones, empate exacto con las 4 cabezas
+   del campeón (+0.001, 3/6). La regla de la 10ª tanda ("cabezas de ~8 dims") se corrige a
+   **"con ordinal, más cabezas nunca daña y una sola cabeza grande se derrumba"**: la diagonal
+   h1 va 0.823 → 0.810 → 0.752 → 0.728. Con embedding h16 tampoco mueve nada (0.821–0.841),
+   salvo el derrumbe de 256·1 (0.792), que también aparece ahí.
+2. **Hipótesis (2), confirmada.** d256 no supera a nadie: mejor celda ordinal 64·8 (0.838),
+   mejor de embedding 128·16 (0.841); 32·4 ordinal (0.835) queda adentro del desvío de ambas
+   con 4× y 15× menos parámetros. En test la foto es la misma: las dos mejores celdas son
+   ordinal 32·4 y 64·4 (0.824); la mejor de embedding, 256·4 (0.821).
+3. **Las cabezas que mejor dieron por d_model** (lo que usa la grilla de bloques): ordinal
+   d32 → 16, d64 → 8, d128 → 16, d256 → 16 (la de d32 es un empate 0.836 vs 0.835 resuelto por
+   el máximo, como estaba diseñado).
+
+**Grilla d_model × bloques, ordinal, cabezas = las mejores de cada d (val; test entre paréntesis):**
+
+| | 1 bloque | 2 bloques | 4 bloques | 8 bloques |
+|---|---|---|---|---|
+| d 32 · 16 cab. | 0.835 (0.828) · 14k | 0.836 (0.822) · 26k | 0.841 (0.825) · 51k | 0.830 (0.813) · 102k |
+| d 64 · 8 cab. | 0.835 (0.830) · 52k | 0.838 (0.822) · 102k | 0.830 (0.816) · 201k | 0.837 (0.824) · 400k |
+| d 128 · 16 cab. | 0.831 (0.830) · 202k | 0.830 (0.816) · 400k | 0.829 (0.829) · 795k | 0.831 (0.815) · 1,6M |
+| d 256 · 16 cab. | 0.840 (0.821) · 797k | 0.830 (0.821) · 1,6M | 0.835 (0.823) · 3,2M | 0.824 (0.806) · 6,3M |
+
+4. **Hipótesis (3), la parte fuerte confirmada y la débil no.** Ningún (d, l) supera a la
+   elegida por más del desvío: el mejor Δ pareado es 32·16·4 bloques, +0.007 (4/6); las 16
+   celdas van de 0.824 a 0.841. Pero l8 no es "peor que l2 en todos los d": solo baja en los
+   extremos (32: −0.006; 256: −0.006), en el medio empata. **Un bloque alcanza** (0.831–0.840
+   en val; 0.828–0.830 en test, las celdas más altas de test de la grilla), coherente con
+   `min_l1` (§11.1). Diez mil filas y trece tokens no piden profundidad.
+
+**Qué cambia en la defensa**: el Exp. 1 (capacidad) muestra la grilla 4 × 5 con la lectura
+corregida (más cabezas nunca daña con ordinal; una cabeza grande se derrumba; d256 no suma),
+y el Exp. 2 (profundidad) muestra la grilla de bloques como meseta. La 12ª tanda (encoding ×
+d_model, MLM, regularización, optimización, transfer learning) queda pendiente de correr.
+
+## 19. 12ª tanda con 3 seeds (42–44, corrida 02/09): los barridos alrededor del campeón, y la decisión
+
+Comparación **pareada por seed contra el campeón sobre las mismas 3 seeds** (val; el campeón da
+0.821 en val y 0.830 en test sobre 42–44). Con 3 seeds el desvío entre seeds sigue en ~0.03: solo
+cuenta lo que se separa por más que eso o gana 3/3.
+
+| barrido | lo mejor del barrido (Δ val pareado) | lo que se cae | lectura |
+|---|---|---|---|
+| encoding × d_model | target d32 +0.005 (1/3), embedding d64 +0.007 (2/3) | frecuencia ~0.18 y hashing ~0.51 a los tres d | el orden no depende de la capacidad; entre ordinal / target / embedding no hay diferencia a 3 seeds (en test ordinal d32 sigue arriba: 0.830 vs 0.812 / 0.789) |
+| MLM (épocas) | ordinal 5 ép. +0.007 (2/3), 40 ép. +0.007 (1/3) | embedding 10 ép. −0.024 | ninguna cantidad de épocas mueve nada fuera del ruido; en test todas las variantes MLM quedan abajo del campeón (0.807–0.825 vs 0.830) |
+| dropout × weight decay | do 0.3 · wd 1e-3 +0.006 (2/3); do 0 · wd 1e-2 +0.002 (2/3) | do 0 · wd 0.1 −0.036 (0/3) | meseta plana de 0.816 a 0.827; el único extremo que duele es weight decay 0.1 sin dropout |
+| lr × batch | lr 3e-3 · bs 64 +0.005 (1/3); lr 1e-4 · bs 64–256 +0.001 (2/3) | lr 3e-3 · bs 512 −0.025; lr 1e-4 · bs 512 −0.016; lr 3e-3 · bs 256 −0.016 | meseta ancha; se cae con batch 512 (pocos pasos) en los dos extremos de lr |
+| transfer (título) | — | MiniLM −0.040 (0/3), mpnet −0.028 (1/3), bge-large −0.019 (0/3); fine-tuning (1 seed) −0.032 val / −0.074 test; solo el título 0.153 ≈ azar | el título sin badge RESTA, y resta más cuanto más chico el modelo; el nombre del producto no tiene señal propia |
+
+**Decisión (regla de §8.2: validación → empate → parsimonia).** Ningún cambio supera al campeón
+por más del desvío ni gana 3/3; los candidatos de las grillas de 6 seeds tampoco (64·8·2 +0.004,
+32·16·4 +0.007 con 4/6, 256·16·1 +0.006, embedding 128·16 +0.006 pero −0.021 en test). Por lo
+tanto **`MEJOR_ARQ` = el campeón**: ordinal, d 32, 4 cabezas, 2 bloques, dropout 0.1, weight
+decay 0.01, AdamW 1e-3, batch 256, sin MLM, sin título. Sobre esa arquitectura corre la 13ª
+tanda (`mejor_ing_*`, `mejor_tiempo_*`).
+
+**Hipótesis de la 12ª, revisadas.** (a) encoding: confirmada en lo grueso (frecuencia y hashing
+colapsan a todo d; el orden entre los tres buenos es empate a 3 seeds). (b) MLM: confirmada
+(nada fuera del ruido, en ninguno de los dos encodings). (c) regularización: confirmada (meseta;
+solo wd 0.1 sin dropout se cae; dropout 0.3 no duele en val). (d) optimización: confirmada en la
+meseta y en la caída con batch 512; lr 3e-3 con batch 64 no fue "ruidoso y peor" (+0.005).
+(e) transfer: la hipótesis era Δ≈0 y fue negativo: el token del título no es neutro, agrega ruido
+(un vector de 384–1024 dims proyectado a 32, sobre 7.000 filas); el control "solo el título" en
+0.153 confirma que el nombre sin badge no tiene señal propia. El fine-tuning (1 seed) no lo
+arregla.

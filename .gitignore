@@ -12,3 +12,6 @@ venv/
 # IDEs
 .idea/
 .vscode/
+
+# checkpoints: solo en la maquina local (pesan ~1.3 GB); los JSON de salidas/resultados tienen todo
+salidas/pesos/

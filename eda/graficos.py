@@ -42,13 +42,42 @@ SPLIT = 'val'   # 'val' = metrica de decision (defensa) · 'test' = lo que se re
 SPLIT_ES = {'val': 'validación', 'test': 'test'}[SPLIT]
 
 
-def _stats(grupo, split=None):
-    """(media, desvio poblacional) del PR-AUC de un grupo de resultados, seeds 42-47."""
+MIN_SEEDS = 1   # la 12a tanda llega de a seeds: una celda se dibuja con las que haya (y marca n)
+
+
+def _seeds(grupo):
+    return {int(f.name.rsplit('_seed', 1)[1][:-5]) for f in RESULTADOS.glob(f'{grupo}_seed4[2-7].json')}
+
+
+def _stats(grupo, split=None, seeds=None):
+    """(media, desvio poblacional) del PR-AUC de un grupo (seeds 42-47 las que haya, o solo `seeds`)."""
     vals = [json.loads(f.read_text())[split or SPLIT]['pr_auc']
-            for f in sorted(RESULTADOS.glob(f'{grupo}_seed4[2-7].json'))]
-    assert len(vals) == 6, f'{grupo}: {len(vals)} corridas'
+            for f in sorted(RESULTADOS.glob(f'{grupo}_seed4[2-7].json'))
+            if seeds is None or int(f.name.rsplit('_seed', 1)[1][:-5]) in seeds]
+    assert len(vals) >= MIN_SEEDS, f'{grupo}: {len(vals)} corridas'
     v = np.array(vals)
     return float(v.mean()), float(v.std())
+
+
+def _n(grupo):
+    return len(_seeds(grupo))
+
+
+def seeds_comunes(grupos):
+    """Las seeds que tienen TODOS los grupos ya corridos: mientras una tanda llega de a seeds, todas las
+    celdas se comparan sobre las mismas seeds (una celda con 1 seed contra medias de 6 engana).
+    Devuelve None si todos tienen las 6."""
+    conj = [_seeds(g) for g in grupos if _seeds(g)]
+    if not conj:
+        return None
+    comunes = set.intersection(*conj)
+    if all(len(c) == 6 for c in conj):
+        return None
+    return comunes or None
+
+
+def _nota_seeds(seeds):
+    return '' if seeds is None else f' — provisorio: seed{"s" if len(seeds) > 1 else ""} {", ".join(map(str, sorted(seeds)))}'
 
 
 def guardar(fig, nombre):
@@ -61,13 +90,13 @@ def guardar(fig, nombre):
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Rectangle
 from experimentos import (D_ENC, D_GRILLA, DROPOUTS, H_GRILLA, L_GRILLA, LRS, BATCHES, MLM_EPOCAS, WDS,
-                          GrillaIncompleta, celda_grilla, mejor_h)
+                          GrillaIncompleta, canon_mejor, celda_grilla, grupo_canonico, mejor_h)
 
 
-def _stats_o_nada(grupo, split):
-    """Como _stats, pero None si la celda todavia no tiene sus 6 corridas (grilla a medio correr)."""
+def _stats_o_nada(grupo, split, seeds=None):
+    """Como _stats, pero None si la celda todavia no corrio (grilla a medio correr)."""
     try:
-        return _stats(grupo, split)
+        return _stats(grupo, split, seeds)
     except AssertionError:
         return None
 
@@ -77,8 +106,8 @@ def _params(grupo):
     return json.loads(f.read_text())['n_parametros'] if f else None
 
 
-def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabels, negrita=False):
-    """datos[i][j] = (media, desvio) o None; la celda elegida va recuadrada."""
+def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabels, negrita=False, ns=None):
+    """datos[i][j] = (media, desvio) o None; la celda elegida va recuadrada; ns[i][j] = seeds de la celda."""
     M_ = np.array([[np.nan if c is None else c[0] for c in fila] for fila in datos])
     cmap = cmap.copy()
     cmap.set_bad('#FFFFFF')
@@ -93,7 +122,9 @@ def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabel
             claro = norm(m) > 0.55
             ax.text(j, i - 0.13, f'{m:.3f}', ha='center', va='center', fontsize=17, fontweight='bold',
                     color='white' if claro else INK)
-            ax.text(j, i + 0.27, f'± {s:.3f}', ha='center', va='center', fontsize=11.5,
+            n = ns[i][j] if ns else 6
+            ax.text(j, i + 0.27, f'± {s:.3f}' if n >= 6 else (f'± {s:.3f} · n={n}' if n > 1 else 'n=1'),
+                    ha='center', va='center', fontsize=11.5 if n >= 6 else 10,
                     color='#E8F3EF' if claro else INK2)
     if elegida:
         i, j = elegida
@@ -122,8 +153,9 @@ def _norma(valores, rango=0.06):
 def _colorbar(fig, axes, cmap, norm, split_es):
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     cb = fig.colorbar(sm, ax=axes, fraction=0.025, pad=0.02)
-    cb.set_label(f'PR-AUC {split_es}\n(media, 6 seeds)', fontsize=13)
+    cb.set_label(f'PR-AUC {split_es}\n(media entre seeds)', fontsize=13)
     cb.ax.tick_params(labelsize=12)
+    cb.ax.yaxis.set_major_formatter('{x:.3f}')
     cb.outline.set_visible(False)
 
 
@@ -194,6 +226,7 @@ def grilla_bloques(split=None, nombre='grilla_bloques.png'):
     _heatmap(ax, datos, D_GRILLA, L_GRILLA, (0, L_GRILLA.index(2)), 'Encoding ordinal · cabezas: las mejores de cada d',
              CMAP_TEAL, norm, 'bloques (atención + FFN)',
              [f'{d} · {hs[d]} cab.' for d in D_GRILLA], negrita=True)
+    ax.set_ylabel('d_model · cabezas')
     _colorbar(fig, ax, CMAP_TEAL, norm, split_es)
     guardar(fig, nombre)
 
@@ -212,7 +245,10 @@ def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel
                     negrita=True):
     """celdas[(fila, col)] = prefijo de archivo; dibuja un heatmap tolerante a celdas faltantes."""
     split_es = {'val': 'validación', 'test': 'test'}[split]
-    datos = [[_stats_o_nada(celdas[(f, c)], split) for c in cols] for f in filas]
+    comunes = seeds_comunes(list(celdas.values()))
+    datos = [[_stats_o_nada(celdas[(f, c)], split, comunes) for c in cols] for f in filas]
+    ns = [[(len(comunes) if comunes else _n(celdas[(f, c)])) for c in cols] for f in filas]
+    titulo = titulo + _nota_seeds(comunes)
     todos = [c[0] for fila in datos for c in fila if c]
     if not todos:
         print(f'  {nombre}: todavia no corrio ninguna celda')
@@ -223,7 +259,7 @@ def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel
     norm = _norma(todos)
     fig, ax = plt.subplots(figsize=figsize)
     _heatmap(ax, datos, filas, cols, elegida, titulo, CMAP_TEAL, norm, xlabel, [str(f) for f in filas],
-             negrita=negrita)
+             negrita=negrita, ns=ns)
     ax.set_ylabel(ylabel)
     _colorbar(fig, ax, CMAP_TEAL, norm, split_es)
     guardar(fig, nombre)
@@ -282,26 +318,28 @@ def mlm(split=None, nombre='mlm.png'):
     print(f'mlm ({split})')
     fig, ax = plt.subplots(figsize=(7.0, 4.3))
     algo = False
+    comunes = seeds_comunes([celda_mlm(enc, e) for enc in 'oe' for e in MLM_EPOCAS])
     for enc, et, color, dy in [('o', 'ordinal (el elegido)', TEAL, 14), ('e', 'embedding aprendido', VIOLETA, -22)]:
-        xs, ms, ss = [], [], []
+        xs, ms, ss, ns_ = [], [], [], []
         for i, e in enumerate(MLM_EPOCAS):
-            st = _stats_o_nada(celda_mlm(enc, e), split)
+            st = _stats_o_nada(celda_mlm(enc, e), split, comunes)
             if st:
                 xs.append(i); ms.append(st[0]); ss.append(st[1])
+                ns_.append(len(comunes) if comunes else _n(celda_mlm(enc, e)))
         if xs:
             algo = True
             ax.errorbar(xs, ms, yerr=ss, color=color, linewidth=3, marker='o', markersize=10,
                         capsize=5, capthick=2, elinewidth=2, label=et)
-            for x, m in zip(xs, ms):
-                ax.annotate(f'{m:.3f}', (x, m), xytext=(0, dy), textcoords='offset points',
-                            ha='center', fontsize=15, color=INK)
+            for x, m, n in zip(xs, ms, ns_):
+                ax.annotate(f'{m:.3f}' + (f' (n={n})' if n < 6 else ''), (x, m), xytext=(0, dy),
+                            textcoords='offset points', ha='center', fontsize=13 if n < 6 else 15, color=INK)
     if not algo:
         print('  mlm: todavia no corrio ninguna celda')
         plt.close(fig)
         return
     ax.set_xticks(range(len(MLM_EPOCAS)), [str(e) for e in MLM_EPOCAS])
     ax.set_xlim(-0.4, len(MLM_EPOCAS) - 0.6)
-    ax.set_xlabel('épocas de pre-entrenamiento MLM (0 = inicialización aleatoria)')
+    ax.set_xlabel('épocas de pre-entrenamiento MLM (0 = inicialización aleatoria)' + _nota_seeds(comunes))
     ax.set_ylabel(f'PR-AUC {split_es}')
     ax.grid(color='#E3E8EE'); ax.set_axisbelow(True)
     ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0.0, 1.02), ncol=2, fontsize=15)
@@ -323,7 +361,8 @@ def celda_reg(do, wd):
              ('0', '0'): f'reg_nada_{CANON}_do0_wd0'}
     if (do, wd) in fijas:
         return fijas[(do, wd)]
-    return f'gr_do{do}_wd{wd}_{CANON}_do{do}_wd{wd}'
+    suf = (f'_do{do}' if do != '0.1' else '') + (f'_wd{wd}' if wd != '0.01' else '')
+    return f'gr_do{do}_wd{wd}_{CANON}{suf}'
 
 
 def regularizacion(split=None, nombre='regularizacion.png'):
@@ -361,13 +400,16 @@ def optimizacion_test():
 # ---------- 2d. la alternativa (ingredientes) y el transfer learning: puntos ± desvio ----------
 def puntos(nombre, filas, xlabel, figsize=(7.3, 4.0), xlim=None):
     """filas: (etiqueta, prefijo de archivo, rol) con rol e=elegido, a=alternativa, c=contexto."""
-    datos = [(et, _stats_o_nada(grupo, SPLIT), rol) for et, grupo, rol in filas]
-    if all(st is None for _, st, _ in datos):
+    comunes = seeds_comunes([g for _, g, _ in filas])
+    datos = [(et, _stats_o_nada(grupo, SPLIT, comunes), rol, (len(comunes) if comunes else _n(grupo)))
+             for et, grupo, rol in filas]
+    xlabel = xlabel + _nota_seeds(comunes)
+    if all(st is None for _, st, _, _ in datos):
         print(f'  {nombre}: todavia no corrio ninguna fila')
         return
     fig, ax = plt.subplots(figsize=figsize)
     n = len(datos)
-    for i, (et, st, rol) in enumerate(reversed(datos)):
+    for i, (et, st, rol, n) in enumerate(reversed(datos)):
         c = COLOR_ROL[rol]
         if st is None:
             ax.text(0.5, i, 'pendiente', transform=ax.get_yaxis_transform(), ha='center', va='center',
@@ -376,16 +418,16 @@ def puntos(nombre, filas, xlabel, figsize=(7.3, 4.0), xlim=None):
         m, s_ = st
         ax.errorbar(m, i, xerr=s_, fmt='o', color=c, ecolor=c, elinewidth=3 if rol == 'e' else 2.2,
                     capsize=5, capthick=2, markersize=13 if rol == 'e' else 10, zorder=3)
-        ax.annotate(f'{m:.3f}', (m, i), xytext=(0, 12), textcoords='offset points', ha='center',
-                    fontsize=17, fontweight='bold' if rol == 'e' else 'normal',
-                    color=INK if rol == 'e' else INK2)
-    ax.set_yticks(range(n), [f[0] for f in reversed(datos)])
-    for lab, (et, st, rol) in zip(ax.get_yticklabels(), reversed(datos)):
+        ax.annotate(f'{m:.3f}' + (f'  (n={n})' if n < 6 else ''), (m, i), xytext=(0, 12),
+                    textcoords='offset points', ha='center', fontsize=17 if n >= 6 else 14,
+                    fontweight='bold' if rol == 'e' else 'normal', color=INK if rol == 'e' else INK2)
+    ax.set_yticks(range(len(datos)), [f[0] for f in reversed(datos)])
+    for lab, (et, st, rol, _) in zip(ax.get_yticklabels(), reversed(datos)):
         lab.set_fontweight('bold' if rol == 'e' else 'normal')
         lab.set_color(INK if rol != 'c' else MUTED)
     ax.set_xlabel(xlabel)
     ax.grid(axis='x', color='#E3E8EE'); ax.set_axisbelow(True)
-    ax.set_ylim(-0.6, n - 0.4 + 0.35)
+    ax.set_ylim(-0.6, len(datos) - 0.4 + 0.35)
     if xlim:
         ax.set_xlim(*xlim)
     ax.tick_params(axis='y', length=0)
@@ -400,7 +442,7 @@ def ingredientes():
         ('+ encoder de conjunto · 2 bloques', 'ing_fusion_l2_ing_fusion_d32_h4_l2_linear_catordinal_il2', 'a'),
         ('+ un token por ingrediente', 'ing_hybrid_ing_hybrid_d32_h4_l2_linear_catordinal', 'a'),
         ('solo ingredientes', 'ing_solo_ing_d32_h4_l2_linear', 'c'),
-    ], f'PR-AUC {SPLIT_ES} (media ± desvío, 6 seeds)', xlim=(0.1, 0.9))
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', xlim=(0.1, 0.9))
 
 
 def transfer():
@@ -410,9 +452,41 @@ def transfer():
         ('+ MiniLM-L6 · 22M · congelado', f'tl_minilm_{CANON}_temb-titulominilm', 'a'),
         ('+ mpnet-base · 110M · congelado', f'tl_mpnet_{CANON}_temb-titulompnet', 'a'),
         ('+ bge-large · 335M · congelado', f'tl_bge_{CANON}_temb-titulobge', 'a'),
-        ('+ MiniLM-L6 · fine-tuning', f'tl_minilm_ft_{CANON}_tembft', 'a'),
+        ('+ MiniLM-L6 · fine-tuning', f'tl_minilm_ft_{CANON}_tembft-titulo', 'a'),
         ('solo el título (bge-large)', 'tl_bge_solo_features_d32_h4_l2_linear_temb-titulobge_sin-all', 'c'),
-    ], f'PR-AUC {SPLIT_ES} (media ± desvío, 6 seeds)', figsize=(7.3, 4.3), xlim=(0.1, 0.9))
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.3, 4.3), xlim=(0.1, 0.9))
+
+
+# ---------- 2e. sobre la MEJOR arquitectura: ingredientes (3 tamanos de encoder) y tiempo (2 encodings) ----------
+def _sobre_mejor(sufijo):
+    """Prefijo de archivo del grupo con la mejor arquitectura + `sufijo` canonico (cualquiera sea su tag)."""
+    canon = canon_mejor()
+    if sufijo:
+        canon = canon.replace('features_', 'ing_fusion_') if sufijo.startswith('ing:') else canon
+        sufijo = sufijo.split(':', 1)[1] if ':' in sufijo else sufijo
+        canon = canon + sufijo
+    return grupo_canonico(canon) or f'(falta)_{canon}'
+
+
+def ingredientes_mejor():
+    """Ingredientes vs sin ingredientes sobre la mejor arquitectura, con tres tamanos del encoder."""
+    print('ingredientes sobre la mejor arquitectura')
+    puntos('ingredientes_mejor.png', [
+        ('sin ingredientes (la mejor arquitectura)', _sobre_mejor(''), 'e'),
+        ('+ encoder chico · d16 · 2 cab. · 1 bloque', _sobre_mejor('ing:_ingd16_ingh2'), 'a'),
+        ('+ encoder base · d y cabezas del modelo · 1 bloque', _sobre_mejor('ing:'), 'a'),
+        ('+ encoder grande · d64 · 8 cab. · 2 bloques', _sobre_mejor('ing:_il2_ingd64_ingh8'), 'a'),
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.6, 3.8))
+
+
+def tiempo():
+    """Hora y dia de la semana, ciclicas: sin tiempo vs (sin, cos) vs categorico, sobre la mejor arquitectura."""
+    print('tiempo (hora, dia de la semana) sobre la mejor arquitectura')
+    puntos('tiempo.png', [
+        ('sin tiempo (la mejor arquitectura)', _sobre_mejor(''), 'e'),
+        ('+ hora y día como (sin, cos) · un token cada una', _sobre_mejor('_tiempo-ciclico'), 'a'),
+        ('+ hora y día como categóricas · 24 + 7 niveles', _sobre_mejor('_tiempo-cat'), 'a'),
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.6, 3.4))
 
 
 # ---------- 3. curva de aprendizaje ----------
@@ -553,7 +627,7 @@ if __name__ == '__main__':
     que = sys.argv[1:] or ['grilla', 'grilla_test', 'grilla_bloques', 'grilla_bloques_test',
                            'encoding', 'encoding_test', 'mlm', 'mlm_test', 'regularizacion',
                            'regularizacion_test', 'optimizacion', 'optimizacion_test',
-                           'ingredientes', 'transfer', 'curva_aprendizaje',
+                           'ingredientes', 'transfer', 'ingredientes_mejor', 'tiempo', 'curva_aprendizaje',
                            'curvas_entrenamiento', 'importancia', 'atencion']
     for q in que:
         globals()[q]()

@@ -236,6 +236,64 @@ EXPERIMENTOS |= {
 }
 
 
+# ---- 13ra tanda (PREPARADA, correr cuando este decidida la mejor arquitectura): ingredientes
+# y tiempo sobre LA MEJOR ARQUITECTURA ----
+# MEJOR_ARQ es la unica linea a editar cuando cierre la decision (hoy: el campeon 32·4·2
+# ordinal; si la 12da tanda la cambia, se actualiza aca y los 5 experimentos la heredan). La
+# referencia "sin ingredientes / sin tiempo" es la corrida de esa misma arquitectura que ya
+# existe (no se duplica): eda/graficos.py la busca por su nombre canonico.
+# (a) Ingredientes: el encoder de conjunto ([ING] + un token por ingrediente, SIN positional
+#     encoding y SIN mascara causal — eso no se toca) en tres tamanos: d_model, cabezas y
+#     bloques del encoder. La lista tiene <= 5 items y 21 ingredientes distintos, asi que las
+#     tres alternativas con sentido son chica / la que veniamos usando / grande.
+# (b) Tiempo: hora del dia y dia de la semana, ciclicas. Dos codificaciones (btr/data.py):
+#     'ciclico' = (sin, cos) del angulo, un token por variable; 'categorico' = 24 + 7 niveles
+#     con el encoding de las demas categoricas (sin orden asumido).
+# Hipotesis registradas antes de correr: (a) delta ~ 0 en los tres tamanos (9na tanda: los
+# ingredientes son la categoria disfrazada); si algo se mueve, el grande empeora por varianza.
+# (b) delta ~ 0 con las dos codificaciones: el EDA mostro que el timestamp es ruido (dentro de
+# una misma busqueda los eventos saltan hasta 2 anios); si hubiera una diferencia entre
+# codificaciones, la ciclica deberia ser la mas estable (menos parametros, sin 31 niveles).
+MEJOR_ARQ = ['--cat-encoding', 'ordinal', '--d-model', '32', '--n-head', '4', '--n-layer', '2', *PAC]
+EXPERIMENTOS |= {
+    'mejor_ing_chico':  ([*MEJOR_ARQ, '--formulation', 'ing_fusion', '--ing-d-model', '16', '--ing-head', '2',
+                          '--ing-layer', '1'], 'tabular'),
+    'mejor_ing_base':   ([*MEJOR_ARQ, '--formulation', 'ing_fusion'], 'tabular'),   # = ing_fusion mientras MEJOR_ARQ sea el campeon
+    'mejor_ing_grande': ([*MEJOR_ARQ, '--formulation', 'ing_fusion', '--ing-d-model', '64', '--ing-head', '8',
+                          '--ing-layer', '2'], 'tabular'),
+    'mejor_tiempo_ciclico': ([*MEJOR_ARQ, '--tiempo', 'ciclico'], 'tabular'),
+    'mejor_tiempo_cat':     ([*MEJOR_ARQ, '--tiempo', 'categorico'], 'tabular'),
+}
+
+
+def canon_mejor():
+    """El nombre canonico (sin tag ni seed) de la mejor arquitectura: para encontrar su corrida de
+    referencia entre los grupos ya corridos, cualquiera sea su tag."""
+    nombre = nombre_esperado('x', MEJOR_ARQ, 42)
+    return nombre[len('x_'):-len('_seed42')]
+
+
+def grupo_canonico(canon, seed=42):
+    """Prefijo de archivo (con su tag) de un grupo ya corrido cuyo nombre canonico es `canon`, o None.
+
+    Dos tags distintos con el mismo nombre canonico son la MISMA configuracion (el nombre lo
+    construye run_name a partir de todos los argumentos que importan): asi la suite reutiliza
+    celdas corridas en tandas previas sin duplicarlas.
+    """
+    for f in RESULTADOS.glob(f'*_{canon}_seed{seed}.json'):
+        return f.name[:-len(f'_seed{seed}.json')]
+    return None
+
+
+def corrida_hecha(nombre_exp, extra, seed):
+    """True si esta (config, seed) ya corrio: con este tag o con otro tag y el mismo nombre canonico."""
+    esperado = nombre_esperado(nombre_exp, extra, seed)
+    if (RESULTADOS / f'{esperado}.json').exists():
+        return True
+    canon = esperado[len(nombre_exp) + 1:-len(f'_seed{seed}')]
+    return grupo_canonico(canon, seed) is not None
+
+
 class GrillaIncompleta(RuntimeError):
     """Falta correr celdas de la grilla de cabezas (gc_*) para resolver el centinela MEJOR_H."""
 
@@ -312,12 +370,11 @@ def nombre_esperado(nombre_exp, extra, seed):
 def armar_plan(nombres, seeds):
     """(corridas pendientes, ya hechas). Las que llevan el centinela MEJOR_H entran siempre:
     su nombre de archivo depende de la grilla, asi que se resuelven (y se saltean) al lanzar."""
-    resultados_dir = RESULTADOS
     plan, salteados = [], 0
     for nombre in nombres:
         extra, _ = EXPERIMENTOS[nombre]
         for seed in range(42, 42 + seeds):
-            if MEJOR_H not in extra and (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
+            if MEJOR_H not in extra and corrida_hecha(nombre, extra, seed):
                 salteados += 1
             else:
                 plan.append((nombre, extra, seed))
@@ -326,7 +383,6 @@ def armar_plan(nombres, seeds):
 
 def correr(nombres, seeds, device, save_pesos, epochs):
     chequear_gpu(device, nombres)
-    resultados_dir = RESULTADOS
     plan, salteados = armar_plan(nombres, seeds)
     print(f"Plan: {len(plan)} corridas ({salteados} ya hechas, salteadas)")
 
@@ -337,7 +393,7 @@ def correr(nombres, seeds, device, save_pesos, epochs):
                 extra = resolver_extra(nombre, extra)
             except GrillaIncompleta as e:
                 raise SystemExit(f'\n{nombre}: no se puede resolver --n-head MEJOR: {e}')
-            if (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
+            if corrida_hecha(nombre, extra, seed):
                 print(f"\n[{i}/{len(plan)}] {nombre} seed {seed}: ya hecha (n_head resuelto = {extra[extra.index('--n-head') + 1]})")
                 continue
         cmd = [sys.executable, '-m', 'btr.train', '--tag', nombre, '--seeds', '1',

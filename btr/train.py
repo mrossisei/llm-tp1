@@ -265,7 +265,9 @@ def run_name(args, seed):
     if args.text_emb:
         parts.append('temb-' + Path(args.text_emb).stem.replace('_', ''))
     if args.text_emb_finetune:
-        parts.append('tembft' + (f"-lr{args.text_emb_lr:g}" if args.text_emb_lr != 1e-5 else ''))
+        # 'titulo': el texto que ve el encoder es el titulo sin badge (distinto de las corridas
+        # viejas bert_*, que veian titulo + descripcion con el badge)
+        parts.append('tembft-titulo' + (f"-lr{args.text_emb_lr:g}" if args.text_emb_lr != 1e-5 else ''))
     if args.drop_features:
         parts.append('sin-' + args.drop_features.replace(',', '-').replace('_', ''))
     if args.pooling != 'cls':
@@ -274,6 +276,12 @@ def run_name(args, seed):
         parts.append('clslast')
     if args.ing_layer != 1:
         parts.append(f"il{args.ing_layer}")
+    if args.ing_d_model:
+        parts.append(f"ingd{args.ing_d_model}")
+    if args.ing_head:
+        parts.append(f"ingh{args.ing_head}")
+    if args.tiempo != 'none':
+        parts.append({'ciclico': 'tiempo-ciclico', 'categorico': 'tiempo-cat'}[args.tiempo])
     for flag in ('positional', 'causal', 'pos_weight'):
         if getattr(args, flag):
             parts.append(flag.replace('_', ''))
@@ -293,8 +301,12 @@ def unique_path(path):
     raise RuntimeError(f'demasiadas corridas con el nombre {path.stem}')
 
 
-def drop_feature_columns(splits, drop, cat_features=None, num_features=None):
-    """Saca features por nombre (p. ej. listing_status) recortando columnas de los tensores."""
+def drop_feature_columns(splits, drop, cat_features=None, num_features=None, n_cyclic=0):
+    """Saca features por nombre (p. ej. listing_status) recortando columnas de los tensores.
+
+    Las 2*n_cyclic columnas del final de x_num (los pares sin/cos de --tiempo ciclico) se
+    conservan siempre.
+    """
     cat_features = cat_features or CAT_FEATURES
     num_features = num_features or NUM_FEATURES
     keep_cat = [i for i, f in enumerate(cat_features) if f not in drop]
@@ -302,8 +314,9 @@ def drop_feature_columns(splits, drop, cat_features=None, num_features=None):
     unknown = drop - set(cat_features) - set(num_features)
     if unknown:
         raise SystemExit(f'--drop-features desconocidos: {sorted(unknown)}')
+    cols_num = keep_num + [len(num_features) + j for j in range(2 * n_cyclic)]
     splits = {k: (v[0].index_select(1, torch.tensor(keep_cat, dtype=torch.long)),
-                  v[1].index_select(1, torch.tensor(keep_num, dtype=torch.long)),
+                  v[1].index_select(1, torch.tensor(cols_num, dtype=torch.long)),
                   v[2], v[3]) for k, v in splits.items()}
     return splits, keep_cat, keep_num
 
@@ -360,7 +373,7 @@ def build_cat_tables(modo, prep, train_df, keep_cat, hash_buckets):
 
 
 def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight, cat_tables=None,
-                text_emb_dim=0):
+                text_emb_dim=0, n_cyclic=0):
     """Configura y construye el transformer pedido; devuelve (modelo, config para el ckpt)."""
     usa_ing = args.formulation in ING_FORMULATIONS
     config = dict(formulation=args.formulation, cat_cardinalities=cardinalities,
@@ -372,6 +385,7 @@ def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight, cat
                   hash_buckets=args.hash_buckets,
                   ing_vocab_size=prep.ing_vocab_size if usa_ing else None,
                   max_ingredients=MAX_INGREDIENTS if usa_ing else 0, ing_layer=args.ing_layer,
+                  ing_d_model=args.ing_d_model, ing_head=args.ing_head, n_cyclic=n_cyclic,
                   text_emb_dim=text_emb_dim, hf_model=args.text_emb_finetune)
     model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     return model, config
@@ -389,9 +403,15 @@ def run(csv_path, seed, args, device):
     if (args.text_emb or args.text_emb_finetune) and args.formulation != 'features':
         raise SystemExit('el titulo preentrenado es solo para formulation features '
                          '(las ing_* ya ocupan el slot del tercer tensor)')
+    if args.pretrain_mlm and args.tiempo == 'ciclico':
+        raise SystemExit('--pretrain-mlm no esta implementado con tokens ciclicos (--tiempo ciclico)')
+    if (args.ing_d_model or args.ing_head) and args.formulation != 'ing_fusion':
+        raise SystemExit('--ing-d-model / --ing-head son del encoder de conjunto (formulation ing_fusion)')
     prep, train_df, splits, indices = prepare(csv_path, seed=seed, train_frac=args.train_frac,
                                               cv_k=args.cv_k, cv_fold=args.cv_fold,
-                                              use_ingredients=usa_ing, with_index=True)
+                                              use_ingredients=usa_ing, with_index=True,
+                                              tiempo=args.tiempo)
+    n_cyclic = len(prep.cyc)
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
     if drop == {'all'}:
@@ -399,7 +419,7 @@ def run(csv_path, seed, args, device):
         if not (args.text_emb or args.text_emb_finetune):
             raise SystemExit('--drop-features all requiere --text-emb/--text-emb-finetune')
         drop = set(prep.cats) | set(prep.nums)
-    splits, keep_cat, keep_num = drop_feature_columns(splits, drop, prep.cats, prep.nums)
+    splits, keep_cat, keep_num = drop_feature_columns(splits, drop, prep.cats, prep.nums, n_cyclic)
     splits = {k: tuple(t.to(device) for t in v) for k, v in splits.items()}
 
     bin_edges = None
@@ -451,7 +471,8 @@ def run(csv_path, seed, args, device):
         splits = nuevos
 
     model, model_config = build_model(args, prep, cardinalities, len(keep_num), bin_edges,
-                                      pos_weight, cat_tables, text_emb_dim=text_emb_dim)
+                                      pos_weight, cat_tables, text_emb_dim=text_emb_dim,
+                                      n_cyclic=n_cyclic)
     model = model.to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -521,6 +542,14 @@ def build_parser():
                         default='features', help='que es un token (ver btr/model.py)')
     parser.add_argument('--ing-layer', type=int, default=1,
                         help='bloques del encoder de conjunto de ingredientes (ing_fusion)')
+    parser.add_argument('--ing-d-model', type=int, default=None,
+                        help='d_model propio del encoder de ingredientes (default: el del transformer); '
+                             'su [ING] se proyecta a d_model')
+    parser.add_argument('--ing-head', type=int, default=None,
+                        help='cabezas del encoder de ingredientes (default: las del transformer)')
+    parser.add_argument('--tiempo', default='none', choices=['none', 'ciclico', 'categorico'],
+                        help='hora del dia y dia de la semana del timestamp: ciclico = un token (sin, cos) '
+                             'por variable; categorico = dos categoricas mas (24 y 7 niveles)')
     parser.add_argument('--text-emb', default='', metavar='NPY',
                         help='transfer learning, feature extraction: matriz (N, E) del titulo '
                              'precomputada por eda/embed_titulos.py; entra como UN token extra')

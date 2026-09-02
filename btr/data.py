@@ -40,6 +40,15 @@ TARGET = 'bought'
 PAD_IDX, UNK_IDX = 0, 1  # reservados del vocabulario de ingredientes
 MAX_INGREDIENTS = 5      # largo maximo de la lista de ingredientes (maximo global del CSV)
 STATUS_SUFFIX_RE = r'\s*\([^)]+\)$'  # "(Best Seller)" etc. al final del titulo
+# --tiempo: como entra el timestamp (hora del dia, dia de la semana). Las dos variables son
+# CICLICAS: la hora 23 esta al lado de la 0 y el domingo al lado del lunes, asi que un
+# escalar ordenado (o un rango) mentiria en el borde. Dos codificaciones estandar:
+#   'ciclico':    cada variable -> (sin, cos) de su angulo 2*pi*x/periodo; un token por variable
+#                 (proyeccion afin de R^2 a d_model): la distancia respeta el ciclo.
+#   'categorico': hora (24 niveles) y dia (7) como categoricas mas, con el encoding de las
+#                 demas: sin orden asumido (ordinal por BTR de train, o embedding aprendido).
+TIEMPO_CICLICO = [('hora', 24.0), ('dow', 7.0)]      # (columna, periodo)
+TIEMPO_CATEGORICO = ['hora_cat', 'dow_cat']
 
 
 def titulo_sin_estado(title):
@@ -54,6 +63,11 @@ def load_dataset(csv_path):
     df['allergens'] = df['allergens'].fillna('None')  # "sin alergenos declarados"
     span = df['filter_price_max'] - df['filter_price_min']
     df['price_rel'] = (df['price'] - df['filter_price_min']) / span
+    # el timestamp (EDA: ruido; los eventos de una misma busqueda saltan hasta 2 anios) solo
+    # entra con --tiempo: hora del dia (fraccionaria) y dia de la semana (0 = lunes)
+    ts = pd.to_datetime(df['timestamp'], errors='coerce', format='mixed')
+    df['hora'] = (ts.dt.hour + ts.dt.minute / 60).fillna(0.0)
+    df['dow'] = ts.dt.dayofweek.fillna(0).astype(int)
     return df
 
 
@@ -104,6 +118,12 @@ class Preprocessor:
     num_features: list = None   # None -> NUM_FEATURES
     ing_vocab: dict = None      # ingrediente -> indice (0=PAD, 1=UNK); formulaciones ing_*
     use_ingredients: bool = False  # True -> el 3er tensor es la lista de ingredientes
+    tiempo: str = 'none'        # 'none' | 'ciclico' | 'categorico' (ver TIEMPO_*)
+
+    @property
+    def cyc(self):
+        """Variables ciclicas (columna, periodo) que van al final de x_num como pares (sin, cos)."""
+        return TIEMPO_CICLICO if getattr(self, 'tiempo', 'none') == 'ciclico' else []
 
     @property
     def cats(self):
@@ -114,8 +134,12 @@ class Preprocessor:
         return getattr(self, 'num_features', None) or NUM_FEATURES
 
     @classmethod
-    def fit(cls, train_df, use_ingredients=False):
+    def fit(cls, train_df, use_ingredients=False, tiempo='none'):
+        assert tiempo in ('none', 'ciclico', 'categorico')
         cats, nums = list(CAT_FEATURES), list(NUM_FEATURES)
+        if tiempo == 'categorico':
+            train_df = _con_tiempo_categorico(train_df)
+            cats = cats + TIEMPO_CATEGORICO
         vocabs = {
             f: {v: i + 1 for i, v in enumerate(sorted(train_df[f].unique()))}
             for f in cats
@@ -130,7 +154,7 @@ class Preprocessor:
             ing_vocab = {v: i + 2 for i, v in enumerate(items)}  # 0=PAD, 1=UNK
         return cls(vocabs=vocabs, num_mean=num.mean(axis=0), num_std=num.std(axis=0) + 1e-8,
                    cat_features=cats, num_features=nums,
-                   ing_vocab=ing_vocab, use_ingredients=use_ingredients)
+                   ing_vocab=ing_vocab, use_ingredients=use_ingredients, tiempo=tiempo)
 
     @property
     def ing_vocab_size(self):
@@ -158,11 +182,18 @@ class Preprocessor:
         x_text es la lista de ingredientes (use_ingredients) o un tensor vacio (N, 0):
         el slot lo puede ocupar despues el embedding del titulo (btr.train, --text-emb).
         """
+        if getattr(self, 'tiempo', 'none') == 'categorico':
+            df = _con_tiempo_categorico(df)
         x_cat = np.stack(
             [df[f].map(lambda v, f=f: self.vocabs[f].get(v, 0)).to_numpy() for f in self.cats],
             axis=1,
         )
         x_num = (self._numeric_raw(df) - self.num_mean) / self.num_std
+        if self.cyc:
+            # pares (sin, cos) al final, sin estandarizar: ya viven en [-1, 1] y el token
+            # ciclico del FeatureTokenizer los proyecta juntos
+            ang = [2 * np.pi * df[col].to_numpy(dtype=np.float64) / periodo for col, periodo in self.cyc]
+            x_num = np.concatenate([x_num] + [np.stack([np.sin(a), np.cos(a)], axis=1) for a in ang], axis=1)
         if getattr(self, 'use_ingredients', False):
             x_text = np.stack([self._encode_ingredients(s) for s in df['ingredients']])
         else:
@@ -194,8 +225,16 @@ class Preprocessor:
         return torch.tensor(edges, dtype=torch.float32)
 
 
+def _con_tiempo_categorico(df):
+    """hora y dia de la semana como niveles categoricos ('h07', 'd3'): sin orden asumido."""
+    df = df.copy()
+    df['hora_cat'] = 'h' + df['hora'].astype(int).astype(str).str.zfill(2)
+    df['dow_cat'] = 'd' + df['dow'].astype(str)
+    return df
+
+
 def prepare(csv_path, seed=42, train_frac=1.0, cv_k=0, cv_fold=0, use_ingredients=False,
-            with_index=False):
+            with_index=False, tiempo='none'):
     """Pipeline completo: carga -> split por query -> fit en train -> tensores.
 
     train_frac < 1 submuestrea las QUERIES de train (curva de aprendizaje; val y
@@ -210,7 +249,9 @@ def prepare(csv_path, seed=42, train_frac=1.0, cv_k=0, cv_fold=0, use_ingredient
         qs = train_df['query_id'].unique().to_numpy()
         np.random.default_rng(seed + 1000).shuffle(qs)
         train_df = train_df[train_df['query_id'].isin(set(qs[:int(len(qs) * train_frac)]))]
-    prep = Preprocessor.fit(train_df, use_ingredients=use_ingredients)
+    if tiempo == 'categorico':   # las tablas por nivel (build_cat_tables) tambien las necesitan
+        train_df, val_df, test_df = (_con_tiempo_categorico(d) for d in (train_df, val_df, test_df))
+    prep = Preprocessor.fit(train_df, use_ingredients=use_ingredients, tiempo=tiempo)
     dfs = {'train': train_df, 'val': val_df, 'test': test_df}
     splits = {k: prep.transform(d) for k, d in dfs.items()}
     if with_index:
