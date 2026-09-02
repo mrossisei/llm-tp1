@@ -70,10 +70,11 @@ def seeds_comunes(grupos):
     conj = [_seeds(g) for g in grupos if _seeds(g)]
     if not conj:
         return None
-    comunes = set.intersection(*conj)
     if all(len(c) == 6 for c in conj):
         return None
-    return comunes or None
+    # un grupo con UNA sola seed no restringe a los demas: se dibuja con su seed y marca n=1
+    base = [c for c in conj if len(c) > 1] or conj
+    return set.intersection(*base) or None
 
 
 def _nota_seeds(seeds):
@@ -94,8 +95,11 @@ from experimentos import (D_ENC, D_GRILLA, DROPOUTS, H_GRILLA, L_GRILLA, LRS, BA
 
 
 def _stats_o_nada(grupo, split, seeds=None):
-    """Como _stats, pero None si la celda todavia no corrio (grilla a medio correr)."""
+    """Como _stats, pero None si la celda todavia no corrio (grilla a medio correr). Si la celda
+    no tiene todas las `seeds` pedidas, usa las suyas (y el n de la celda lo cuenta)."""
     try:
+        if seeds is not None and not seeds <= _seeds(grupo):
+            seeds = None
         return _stats(grupo, split, seeds)
     except AssertionError:
         return None
@@ -247,7 +251,8 @@ def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel
     split_es = {'val': 'validación', 'test': 'test'}[split]
     comunes = seeds_comunes(list(celdas.values()))
     datos = [[_stats_o_nada(celdas[(f, c)], split, comunes) for c in cols] for f in filas]
-    ns = [[(len(comunes) if comunes else _n(celdas[(f, c)])) for c in cols] for f in filas]
+    ns = [[(len(comunes) if comunes and comunes <= _seeds(celdas[(f, c)]) else _n(celdas[(f, c)])) for c in cols]
+          for f in filas]
     titulo = titulo + _nota_seeds(comunes)
     todos = [c[0] for fila in datos for c in fila if c]
     if not todos:
@@ -325,7 +330,7 @@ def mlm(split=None, nombre='mlm.png'):
             st = _stats_o_nada(celda_mlm(enc, e), split, comunes)
             if st:
                 xs.append(i); ms.append(st[0]); ss.append(st[1])
-                ns_.append(len(comunes) if comunes else _n(celda_mlm(enc, e)))
+                ns_.append(len(comunes) if comunes and comunes <= _seeds(celda_mlm(enc, e)) else _n(celda_mlm(enc, e)))
         if xs:
             algo = True
             ax.errorbar(xs, ms, yerr=ss, color=color, linewidth=3, marker='o', markersize=10,
@@ -401,7 +406,8 @@ def optimizacion_test():
 def puntos(nombre, filas, xlabel, figsize=(7.3, 4.0), xlim=None):
     """filas: (etiqueta, prefijo de archivo, rol) con rol e=elegido, a=alternativa, c=contexto."""
     comunes = seeds_comunes([g for _, g, _ in filas])
-    datos = [(et, _stats_o_nada(grupo, SPLIT, comunes), rol, (len(comunes) if comunes else _n(grupo)))
+    datos = [(et, _stats_o_nada(grupo, SPLIT, comunes), rol,
+              (len(comunes) if comunes and comunes <= _seeds(grupo) else _n(grupo)))
              for et, grupo, rol in filas]
     xlabel = xlabel + _nota_seeds(comunes)
     if all(st is None for _, st, _, _ in datos):
