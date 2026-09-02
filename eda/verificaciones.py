@@ -142,7 +142,6 @@ def main():
 
 def baselines(df):
     from sklearn.compose import ColumnTransformer
-    from sklearn.ensemble import HistGradientBoostingClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import average_precision_score, roc_auc_score
     from sklearn.pipeline import Pipeline
@@ -169,15 +168,6 @@ def baselines(df):
             + ([('n', StandardScaler(), nn)] if nn else []))
         m = Pipeline([('p', pre), ('lr', LogisticRegression(max_iter=2000))]).fit(tr[cc + nn], y_tr)
         reporte(nombre, m, cc, tr[cc + nn], te[cc + nn])
-
-    for nombre, cc in [('GBM con estado (techo con interacciones)', cat),
-                       ('GBM SIN estado (techo intrinseco, 2.3.1)', [c for c in cat if c != 'listing_status'])]:
-        X_tr, X_te = tr[cc + num].copy(), te[cc + num].copy()
-        for c in cc:
-            X_tr[c] = X_tr[c].astype('category')
-            X_te[c] = X_te[c].astype('category')
-        m = HistGradientBoostingClassifier(categorical_features='from_dtype', random_state=0).fit(X_tr, y_tr)
-        reporte(nombre, m, cc, X_tr, X_te)
 
     low = ~df['listing_status'].isin(TOP + MID)
     print(f"filas en tiers de BTR=0 (sin senal de popularidad): {low.mean():.2%}, BTR real: {df.loc[low, 'bought'].mean():.4f}")

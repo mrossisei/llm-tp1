@@ -12,21 +12,18 @@ Karpathy), con dos adaptaciones justificadas en propuesta.md (seccion 5):
    k.shape[-1]**-0.5 y ademas dividia por head_size**0.5).
 
 Formulaciones de "que es un token" del BTRTransformer (propuesta.md, 4):
-  'features': cada feature tabular es un token (estilo FT-Transformer). Secuencia
-              corta (14), sin positional encoding por defecto (los features no
-              tienen orden; cada uno tiene identidad propia por su tabla).
-              ES EL MODELO FINAL (con encoding ordinal de las categoricas).
-  'text':     cada CARACTER de title+description es un token, igual que la demo.
-              Secuencia larga (~250) -> aca el positional encoding es NECESARIO
-              (el texto si tiene orden) y el costo computacional es real (GPU).
-  'hybrid':   [CLS] + tokens de features + tokens de caracteres en una misma
-              secuencia; la atencion puede cruzar texto con features.
-  'fusion':   una torre de texto (TextEncoder) resume los caracteres a UN token
-              que entra a la secuencia tabular.
-  'ing', 'ing_fusion', 'ing_hybrid': los ingredientes como conjunto (solos, via
-              IngredientEncoder, o un token por ingrediente en la secuencia).
-Ademas: MLPBaseline (misma entrada, sin atencion) y TextTowerModel (transformer
-solo como encoder de texto + MLP).
+  'features':   cada feature tabular es un token (estilo FT-Transformer). Secuencia
+                corta (14), sin positional encoding (los features no tienen orden;
+                cada uno tiene identidad propia por su posicion y su tabla).
+                ES EL MODELO FINAL (con encoding ordinal de las categoricas).
+  'ing_fusion': los ingredientes como CONJUNTO: un IngredientEncoder (otro
+                transformer chico) resume la lista a UN token que entra a la
+                secuencia tabular — la alternativa que presentamos.
+  'ing_hybrid': un token POR ingrediente directo en la secuencia tabular.
+  'ing':        SOLO los ingredientes (control: ¿tienen senal por si solos?).
+Transfer learning (clase 3): con text_emb_dim > 0 el embedding del TITULO que
+produce un modelo preentrenado (precomputado, congelado) entra como un token
+mas; con hf_model el encoder de Hugging Face entra al grafo y se fine-tunea.
 
 En todos los casos la salida es la del token [CLS]: Linear(d_model -> 1 logit),
 sigmoide = p(bought), con binary cross-entropy (en la demo: vocab_size logits
@@ -240,6 +237,8 @@ class FeatureTokenizer(nn.Module):
         if self.numeric_mode == 'linear':
             # (batch, n_num, 1) * (n_num, d_model) -> (batch, n_num, d_model)
             num_tokens = x_num.unsqueeze(-1) * self.num_weight + self.num_bias
+            if not tokens:  # sin categoricas (control "solo el titulo": --drop-features all)
+                return num_tokens
             tokens = torch.stack(tokens, dim=1)
             tokens = torch.cat([tokens, num_tokens], dim=1)
         else:
@@ -248,38 +247,6 @@ class FeatureTokenizer(nn.Module):
                 tokens.append(emb(idx))
             tokens = torch.stack(tokens, dim=1)
         return tokens  # (batch, n_cat + n_num, d_model)
-
-
-class TextEncoder(nn.Module):
-    """Torre de caracteres reutilizable: [CLS] + chars + PE -> bloques -> (B, d_model).
-
-    Mismas piezas que TextTowerModel.encode_text, como modulo aparte para poder
-    meterla DENTRO de otra arquitectura (la formulacion 'fusion').
-    """
-
-    def __init__(self, char_vocab_size, max_text_len, d_model, n_head=4, n_layer=2,
-                 dropout=0.1):
-        super().__init__()
-        self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
-        self.cls = nn.Parameter(torch.empty(1, 1, d_model))
-        nn.init.normal_(self.cls, mean=0.0, std=0.02)
-        seq_len = 1 + max_text_len
-        self.position_embedding_table = nn.Embedding(seq_len, d_model)
-        self.blocks = nn.ModuleList(
-            [Block(d_model, n_head, seq_len, dropout) for _ in range(n_layer)]
-        )
-        self.ln_f = nn.LayerNorm(d_model)
-
-    def forward(self, x_text):
-        batch_size = x_text.shape[0]
-        x = torch.cat([self.cls.expand(batch_size, -1, -1),
-                       self.char_embedding_table(x_text)], dim=1)
-        mask = torch.cat([torch.ones(batch_size, 1, dtype=torch.bool, device=x_text.device),
-                          x_text != PAD_IDX], dim=1)
-        x = x + self.position_embedding_table(torch.arange(x.shape[1], device=x.device))
-        for block in self.blocks:
-            x = block(x, mask)
-        return self.ln_f(x)[:, 0]
 
 
 class IngredientEncoder(nn.Module):
@@ -330,17 +297,15 @@ class BTRTransformer(nn.Module):
     """
 
     def __init__(self, formulation='features', cat_cardinalities=None, n_numeric=0,
-                 char_vocab_size=None, max_text_len=0, d_model=32, n_head=4,
-                 n_layer=2, dropout=0.1, causal=False, pooling='cls',
+                 d_model=32, n_head=4, n_layer=2, dropout=0.1, causal=False, pooling='cls',
                  use_positional=False, numeric_mode='linear', bin_edges=None,
                  pos_weight=None, cls_position='first', cat_encoding='embedding',
                  cat_tables=None, hash_buckets=8, ing_vocab_size=None, max_ingredients=0,
-                 ing_layer=1):
+                 ing_layer=1, text_emb_dim=0, hf_model=''):
         super().__init__()
         assert d_model % n_head == 0, 'd_model debe ser multiplo de n_head'
         assert pooling in ('cls', 'mean')
-        assert formulation in ('features', 'text', 'hybrid', 'fusion',
-                               'ing', 'ing_fusion', 'ing_hybrid')
+        assert formulation in ('features', 'ing', 'ing_fusion', 'ing_hybrid')
         assert cls_position in ('first', 'last')
         # con mascara causal el CLS en posicion 0 solo se ve a si mismo y el modelo
         # degenera a predecir la tasa base (medido: ROC 0.500 exacto, p constante).
@@ -354,28 +319,13 @@ class BTRTransformer(nn.Module):
 
         seq_len = 1  # [CLS]
         self.tokenizer = None
-        if formulation in ('features', 'hybrid', 'fusion', 'ing_fusion', 'ing_hybrid'):
+        if formulation in ('features', 'ing_fusion', 'ing_hybrid'):
             self.tokenizer = FeatureTokenizer(
                 cat_cardinalities, n_numeric, d_model, numeric_mode, bin_edges,
                 cat_encoding, cat_tables, hash_buckets
             )
             seq_len += self.tokenizer.n_tokens
-        self.char_embedding_table = None
-        self.text_encoder = None
-        if formulation in ('text', 'hybrid'):
-            assert char_vocab_size and max_text_len, 'text/hybrid requieren vocabulario de chars'
-            self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
-            seq_len += max_text_len
-        elif formulation == 'fusion':
-            # 5b de la revision externa: una torre resume el texto a UN vector via su
-            # CLS, y ese vector entra como UN token mas de la secuencia tabular — la
-            # atencion cruza texto y features al nivel del RESUMEN, sin que 256 chars
-            # diluyan a los 13 tokens (el problema medido del hybrid)
-            assert char_vocab_size and max_text_len, 'fusion requiere vocabulario de texto'
-            self.text_encoder = TextEncoder(char_vocab_size, max_text_len, d_model,
-                                            n_head, n_layer, dropout)
-            seq_len += 1
-        # 9na tanda: los INGREDIENTES como conjunto (idea de Fer).
+        # los INGREDIENTES como conjunto (idea de Fer).
         #   'ing_fusion': el IngredientEncoder resume la lista a UN vector via su
         #       [ING] y ese vector entra como UN token mas de la secuencia tabular
         #       (el mecanismo de fusion, con encoder propio de conjunto).
@@ -397,16 +347,30 @@ class BTRTransformer(nn.Module):
             self.ing_embedding_table = nn.Embedding(ing_vocab_size, d_model,
                                                     padding_idx=PAD_IDX)
             seq_len += max_ingredients
+        # transfer learning desde un preentrenado EXTERNO: el titulo del producto
+        # entra como UN token = proyeccion aprendida del embedding de un modelo
+        # conocido. Dos regimenes de la clase 3: text_emb_dim > 0 = feature
+        # extraction (el embedding viene precomputado y congelado en el slot
+        # x_text, float); hf_model = fine-tuning (el encoder HF entra al grafo y
+        # x_text son sus input_ids).
+        self.temb_proj = None
+        _hf = None
+        if text_emb_dim or hf_model:
+            assert formulation == 'features', 'preentrenado de texto: solo formulation features'
+            if hf_model:
+                from transformers import AutoModel
+                _hf = AutoModel.from_pretrained(hf_model)
+                text_emb_dim = _hf.config.hidden_size
+            self.temb_proj = nn.Linear(text_emb_dim, d_model)
+            seq_len += 1
         self.seq_len = seq_len
 
         # [CLS] aprendido, como BERT: agrega la informacion para clasificar
         self.cls = nn.Parameter(torch.empty(1, 1, d_model))
         nn.init.normal_(self.cls, mean=0.0, std=0.02)
 
-        # El texto tiene orden -> con chars el positional encoding es necesario;
-        # con solo features es redundante (queda como ablacion, propuesta.md 3).
-        if formulation in ('text', 'hybrid'):
-            use_positional = True
+        # sin positional encoding por defecto: los features no tienen orden
+        # (queda como ablacion, propuesta.md 3)
         self.position_embedding_table = (
             nn.Embedding(seq_len, d_model) if use_positional else None
         )
@@ -422,6 +386,9 @@ class BTRTransformer(nn.Module):
             torch.tensor(float(pos_weight)) if pos_weight is not None else None,
         )
         self.apply(self._init_weights)
+        # el encoder HF se cuelga DESPUES del apply: _init_weights no debe pisar
+        # los pesos preentrenados (seria tirar el transfer learning a la basura)
+        self.hf_encoder = _hf
 
     def _init_weights(self, module):
         # misma inicializacion que la demo
@@ -433,16 +400,26 @@ class BTRTransformer(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def _build_sequence(self, x_cat, x_num, x_text):
-        """Arma [CLS | features | chars] (o el CLS al final) + su padding mask."""
-        batch_size = (x_text if self.formulation in ('text', 'ing') else x_cat).shape[0]
-        device = (x_text if self.formulation in ('text', 'ing') else x_cat).device
+        """Arma [CLS | features | extras] (o el CLS al final) + su padding mask."""
+        batch_size = (x_text if self.formulation == 'ing' else x_cat).shape[0]
+        device = (x_text if self.formulation == 'ing' else x_cat).device
         parts, masks = [], []
         if self.tokenizer is not None:
             feat = self.tokenizer(x_cat, x_num)
             parts.append(feat)
             masks.append(torch.ones(batch_size, feat.shape[1], dtype=torch.bool, device=device))
-        if self.text_encoder is not None:  # fusion: el resumen del texto como un token
-            parts.append(self.text_encoder(x_text).unsqueeze(1))
+        if self.temb_proj is not None:  # el titulo, embebido por un preentrenado, como un token
+            if self.hf_encoder is not None:
+                # fine-tuning: x_text son input_ids del tokenizer HF (pad = 0);
+                # mean pooling + L2, la receta de sentence-transformers
+                mask_t = x_text != 0
+                h = self.hf_encoder(input_ids=x_text, attention_mask=mask_t).last_hidden_state
+                mt = mask_t.unsqueeze(-1).float()
+                vec = (h * mt).sum(1) / mt.sum(1).clamp_min(1e-9)
+                vec = nn.functional.normalize(vec, dim=1)
+            else:
+                vec = x_text  # feature extraction: el embedding ya viene calculado
+            parts.append(self.temb_proj(vec).unsqueeze(1))
             masks.append(torch.ones(batch_size, 1, dtype=torch.bool, device=device))
         if self.ing_encoder is not None:  # ing_fusion: el resumen del conjunto como un token
             parts.append(self.ing_encoder(x_text).unsqueeze(1))
@@ -450,9 +427,6 @@ class BTRTransformer(nn.Module):
         if self.ing_embedding_table is not None:  # ing / ing_hybrid: un token por ingrediente
             parts.append(self.ing_embedding_table(x_text))
             masks.append(x_text != PAD_IDX)  # el padding de la lista no recibe atencion
-        if self.char_embedding_table is not None:
-            parts.append(self.char_embedding_table(x_text))
-            masks.append(x_text != PAD_IDX)  # el padding del texto no recibe atencion
         cls = [self.cls.expand(batch_size, -1, -1)]
         cls_mask = [torch.ones(batch_size, 1, dtype=torch.bool, device=device)]
         if self.cls_position == 'first':
@@ -461,9 +435,7 @@ class BTRTransformer(nn.Module):
             parts, masks = parts + cls, masks + cls_mask
         x = torch.cat(parts, dim=1)
         mask = torch.cat(masks, dim=1)
-        con_padding = (self.char_embedding_table is not None
-                       or self.ing_embedding_table is not None)
-        return x, (mask if con_padding else None)
+        return x, (mask if self.ing_embedding_table is not None else None)
 
     def _pooled(self, x_cat=None, x_num=None, x_text=None):
         """Secuencia -> bloques -> ln_f -> vector pooled (la representacion pre-cabeza)."""
@@ -496,7 +468,7 @@ class BTRTransformer(nn.Module):
     def predict_proba(self, x_cat=None, x_num=None, x_text=None, batch_size=4096):
         """p(bought) por fila, en eval mode y por lotes (analogo a generate(), sin autoregresion)."""
         self.eval()
-        n = (x_text if self.formulation in ('text', 'ing') else x_cat).shape[0]
+        n = (x_text if self.formulation == 'ing' else x_cat).shape[0]
         sl = lambda t, a, b: None if t is None else t[a:b]
         probs = []
         for start in range(0, n, batch_size):
@@ -506,132 +478,7 @@ class BTRTransformer(nn.Module):
         return torch.cat(probs)
 
 
-class MLPBaseline(nn.Module):
-    """Baseline SIN atencion, para la pregunta central "¿la atencion aporta?".
-
-    Usa exactamente la misma entrada que el transformer tabular (los tokens del
-    FeatureTokenizer) pero los concatena y los mezcla con un MLP denso. Si el
-    transformer no supera a esto, la capa de atencion no se justifica.
-    """
-
-    def __init__(self, cat_cardinalities, n_numeric, d_model=32, dropout=0.1,
-                 numeric_mode='linear', bin_edges=None, pos_weight=None,
-                 cat_encoding='embedding', cat_tables=None, hash_buckets=8, mlp_hidden=None):
-        super().__init__()
-        self.onehot = cat_encoding == 'onehot'
-        if self.onehot:
-            # one-hot crudo de las categoricas + tokens afines de las numericas:
-            # mide que aporta EMBEBER (para el transformer one-hot+lineal ≡
-            # embedding, propuesta 6.1; la comparacion solo tiene sentido aca)
-            if numeric_mode != 'linear':
-                raise ValueError('cat_encoding=onehot solo con numeric_mode=linear')
-            self.cat_cardinalities = list(cat_cardinalities)
-            self.tokenizer = FeatureTokenizer([], n_numeric, d_model,  # solo la parte numerica
-                                              numeric_mode, bin_edges)
-            in_dim = sum(cat_cardinalities) + n_numeric * d_model
-        else:
-            self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
-                                              numeric_mode, bin_edges,
-                                              cat_encoding, cat_tables, hash_buckets)
-            in_dim = self.tokenizer.n_tokens * d_model
-        # cabeza configurable (--mlp-hidden 'N,N,...'); default = 8d,2d (la del Exp. 1)
-        hid = ([int(x) for x in str(mlp_hidden).split(',') if x.strip()]
-               if mlp_hidden else [8 * d_model, 2 * d_model])
-        capas, prev = [], in_dim
-        for h in hid:
-            capas += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
-            prev = h
-        capas.append(nn.Linear(prev, 1))
-        self.net = nn.Sequential(*capas)
-        self.register_buffer(
-            'pos_weight',
-            torch.tensor(float(pos_weight)) if pos_weight is not None else None,
-        )
-
-    def _entrada(self, x_cat, x_num):
-        if self.onehot:
-            oh = [F.one_hot(x_cat[:, i], card).float()
-                  for i, card in enumerate(self.cat_cardinalities)]
-            num_tokens = x_num.unsqueeze(-1) * self.tokenizer.num_weight + self.tokenizer.num_bias
-            return torch.cat(oh + [num_tokens.flatten(1)], dim=1)
-        return self.tokenizer(x_cat, x_num).flatten(1)
-
-    def forward(self, x_cat, x_num, x_text=None, targets=None):
-        h = self._entrada(x_cat, x_num)                    # (batch, in_dim)
-        logits = self.net(h).squeeze(-1)                   # (batch,)
-        loss = None
-        if targets is not None:
-            loss = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=self.pos_weight)
-        return logits, loss
-
-
-class TextTowerModel(nn.Module):
-    """Transformer SOLO como encoder de texto; la clasificacion la hace un MLP.
-
-    La torre de texto ([CLS] + chars -> bloques -> embedding del CLS) comprime
-    title+description a UN vector de d_model. Ese vector se concatena con los
-    feature-tokens tabulares aplanados y un MLP clasifica. A diferencia de la
-    formulacion 'hybrid' del BTRTransformer, aca la atencion NO puede cruzar
-    texto <-> features: compara "transformer como modulo de embedding" (estilo
-    encoder-only de BERT, clase 2) contra "transformer como clasificador".
-    """
-
-    def __init__(self, cat_cardinalities, n_numeric, char_vocab_size, max_text_len,
-                 d_model=32, n_head=4, n_layer=2, dropout=0.1, causal=False,
-                 numeric_mode='linear', bin_edges=None, pos_weight=None,
-                 cat_encoding='embedding', cat_tables=None, hash_buckets=8):
-        super().__init__()
-        self.char_embedding_table = nn.Embedding(char_vocab_size, d_model, padding_idx=PAD_IDX)
-        self.cls = nn.Parameter(torch.empty(1, 1, d_model))
-        nn.init.normal_(self.cls, mean=0.0, std=0.02)
-        seq_len = 1 + max_text_len
-        self.position_embedding_table = nn.Embedding(seq_len, d_model)  # texto: PE necesario
-        self.blocks = nn.ModuleList(
-            [Block(d_model, n_head, seq_len, dropout, causal) for _ in range(n_layer)]
-        )
-        self.ln_f = nn.LayerNorm(d_model)
-
-        self.tokenizer = FeatureTokenizer(cat_cardinalities, n_numeric, d_model,
-                                          numeric_mode, bin_edges,
-                                          cat_encoding, cat_tables, hash_buckets)
-        head_in = d_model + self.tokenizer.n_tokens * d_model
-        self.head = nn.Sequential(
-            nn.Linear(head_in, 4 * d_model), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(4 * d_model, 1),
-        )
-        self.register_buffer(
-            'pos_weight',
-            torch.tensor(float(pos_weight)) if pos_weight is not None else None,
-        )
-
-    def encode_text(self, x_text):
-        """(batch, max_text_len) -> (batch, d_model): el embedding [CLS] del texto."""
-        batch_size = x_text.shape[0]
-        x = torch.cat([self.cls.expand(batch_size, -1, -1),
-                       self.char_embedding_table(x_text)], dim=1)
-        mask = torch.cat([torch.ones(batch_size, 1, dtype=torch.bool, device=x_text.device),
-                          x_text != PAD_IDX], dim=1)
-        x = x + self.position_embedding_table(torch.arange(x.shape[1], device=x.device))
-        for block in self.blocks:
-            x = block(x, mask)
-        return self.ln_f(x)[:, 0]
-
-    def forward(self, x_cat, x_num, x_text, targets=None):
-        text_emb = self.encode_text(x_text)                     # (batch, d_model)
-        tab = self.tokenizer(x_cat, x_num).flatten(1)           # (batch, n_tokens*d_model)
-        h = torch.cat([text_emb, tab], dim=1)
-        logits = self.head(h).squeeze(-1)
-        loss = None
-        if targets is not None:
-            loss = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=self.pos_weight)
-        return logits, loss
-
-
-ARCHITECTURES = {
-    'transformer': BTRTransformer,
-    'mlp': MLPBaseline,
-    'tower': TextTowerModel,
-}
+ARCHITECTURES = {'transformer': BTRTransformer}
 
 # formulaciones cuyo tercer tensor es la lista de ingredientes (no texto)
 ING_FORMULATIONS = ('ing', 'ing_fusion', 'ing_hybrid')
@@ -649,18 +496,22 @@ def load_checkpoint(path, device='cpu'):
     """
     import inspect
     ckpt = torch.load(path, map_location=device, weights_only=False)
+    if ckpt.get('arch', 'transformer') not in ARCHITECTURES:
+        raise ValueError(f"{path}: arquitectura {ckpt['arch']!r} ya no esta en el codigo")
     cls = ARCHITECTURES[ckpt.get('arch', 'transformer')]
     extra = {}
-    if ckpt.get('cat_tables') is not None:  # encodings target/freq/hashing
+    if ckpt.get('cat_tables') is not None:  # encodings target/freq/hashing/ordinal
         extra['cat_tables'] = ckpt['cat_tables']
     # los checkpoints guardan la config completa de su epoca; las variantes que
     # quedaron fuera del codigo (multi-task, per-feature, ablaciones, transfer
     # externo) se ignoran si estaban apagadas y se rechazan si no
     apagado = {'cart_lambda': 0.0, 'per_feature': 'none', 'sin_residual': False,
-               'sin_layernorm': False, 'feature_dropout': 0.0, 'text_emb_dim': 0,
-               'hf_model': '', 'cat_modes': None}
+               'sin_layernorm': False, 'feature_dropout': 0.0, 'cat_modes': None}
+    ignorar = {'char_vocab_size', 'max_text_len'}   # el vocabulario de chars ya no existe
     config = {}
     for k, v in ckpt['model_config'].items():
+        if k in ignorar:
+            continue
         if k in apagado:
             if v != apagado[k]:
                 raise ValueError(f'{path}: usa {k}={v!r}, una variante que ya no esta en el codigo')

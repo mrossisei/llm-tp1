@@ -6,8 +6,8 @@ USO EN LA MAQUINA CON GPU (dos lineas):
 
 Garantias de la suite:
 - Usa la GPU automaticamente (--device auto -> cuda si esta disponible). Si la familia
-  "texto" fuera a correr en CPU, ABORTA con instrucciones (evita 20+ horas de CPU por
-  un torch mal instalado); para forzar CPU a proposito: --device cpu.
+  "texto" (fine-tuning de un preentrenado) fuera a correr en CPU, ABORTA con
+  instrucciones; para forzar CPU a proposito: --device cpu.
 - Es RESUMIBLE: cada (experimento, seed) que ya tiene su JSON en salidas/resultados/ se
   saltea. Si se corta a la mitad, volver a correr la misma linea continua donde quedo.
 - Guarda salidas/pesos/ por defecto (checkpoints recargables para analisis posteriores,
@@ -17,11 +17,11 @@ Garantias de la suite:
 Otras opciones: --list, --plan, --only a,b (admite comodines: 'gc_*'), --familia
 tabular|texto, --seeds N, --epochs N (pruebas).
 
-Cada bloque de abajo dice que diapositiva/figura de la presentacion sostiene. Las
-configuraciones exploratorias que no entraron a la presentacion (listwise, multi-task
-con cart, pesos por feature, regularizacion, transfer learning, SOM/PCA/autoencoder,
-MiniLM, destilacion) se sacaron del codigo; sus corridas siguen en salidas/resultados/
-y su analisis en analisis.md.
+Cada bloque dice que diapositiva/figura sostiene. Los experimentos son BARRIDOS: cada
+uno mueve uno o dos ejes sobre la configuracion base (d_model 32, 4 cabezas, 2 bloques,
+dropout 0.1, AdamW lr 1e-3, weight decay 0.01, batch 256, paciencia 20 / tope 300
+epocas, 6 seeds) y las celdas ya corridas en tandas previas se reutilizan por su
+nombre canonico, sin duplicar corridas.
 """
 
 import argparse
@@ -37,84 +37,47 @@ from btr.train import build_parser, run_name
 REPO_ROOT = Path(__file__).resolve().parent
 RESULTADOS = REPO_ROOT / 'salidas' / 'resultados'
 
-PAC = ['--patience', '20', '--epochs', '300']          # protocolo tabular (2da tanda en adelante)
+PAC = ['--patience', '20', '--epochs', '300']          # el protocolo de entrenamiento
 ORD = ['--cat-encoding', 'ordinal', *PAC]              # la config exacta del modelo final
+EMB = [*PAC]                                           # idem con embeddings aprendidos
 
 # nombre -> (argumentos extra, familia)  [familia: 'tabular' barata | 'texto' GPU]
 EXPERIMENTOS = {
-    # ---- 1ra tanda (protocolo 60 epocas / paciencia 8; la familia texto se queda con este
-    # protocolo: con paciencia 20 la seleccion por validacion sobreajusta, ver analisis.md) ----
-    # las formulaciones y arquitecturas (Alternativas, Exp. 6 texto, curva de formulaciones)
-    'feat_base':        (['--formulation', 'features'], 'tabular'),   # embeddings, la base original
-    'mlp_base':         (['--arch', 'mlp'], 'tabular'),               # baseline MLP, mismos embeddings
-    'text_base':        (['--formulation', 'text'], 'texto'),         # texto crudo (chars)
-    'hybrid_full':      (['--formulation', 'hybrid'], 'texto'),       # features + 256 chars
-    'tower_base':       (['--arch', 'tower'], 'texto'),               # encoder de texto + MLP
-    # ¿el transformer redescubre la senal del texto sin el regex?
-    'hybrid_sin_regex': (['--formulation', 'hybrid', '--drop-features', 'listing_status'], 'texto'),
-    # familia "producto nuevo" (sin informacion de estado: la discusion conceptual, ~0.16)
-    'feat_intrinseco':  (['--formulation', 'features', '--drop-features', 'listing_status'], 'tabular'),
-    'text_intrinseco':  (['--formulation', 'text', '--strip-status'], 'texto'),
-    'hybrid_intrinseco': (['--formulation', 'hybrid', '--strip-status',
-                           '--drop-features', 'listing_status'], 'texto'),
-    # ablaciones de arquitectura (las hipotesis refutadas de "Desafios")
-    'feat_bins':        (['--numeric-mode', 'bins'], 'tabular'),      # bins por cuantiles para la U del precio
-    'feat_pos':         (['--positional'], 'tabular'),                # positional encoding en features
-    'feat_causal':      (['--causal'], 'tabular'),                    # mascara causal (degenera: CLS en 0)
-    'feat_mean':        (['--pooling', 'mean'], 'tabular'),           # mean pooling en vez de CLS
-    'feat_posweight':   (['--pos-weight'], 'tabular'),                # pesar la clase positiva
-}
-
-# ---- las mismas configs tabulares de la 1ra tanda con el protocolo 300/20 (grupos pac20_*,
-# corridos por Matias): son las celdas "embedding" de los graficos de cabezas, bloques,
-# d_model, encoding y formulaciones ----
-EXPERIMENTOS |= {
-    'pac20_feat_base':       ([*PAC], 'tabular'),
-    'pac20_feat_h1':         (['--n-head', '1', *PAC], 'tabular'),
-    'pac20_feat_h2':         (['--n-head', '2', *PAC], 'tabular'),
-    'pac20_feat_l1':         (['--n-layer', '1', *PAC], 'tabular'),
-    'pac20_feat_l4':         (['--n-layer', '4', *PAC], 'tabular'),
-    'pac20_feat_d64':        (['--d-model', '64', *PAC], 'tabular'),
-    'pac20_feat_intrinseco': (['--drop-features', 'listing_status', *PAC], 'tabular'),
-    'pac20_tower_base':      (['--arch', 'tower', *PAC], 'texto'),
-    'pac20_feat_bins':       (['--numeric-mode', 'bins', *PAC], 'tabular'),
-    'pac20_feat_pos':        (['--positional', *PAC], 'tabular'),
-    'pac20_feat_causal':     (['--causal', *PAC], 'tabular'),
-    'pac20_feat_mean':       (['--pooling', 'mean', *PAC], 'tabular'),
-    'pac20_feat_posweight':  (['--pos-weight', *PAC], 'tabular'),
-}
-
-# ---- 2da y 3ra tanda: los ejes que decidieron el modelo (Exp. 2-6) ----
-EXPERIMENTOS |= {
-    # grilla "campeon" sobre embeddings: combinar los ganadores de las ablaciones
-    # (camp_d64l4 y camp_d64h1l4 son dos de las 4 configs del empate en validacion;
-    # camp_d64h1 es la celda 64x1 del heatmap de embeddings)
-    'camp_d64h1':       (['--d-model', '64', '--n-head', '1', *PAC], 'tabular'),
-    'camp_d64l4':       (['--d-model', '64', '--n-layer', '4', *PAC], 'tabular'),
-    'camp_d64h1l4':     (['--d-model', '64', '--n-head', '1', '--n-layer', '4', *PAC], 'tabular'),
-    # causal hecho bien: el feat_causal original degeneraba (CLS en posicion 0 solo
-    # se ve a si mismo -> p constante, ROC 0.500 medido); con el CLS al final el
-    # experimento "¿importa la bidireccionalidad?" por fin se puede responder
-    'feat_causal_last': (['--causal', '--cls-position', 'last', *PAC], 'tabular'),
-    # Exp. 5, el decisivo: encodings de las categoricas
+    # ---- la base y sus ablaciones (grupos pac20_*, corridos por Matias con el protocolo
+    # 300/20 sobre la 1ra tanda): las celdas "embedding" de los heatmaps y las hipotesis
+    # refutadas de "Desafios" ----
+    'pac20_feat_base':       ([*EMB], 'tabular'),                                # embedding, base
+    'pac20_feat_h1':         (['--n-head', '1', *EMB], 'tabular'),
+    'pac20_feat_h2':         (['--n-head', '2', *EMB], 'tabular'),
+    'pac20_feat_l1':         (['--n-layer', '1', *EMB], 'tabular'),
+    'pac20_feat_l4':         (['--n-layer', '4', *EMB], 'tabular'),
+    'pac20_feat_d16':        (['--d-model', '16', *EMB], 'tabular'),
+    'pac20_feat_d64':        (['--d-model', '64', *EMB], 'tabular'),
+    'pac20_feat_intrinseco': (['--drop-features', 'listing_status', *EMB], 'tabular'),  # sin estado: ~0.16
+    'pac20_feat_bins':       (['--numeric-mode', 'bins', *EMB], 'tabular'),     # bins por cuantiles
+    'pac20_feat_pos':        (['--positional', *EMB], 'tabular'),               # positional encoding
+    'pac20_feat_causal':     (['--causal', *EMB], 'tabular'),                   # causal: degenera (CLS en 0)
+    'pac20_feat_mean':       (['--pooling', 'mean', *EMB], 'tabular'),          # mean pooling vs CLS
+    'pac20_feat_posweight':  (['--pos-weight', *EMB], 'tabular'),               # pesar la clase positiva
+    'feat_causal_last':      (['--causal', '--cls-position', 'last', *PAC], 'tabular'),  # causal bien hecho
+    # el campeon y sus vecinos de capacidad (2da-5ta tanda)
     'feat_ordinal':     ([*ORD], 'tabular'),                                     # EL MODELO FINAL
+    'camp_ordinal_h1':  ([*ORD, '--n-head', '1'], 'tabular'),
+    'camp_ordinal_l4':  ([*ORD, '--n-layer', '4'], 'tabular'),
+    'camp_d64h1':       (['--d-model', '64', '--n-head', '1', *EMB], 'tabular'),
+    'camp_d64l4':       (['--d-model', '64', '--n-layer', '4', *EMB], 'tabular'),
+    'camp_d64h1l4':     (['--d-model', '64', '--n-head', '1', '--n-layer', '4', *EMB], 'tabular'),
+    'min_d16':          ([*ORD, '--d-model', '16'], 'tabular'),                  # 6.945 parametros
+    'min_d8':           ([*ORD, '--d-model', '8'], 'tabular'),                   # 1.937
+    'min_l1':           ([*ORD, '--n-layer', '1'], 'tabular'),
+    'min_d16l1':        ([*ORD, '--d-model', '16', '--n-layer', '1'], 'tabular'),  # 3.713
+    # encodings de las categoricas a d_model 32 (fila central del heatmap encoding x d_model)
     'feat_target':      (['--cat-encoding', 'target', *PAC], 'tabular'),
     'feat_freq':        (['--cat-encoding', 'freq', *PAC], 'tabular'),
     'feat_hash8':       (['--cat-encoding', 'hashing', '--hash-buckets', '8', *PAC], 'tabular'),
-    'mlp_onehot':       (['--arch', 'mlp', '--cat-encoding', 'onehot', *PAC], 'tabular'),
-    # el campeon ordinal combinado con los ganadores de capacidad (Exp. 2 y 3)
-    'camp_ordinal_h1':  ([*ORD, '--n-head', '1'], 'tabular'),
-    'camp_ordinal_l4':  ([*ORD, '--n-layer', '4'], 'tabular'),
-    # el texto resumido a UN token de la secuencia tabular (fusion), con chars o con
-    # palabras, y las palabras inicializadas con un skipgram propio (Exp. 6 inicializacion)
-    'fusion_base':      (['--formulation', 'fusion'], 'texto'),
-    'fusion_words':     (['--formulation', 'fusion', '--text-tokens', 'words',
-                          '--max-text-len', '64'], 'texto'),
-    'fusion_words_w2v': (['--formulation', 'fusion', '--text-tokens', 'words',
-                          '--max-text-len', '64', '--w2v-init'], 'texto'),
 }
 
-# ---- 4ta tanda: robustez del MODELO FINAL (diapositivas Robustez, Modelo final, Exp. 6) ----
+# ---- Robustez del MODELO FINAL (diapositivas Robustez y Modelo final) ----
 EXPERIMENTOS |= {
     # curva de aprendizaje (100% = feat_ordinal)
     'curva_frac25': ([*ORD, '--train-frac', '0.25'], 'tabular'),
@@ -126,9 +89,6 @@ EXPERIMENTOS |= {
     'robu_init45': ([*ORD, '--init-seed', '45'], 'tabular'),
     'robu_init46': ([*ORD, '--init-seed', '46'], 'tabular'),
     'robu_init47': ([*ORD, '--init-seed', '47'], 'tabular'),
-    # MLM sobre features: pre-entrenar el tronco enmascarando una columna por fila
-    'feat_mlm20':         (['--pretrain-mlm', '20', *PAC], 'tabular'),
-    'feat_ordinal_mlm20': ([*ORD, '--pretrain-mlm', '20'], 'tabular'),
     # GroupKFold 5: cada query pasa por test una vez por seed -> 0.821 +- 0.012
     'cv5_fold0': ([*ORD, '--cv-k', '5', '--cv-fold', '0'], 'tabular'),
     'cv5_fold1': ([*ORD, '--cv-k', '5', '--cv-fold', '1'], 'tabular'),
@@ -137,47 +97,27 @@ EXPERIMENTOS |= {
     'cv5_fold4': ([*ORD, '--cv-k', '5', '--cv-fold', '4'], 'tabular'),
 }
 
-# ---- 5ta tanda: achicar el campeon (Exp. 3 bloques y Exp. 4 d_model, sobre ordinal) ----
+# ---- Exp. INGREDIENTES: la alternativa (un transformer chico codifica la lista como
+# conjunto y su [ING] entra como token). Hipotesis registrada antes de correr: los
+# ingredientes co-ocurren en recetas fijas por categoria, asi que category ya lo captura y
+# todo da delta ~ 0 vs feat_ordinal; ing_solo separa "no hay senal" de "la senal ya la
+# tenian otras columnas" (dio 0.140 ~ azar). ----
 EXPERIMENTOS |= {
-    'min_d16':   ([*ORD, '--d-model', '16'], 'tabular'),                   # 6.945 parametros
-    'min_d8':    ([*ORD, '--d-model', '8'], 'tabular'),                    # 1.937
-    'min_l1':    ([*ORD, '--n-layer', '1'], 'tabular'),
-    'min_d16l1': ([*ORD, '--d-model', '16', '--n-layer', '1'], 'tabular'),  # 3.713: empata al campeon
+    'ing_solo':      (['--formulation', 'ing', *PAC], 'tabular'),                     # control
+    'ing_hybrid':    ([*ORD, '--formulation', 'ing_hybrid'], 'tabular'),               # un token por ingrediente
+    'ing_fusion':    ([*ORD, '--formulation', 'ing_fusion'], 'tabular'),               # encoder de 1 bloque
+    'ing_fusion_l2': ([*ORD, '--formulation', 'ing_fusion', '--ing-layer', '2'], 'tabular'),
 }
 
-# ---- 9na tanda: los INGREDIENTES como conjunto (Alternativas: 0.817, igual que sin ellos) ----
-# Encoder de conjunto: [ING] + un token por ingrediente, sin positional encoding (la
-# lista no tiene orden), atencion bidireccional. Hipotesis registrada antes de correr:
-# los ingredientes co-ocurren en recetas fijas por categoria, asi que category ya lo
-# captura y todo da delta ~ 0 vs feat_ordinal; ing_solo separa "no hay senal" de "la
-# senal ya la tenian otras columnas" (dio 0.140 ~ azar).
-EXPERIMENTOS |= {
-    'ing_solo':   (['--formulation', 'ing', *PAC], 'tabular'),
-    'ing_fusion': ([*ORD, '--formulation', 'ing_fusion'], 'tabular'),
-    'ing_hybrid': ([*ORD, '--formulation', 'ing_hybrid'], 'tabular'),
-}
-
-# ---- 10ma tanda: grilla d_model x cabezas por encoding + la cabeza del MLP (Exp. 1 y 2) ----
+# ---- Exp. CAPACIDAD (10ma tanda): grilla d_model x cabezas por encoding ----
 # La celda d32h4 ordinal ES feat_ordinal y d32h1 es camp_ordinal_h1; en embedding,
-# d32h1/h2/h4 son pac20_feat_h1/h2/base, d64h1 es camp_d64h1 y d64h4 es pac20_feat_d64:
-# se reutilizan tal cual (misma clave) y no se duplican. Los MLP: "el mejor MLP que
-# pudimos", ancho / profundidad / dropout sobre el encoding ordinal.
+# d32h1/h2/h4 son pac20_feat_h1/h2/base, d64h1 es camp_d64h1 y d64h4 es pac20_feat_d64.
 EXPERIMENTOS |= {
     **{f'gc_o_d{d}h{h}': ([*ORD, '--d-model', str(d), '--n-head', str(h)], 'tabular')
        for d in (32, 64, 128) for h in (1, 2, 4, 8) if (d, h) not in {(32, 4), (32, 1)}},
-    **{f'gc_e_d{d}h{h}': ([*PAC, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+    **{f'gc_e_d{d}h{h}': ([*EMB, '--d-model', str(d), '--n-head', str(h)], 'tabular')
        for d in (32, 64, 128) for h in (1, 2, 4, 8)
        if (d, h) not in {(32, 1), (32, 2), (32, 4), (64, 1), (64, 4)}},
-    'mlp_ordinal':    (['--arch', 'mlp', *ORD], 'tabular'),
-    'mlp_ord_h256':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '256'], 'tabular'),
-    'mlp_ord_h128':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '128'], 'tabular'),
-    'mlp_ord_ancho':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '512,256'], 'tabular'),
-    'mlp_ord_prof3':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '256,128,64'], 'tabular'),
-    'mlp_ord_prof4':  (['--arch', 'mlp', *ORD, '--mlp-hidden', '256,128,64,32'], 'tabular'),
-    'mlp_ord_do2':    (['--arch', 'mlp', *ORD, '--dropout', '0.2'], 'tabular'),
-    'mlp_ord_do3':    (['--arch', 'mlp', *ORD, '--dropout', '0.3'], 'tabular'),
-    'mlp_ord_grande': (['--arch', 'mlp', *ORD, '--mlp-hidden', '1024,256', '--dropout', '0.2'], 'tabular'),
-    'mlp_ord_mini':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '64,32'], 'tabular'),
 }
 
 # ---- 11ra tanda (02/09): la grilla de cabezas crece (h16, d256) + grilla d_model x bloques ----
@@ -215,10 +155,84 @@ _CELDAS_10MA = {(d, h) for d in (32, 64, 128) for h in (1, 2, 4, 8)}   # ya defi
 EXPERIMENTOS |= {
     **{f'gc_o_d{d}h{h}': ([*ORD, '--d-model', str(d), '--n-head', str(h)], 'tabular')
        for d in D_GRILLA for h in H_GRILLA if (d, h) not in _CELDAS_10MA},
-    **{f'gc_e_d{d}h{h}': ([*PAC, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+    **{f'gc_e_d{d}h{h}': ([*EMB, '--d-model', str(d), '--n-head', str(h)], 'tabular')
        for d in D_GRILLA for h in H_GRILLA if (d, h) not in _CELDAS_10MA},
     **{f'gl_o_d{d}l{l}': ([*ORD, '--d-model', str(d), '--n-layer', str(l), '--n-head', MEJOR_H], 'tabular')
        for d in D_GRILLA for l in L_GRILLA if l != 2},
+}
+
+
+
+# ---- 12da tanda (02/09): los demas experimentos, tambien como barridos ----
+# (a) ENCODING x d_model: {ordinal, embedding, target, freq, hashing} x d {16, 32, 64}.
+#     Existentes: ordinal (min_d16, feat_ordinal, gc_o_d64h4), embedding (pac20_feat_d16,
+#     pac20_feat_base, pac20_feat_d64) y la fila d32 de target/freq/hashing. Hipotesis:
+#     el orden de los encodings no depende de la capacidad — ordinal arriba, hashing y
+#     frecuencia abajo en las tres columnas; a d64 target se acerca a ordinal (mas
+#     parametros para compensar magnitudes).
+D_ENC = (16, 32, 64)
+ENC_ARGS = {'target': ['--cat-encoding', 'target'], 'freq': ['--cat-encoding', 'freq'],
+            'hash8': ['--cat-encoding', 'hashing', '--hash-buckets', '8']}
+EXPERIMENTOS |= {
+    f'ge_{enc}_d{d}': ([*ENC_ARGS[enc], '--d-model', str(d), *PAC], 'tabular')
+    for enc in ENC_ARGS for d in D_ENC if d != 32
+}
+# (b) PRE-ENTRENAMIENTO MLM: epocas {0, 5, 10, 20, 40} x encoding {ordinal, embedding}.
+#     Existentes: 0 (feat_ordinal / pac20_feat_base) y 20 (feat_ordinal_mlm20 / feat_mlm20).
+#     Hipotesis: sobre embeddings el MLM suma poco y satura antes de 20 epocas; sobre
+#     ordinal no mueve nada a ninguna cantidad de epocas (el prior ya regulariza).
+MLM_EPOCAS = (0, 5, 10, 20, 40)
+EXPERIMENTOS |= {
+    'feat_ordinal_mlm20': ([*ORD, '--pretrain-mlm', '20'], 'tabular'),
+    'feat_mlm20':         ([*EMB, '--pretrain-mlm', '20'], 'tabular'),
+    **{f'gm_o_mlm{e}': ([*ORD, '--pretrain-mlm', str(e)], 'tabular') for e in (5, 10, 40)},
+    **{f'gm_e_mlm{e}': ([*EMB, '--pretrain-mlm', str(e)], 'tabular') for e in (5, 10, 40)},
+}
+# (c) REGULARIZACION: dropout {0, 0.1, 0.2, 0.3} x weight decay {0, 1e-3, 1e-2, 1e-1}, sobre
+#     el campeon. Existentes (6ta tanda): reg_do0, reg_do03, reg_wd0, reg_wd1e3, reg_wd1e1,
+#     reg_nada y la celda base. Hipotesis: meseta plana (el early stopping ya evita el
+#     sobreajuste; medido: sin nada 0.824, sin dropout 0.828), con caida solo en los
+#     extremos dropout 0.3 y weight decay 0.1.
+DROPOUTS = ('0', '0.1', '0.2', '0.3')
+WDS = ('0', '0.001', '0.01', '0.1')
+EXPERIMENTOS |= {
+    'reg_do0':   ([*ORD, '--dropout', '0'], 'tabular'),
+    'reg_do03':  ([*ORD, '--dropout', '0.3'], 'tabular'),
+    'reg_wd0':   ([*ORD, '--weight-decay', '0'], 'tabular'),
+    'reg_wd1e3': ([*ORD, '--weight-decay', '0.001'], 'tabular'),
+    'reg_wd1e1': ([*ORD, '--weight-decay', '0.1'], 'tabular'),
+    'reg_nada':  ([*ORD, '--dropout', '0', '--weight-decay', '0'], 'tabular'),
+    **{f'gr_do{do}_wd{wd}': ([*ORD, '--dropout', do, '--weight-decay', wd], 'tabular')
+       for do in DROPOUTS for wd in WDS
+       if (do, wd) not in {('0.1', '0.01'), ('0', '0.01'), ('0.3', '0.01'), ('0.1', '0'),
+                           ('0.1', '0.001'), ('0.1', '0.1'), ('0', '0')}},
+}
+# (d) OPTIMIZACION: learning rate {1e-4, 3e-4, 1e-3, 3e-3} x batch {64, 128, 256, 512}, sobre
+#     el campeon (1e-3 x 256 = feat_ordinal). Hipotesis: meseta ancha alrededor de la base;
+#     lr 1e-4 no converge dentro de la paciencia con batch grande (pocos pasos por epoca);
+#     lr 3e-3 con batch 64 es ruidoso y peor.
+LRS = ('0.0001', '0.0003', '0.001', '0.003')
+BATCHES = ('64', '128', '256', '512')
+EXPERIMENTOS |= {
+    f'go_lr{lr}_bs{bs}': ([*ORD, '--lr', lr, '--batch-size', bs], 'tabular')
+    for lr in LRS for bs in BATCHES if (lr, bs) != ('0.001', '256')
+}
+# (e) TRANSFER LEARNING (clase 3): el TITULO del producto —sin el badge de estado— embebido
+#     por un modelo preentrenado y sumado como un token mas al campeon. Barrido de tamano
+#     del preentrenado (feature extraction, embeddings precomputados por eda/embed_titulos.py
+#     y congelados): MiniLM-L6 22M / mpnet-base 110M / bge-large 335M; fine-tuning del chico
+#     (el encoder entra al grafo, lr 1e-5); y el control "solo el titulo". Hipotesis: el
+#     nombre del producto sin badge no dice mas que category + brand, que ya son columnas:
+#     delta ~ 0 para los tres tamanos, fine-tuning no lo cambia, y el titulo solo queda en
+#     el techo intrinseco (~0.16): la senal que un LM podria leer ("Best Seller") es
+#     justo la que el regex ya extrae. Los modelos no se entregan: se bajan de Hugging Face.
+EMB_TITULO = 'salidas/embeddings/titulo_{}.npy'
+EXPERIMENTOS |= {
+    'tl_minilm':    ([*ORD, '--text-emb', EMB_TITULO.format('minilm')], 'tabular'),
+    'tl_mpnet':     ([*ORD, '--text-emb', EMB_TITULO.format('mpnet')], 'tabular'),
+    'tl_bge':       ([*ORD, '--text-emb', EMB_TITULO.format('bge')], 'tabular'),
+    'tl_bge_solo':  ([*PAC, '--text-emb', EMB_TITULO.format('bge'), '--drop-features', 'all'], 'tabular'),
+    'tl_minilm_ft': ([*ORD, '--text-emb-finetune', 'sentence-transformers/all-MiniLM-L6-v2'], 'texto'),
 }
 
 
@@ -279,7 +293,7 @@ def chequear_gpu(device_arg, nombres):
     if con_texto and device_arg == 'auto':
         raise SystemExit(
             "\nNO se detecto GPU (torch.cuda.is_available() = False) y la suite incluye la\n"
-            f"familia 'texto' ({len(con_texto)} experimentos, 40-90 min POR CORRIDA en CPU).\n"
+            f"familia 'texto' ({len(con_texto)} experimentos con un encoder preentrenado en el grafo).\n"
             "En la maquina con RTX 3070 esto suele significar que torch quedo instalado en\n"
             "version CPU. Solucion:\n"
             "    uv pip install --python .venv/bin/python --reinstall torch\n"

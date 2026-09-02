@@ -1,0 +1,8 @@
+{
+ "modelo": "sentence-transformers/all-mpnet-base-v2",
+ "filas": 10000,
+ "dims": 768,
+ "parametros": 109486464,
+ "texto": "title sin el sufijo de estado",
+ "ejemplo": "Cedar House Steamable Pepperoni Pizza - 10 oz"
+}

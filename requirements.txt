@@ -3,3 +3,6 @@ pandas
 numpy
 scikit-learn
 matplotlib
+# solo para el experimento de transfer learning (los modelos preentrenados se bajan de Hugging Face):
+#   sentence-transformers   -> eda/embed_titulos.py (embeddings congelados del titulo)
+#   transformers            -> btr.train --text-emb-finetune (fine-tuning, GPU)

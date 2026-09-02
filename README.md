@@ -7,8 +7,7 @@ sigmoide. El BTR de un producto es el promedio de esas probabilidades.
 
 **Modelo final:** transformer de features con encoding ordinal de las categóricas — d_model 32,
 4 cabezas, 2 bloques pre-LN, **26.177 parámetros**. PR-AUC de test **0.824 ± 0.018** (6 seeds),
-GroupKFold 5×6 0.821 ± 0.012, ensemble 0.834. Varas: GBM 0.762, mejor MLP 0.810, logística
-0.698, azar 0.131.
+GroupKFold 5×6 0.821 ± 0.012, ensemble 0.834. Varas: regresión logística 0.698, azar 0.131.
 
 - [`propuesta.md`](propuesta.md): el diseño — formulación del problema, EDA, decisiones y plan de experimentos.
 - [`analisis.md`](analisis.md): el análisis de cada tanda de experimentos, con la evidencia y las decisiones.
@@ -17,32 +16,32 @@ GroupKFold 5×6 0.821 ± 0.012, ensemble 0.834. Varas: GBM 0.762, mejor MLP 0.81
 
 ```
 ├── supermarket_products.csv   # dataset de eventos de búsqueda (10.000 impresiones, 2.012 búsquedas)
-├── btr/                       # el laboratorio: todas las arquitecturas que sostienen la presentación
+├── btr/                       # el laboratorio
 │   ├── data.py                #   carga, features derivados (listing_status, price_rel), split por query, tensores
-│   ├── model.py               #   bloques del transformer (demo de la cátedra) + FT-Transformer, MLP, torre de texto
+│   ├── model.py               #   bloques del transformer (demo de la cátedra), FT-Transformer, encoder de ingredientes
 │   └── train.py               #   entrenamiento, early stopping por PR-AUC de validación, 16 métricas, multi-seed
-├── experimentos.py            # la suite curada (118 configs × 6 seeds), resumible, con --resumen y --plan
+├── experimentos.py            # la suite curada (138 configs × 6 seeds), resumible, con --resumen y --plan
 ├── modelo_final/              # SOLO el modelo final, autocontenido: data.py, model.py, train.py, predecir.py, pesos/
 ├── eda/                       # los scripts que producen los números y figuras de la presentación
-│   ├── verificaciones.py      #   reproduce el EDA y los baselines (logística, GBM, azar)
+│   ├── verificaciones.py      #   reproduce el EDA y los baselines (logística, azar)
 │   ├── graficos.py            #   todas las figuras de la presentación -> salidas/graficos/
+│   ├── embed_titulos.py       #   transfer learning: embeddings del título con modelos preentrenados
 │   ├── atencion.py            #   mapas de atención del modelo final (graficos.py los usa)
 │   ├── calibracion.py         #   reliability diagram + ECE
 │   ├── ensemble.py            #   ensemble de configuraciones (0.834)
 │   ├── deep_ensemble.py       #   ensemble de inicializaciones y descomposición de la varianza
-│   ├── cross_manual.py        #   logística + cruce precio×tier a mano (¿la atención solo descubrió eso?)
 │   └── metricas_pagina.py     #   top-1 por página: el producto que el modelo pone primero
 └── salidas/
     ├── resultados/            # un JSON por corrida: config + curvas train/val por época + val/test finales
     ├── pesos/                 # checkpoints .pt recargables (btr.model.load_checkpoint)
-    └── graficos/              # las figuras de la presentación
+    ├── graficos/              # las figuras de la presentación
+    └── embeddings/            # embeddings del título (float16) de los 3 modelos preentrenados
 ```
 
-`salidas/resultados/` conserva **todas** las corridas del proyecto (1.030 al cierre de la 10ª tanda),
-incluidas las de variantes que no entraron a la presentación (listwise, multi-task con cart,
-pesos por feature, regularización, transfer learning, SOM/PCA/autoencoder, MiniLM, destilación);
-el código de esas variantes se retiró de `btr/` y `experimentos.py`, y su análisis está en
-`analisis.md`.
+`salidas/resultados/` conserva **todas** las corridas del proyecto, incluidas las de variantes que
+no entraron a la presentación (MLP y GBM como baselines, texto crudo / híbrido / fusión / torre,
+listwise, multi-task con cart, pesos por feature, transfer interno, SOM/PCA/autoencoder); el
+código de esas variantes se retiró de `btr/` y `experimentos.py`, y su análisis está en `analisis.md`.
 
 ## Setup
 
@@ -68,7 +67,7 @@ python train.py --seeds 6               # reproduce el entrenamiento (GPU: minut
 
 ```bash
 .venv/bin/python -m btr.train --cat-encoding ordinal --patience 20 --epochs 300   # el modelo final, seed 42
-.venv/bin/python -m btr.train --help                                             # arquitecturas, formulaciones y ejes
+.venv/bin/python -m btr.train --help                                             # formulaciones y ejes
 ```
 
 Cada corrida escribe `salidas/resultados/<nombre>.json` y, con `--save-pesos`,
@@ -91,9 +90,30 @@ probs = model.predict_proba(x_cat, x_num, x_text)   # p(bought) por fila
 .venv/bin/python experimentos.py --resumen           # media ± desvío por configuración
 ```
 
-Usa la GPU automáticamente y aborta con instrucciones si la familia texto fuera a correr en CPU.
-Cada bloque de `experimentos.py` dice qué diapositiva sostiene. Al terminar una tanda: commitear
-`salidas/resultados/` y `salidas/pesos/` y pushear.
+Los experimentos son **barridos** sobre la configuración base (d_model 32, 4 cabezas, 2 bloques,
+dropout 0.1, AdamW lr 1e-3, weight decay 0.01, batch 256, paciencia 20, 6 seeds); las celdas ya
+corridas se reutilizan por su nombre. Al terminar una tanda: commitear `salidas/resultados/` y
+`salidas/pesos/` y pushear.
+
+| experimento | barrido | configs | figura |
+|---|---|---|---|
+| Capacidad | d_model {32, 64, 128, 256} × cabezas {1, 2, 4, 8, 16}, por encoding (ordinal / embedding) | `gc_o_*`, `gc_e_*` + celdas previas | `grilla.png` |
+| Profundidad | d_model {32, 64, 128, 256} × bloques {1, 2, 4, 8}, con las cabezas que mejor dieron | `gl_o_*` | `grilla_bloques.png` |
+| Encoding de las categóricas | {ordinal, embedding, target, frecuencia, hashing} × d_model {16, 32, 64} | `feat_*`, `ge_*` | `encoding.png` |
+| Pre-entrenamiento MLM | épocas {0, 5, 10, 20, 40} × encoding | `*_mlm20`, `gm_*` | `mlm.png` |
+| Regularización | dropout {0, 0.1, 0.2, 0.3} × weight decay {0, 1e-3, 1e-2, 1e-1} | `reg_*`, `gr_*` | `regularizacion.png` |
+| Optimización | learning rate {1e-4, 3e-4, 1e-3, 3e-3} × batch {64, 128, 256, 512} | `go_*` | `optimizacion.png` |
+| Ingredientes (la alternativa) | encoder de conjunto (1 / 2 bloques), un token por ingrediente, solo ingredientes | `ing_*` | `ingredientes.png` |
+| Transfer learning | título sin badge embebido por MiniLM-L6 / mpnet-base / bge-large (congelados), MiniLM fine-tuneado, solo el título | `tl_*` | `transfer.png` |
+| Robustez del modelo final | curva de aprendizaje, 6 splits × 6 inits, GroupKFold 5×6, calibración, ensembles | `curva_*`, `robu_*`, `cv5_*` | `curva_aprendizaje.png` |
+| Hipótesis refutadas | causal (y causal con CLS al final), bins, positional, mean pooling, pos_weight | `pac20_feat_*`, `feat_causal_last` | — |
+
+### Transfer learning con el título
+
+Los tres modelos preentrenados **no se entregan**: `eda/embed_titulos.py` los baja de Hugging Face
+(`sentence-transformers`) y guarda en `salidas/embeddings/` el embedding del título de cada
+producto, sin el sufijo de estado. Las corridas `tl_*` congeladas leen esas matrices; el
+fine-tuning (`--text-emb-finetune`) necesita `transformers` y GPU.
 
 ### Las figuras y los números de la presentación
 
@@ -104,27 +124,13 @@ Cada bloque de `experimentos.py` dice qué diapositiva sostiene. Al terminar una
 .venv/bin/python eda/metricas_pagina.py   # top-1 por página
 ```
 
-| diapositiva | de dónde sale |
-|---|---|
-| EDA, baselines, familia intrínseca | `eda/verificaciones.py`; `feat_intrinseco` / `pac20_feat_intrinseco` (~0.16) |
-| Exp. 1 — ¿la atención aporta? | `feat_base` vs `mlp_base`, `mlp_onehot`, `mlp_ordinal` + `mlp_ord_*` (`graficos/mlp.png`), `eda/cross_manual.py` |
-| Exp. 2 — cabezas y d_model × cabezas | `gc_o_*`, `gc_e_*`, `feat_ordinal`, `camp_ordinal_h1`, `pac20_feat_h1/h2/base/d64`, `camp_d64h1` (`grilla.png`, `cabezas.png`) |
-| Exp. 3 — bloques | `camp_ordinal_l4`, `min_l1`, `pac20_feat_l1/l4` (`bloques.png`); `gl_o_*` (`grilla_bloques.png`) |
-| Exp. 4 — d_model | `min_d8`, `min_d16`, `min_d16l1`, `pac20_feat_d64` (`dmodel.png`) |
-| Exp. 5 — encoding de categóricas | `feat_ordinal`, `feat_target`, `feat_freq`, `feat_hash8`, `mlp_onehot`, `pac20_feat_base` (`encoding.png`) |
-| Exp. 6 — inicialización | `feat_mlm20`, `feat_ordinal_mlm20`, `fusion_words`, `fusion_words_w2v` (`init.png`) |
-| Exp. 7 — texto / alternativas | `text_base`, `hybrid_full`, `hybrid_sin_regex`, `fusion_base`, `pac20_tower_base`, `ing_*` (`formulacion.png`) |
-| Modelo final, robustez | `cv5_fold*`, `curva_frac*`, `robu_init*`, `eda/ensemble.py`, `eda/deep_ensemble.py`, `eda/calibracion.py` |
-| Interpretabilidad | `eda/graficos.py` (`atencion.png`, `importancia.png` por permutación), `eda/metricas_pagina.py` |
-| Desafíos (hipótesis refutadas) | `feat_causal` / `feat_causal_last`, `feat_bins`, `feat_pos`, `feat_mean`, `feat_posweight` |
-
 ## Cobertura del enunciado
 
 | pide el enunciado | dónde está |
 |---|---|
 | Ej. 1 — variable objetivo, EDA, features y preprocesamiento | `propuesta.md` §1–3 y §6; `eda/verificaciones.py`; `btr/data.py` |
-| Ej. 2 — dónde va el transformer y por qué; alternativas | features-como-tokens (`btr/model.py`); texto, híbrido, fusión, torre e ingredientes implementados y corridos |
+| Ej. 2 — dónde va el transformer y por qué; alternativas | features-como-tokens (`btr/model.py`); encoder de ingredientes; título preentrenado como token |
 | Ej. 2 — partición train/valid/test | por `query_id` 70/15/15 (`btr/data.py`), GroupKFold 5×6 al cierre |
-| Ej. 2 — experimentos y ablaciones | `experimentos.py` (6 seeds cada uno), análisis en `analisis.md` |
+| Ej. 2 — experimentos y ablaciones | `experimentos.py` (barridos, 6 seeds cada uno), análisis en `analisis.md` |
 | Ej. 2 — evaluación (PR-AUC / ROC-AUC, over/underfitting) | 16 métricas por época y por split en cada JSON de `salidas/resultados/` |
 | Ej. 3 — personalización | una diapositiva de la presentación |

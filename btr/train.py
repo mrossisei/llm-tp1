@@ -7,26 +7,23 @@ decisiones se toman con PR-AUC (desbalance 13%) pero el resto queda registrado
 para poder graficar cualquiera despues. Cada corrida escribe salidas/resultados/<nombre>.json
 y, con --save-pesos, salidas/pesos/<nombre>.pt (recargable con btr.model.load_checkpoint).
 
-Arquitecturas (--arch) y formulaciones (--formulation), ver propuesta.md 4:
-  transformer + features   cada feature tabular es un token (FT-Transformer)
-  transformer + text       cada caracter de title+description es un token (demo)
-  transformer + hybrid     [CLS] + features + caracteres en una secuencia
-  mlp                      baseline sin atencion (mismos embeddings, MLP denso)
-  tower                    transformer SOLO como encoder de texto -> embedding
-                           que se concatena con lo tabular y clasifica un MLP
-  transformer + fusion     una torre de texto resume los caracteres a UN token
-                           que entra a la secuencia tabular
-  transformer + ing        SOLO los ingredientes como tokens (conjunto)
-  transformer + ing_fusion encoder de conjunto de ingredientes -> su [ING] entra
-                           como un token mas de la secuencia tabular
-  transformer + ing_hybrid un token POR ingrediente en la secuencia tabular
+Formulaciones (--formulation), ver propuesta.md 4 y btr/model.py:
+  features     cada feature tabular es un token (FT-Transformer) — el modelo final
+  ing_fusion   un encoder de conjunto resume los ingredientes a UN token mas
+  ing_hybrid   un token POR ingrediente en la secuencia tabular
+  ing          SOLO los ingredientes (control)
+Transfer learning (clase 3), sobre formulation features:
+  --text-emb NPY           el embedding del TITULO (sin badge) de un preentrenado,
+                           precomputado por eda/embed_titulos.py, entra como un
+                           token mas (feature extraction, congelado)
+  --text-emb-finetune HF   el encoder de Hugging Face entra al grafo y se ajusta
+                           con --text-emb-lr (fine-tuning)
 
-Ejes transversales: --cat-encoding (embedding / ordinal / target / freq /
-hashing; onehot solo para el MLP), --drop-features listing_status (modelo sin
-el estado parseado), --strip-status (texto sin sufijo ni oracion de estado: la
-variante "producto nuevo"), --numeric-mode bins, --positional, --causal,
---pooling, --pos-weight, --cls-position, --pretrain-mlm, --w2v-init,
---train-frac, --init-seed, --cv-k. La suite curada esta en experimentos.py.
+Ejes transversales: --cat-encoding (embedding / ordinal / target / freq / hashing),
+--drop-features listing_status (modelo sin el estado parseado), --numeric-mode bins,
+--positional, --causal, --pooling, --pos-weight, --cls-position, --pretrain-mlm,
+--train-frac, --init-seed, --cv-k, --dropout, --weight-decay, --lr, --batch-size.
+La suite curada esta en experimentos.py.
 
 Disciplina: las decisiones (hiperparametros, early stopping) se toman con
 VALIDACION; test se mira solo para reportar las configuraciones finales.
@@ -45,9 +42,9 @@ from sklearn.metrics import (
     confusion_matrix, log_loss, matthews_corrcoef, precision_recall_curve, roc_auc_score,
 )
 
-from .data import (CAT_FEATURES, MAX_INGREDIENTS, MAX_TEXT_LEN, NUM_FEATURES, TARGET,
-                   _palabras, prepare)
-from .model import ING_FORMULATIONS, BTRTransformer, MLPBaseline, TextTowerModel
+from .data import (CAT_FEATURES, MAX_INGREDIENTS, NUM_FEATURES, TARGET, load_dataset,
+                   prepare, titulo_sin_estado)
+from .model import ING_FORMULATIONS, BTRTransformer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SALIDAS = REPO_ROOT / 'salidas'   # resultados/ (json por corrida) y pesos/ (checkpoints)
@@ -122,10 +119,21 @@ def evaluate(model, split, max_rows=None):
 
 
 def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, verbose=True,
-                weight_decay=1e-2):
-    """Entrena con early stopping por PR-AUC de validacion; restaura el mejor estado."""
+                weight_decay=1e-2, text_emb_lr=1e-5):
+    """Entrena con early stopping por PR-AUC de validacion; restaura el mejor estado.
+
+    text_emb_lr: con --text-emb-finetune, lr chico y separado para el encoder
+    preentrenado (no destruir lo aprendido); lr normal para el resto.
+    """
     a, b, c, y = splits['train']
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    params = list(model.parameters())
+    if getattr(model, 'hf_encoder', None) is not None:
+        hf_ids = {id(q) for q in model.hf_encoder.parameters()}
+        grupos = [{'params': [q for q in params if id(q) not in hf_ids]},
+                  {'params': [q for q in params if id(q) in hf_ids], 'lr': text_emb_lr}]
+        optimizer = torch.optim.AdamW(grupos, lr=lr, weight_decay=weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     history, best_pr, best_state, since_best = [], -1.0, None, 0
 
     for epoch in range(epochs):
@@ -160,56 +168,6 @@ def train_model(model, splits, epochs=60, batch_size=256, lr=1e-3, patience=8, v
     if best_state is not None:
         model.load_state_dict(best_state)
     return history
-
-
-def pretrain_w2v(train_df, prep, d_model, device, epochs=3, window=2, k_neg=5, verbose=True):
-    """Skipgram con negative sampling sobre el corpus de TRAIN (--w2v-init).
-
-    La conexion clase 1 -> clase 2 de la revision externa: pre-entrenar los
-    embeddings de palabras de forma no supervisada (predecir el contexto) y
-    usarlos como INICIALIZACION del encoder de texto, que luego se ajusta
-    end-to-end. Comparar contra la inicializacion aleatoria mide cuanto vale el
-    pre-entrenamiento en un corpus tan chico (10k documentos).
-    """
-    import torch.nn as nn
-    from .data import strip_status_from_text
-    docs = []
-    for t, d in zip(train_df['title'], train_df['description']):
-        if prep.strip_status:
-            t, d = strip_status_from_text(t, d)
-        docs.append([prep.char_vocab.get(w, 1) for w in _palabras(t + ' ' + d)])
-    centros, contextos = [], []
-    for doc in docs:
-        for i, c in enumerate(doc):
-            for j in range(max(0, i - window), min(len(doc), i + window + 1)):
-                if j != i:
-                    centros.append(c)
-                    contextos.append(doc[j])
-    centros = torch.tensor(centros, device=device)
-    contextos = torch.tensor(contextos, device=device)
-    vocab = prep.char_vocab_size
-    emb_c = nn.Embedding(vocab, d_model).to(device)
-    emb_o = nn.Embedding(vocab, d_model).to(device)
-    opt = torch.optim.Adam(list(emb_c.parameters()) + list(emb_o.parameters()), lr=5e-3)
-    lote = 8192
-    for ep in range(epochs):
-        perm = torch.randperm(len(centros), device=device)
-        total = 0.0
-        for s in range(0, len(perm), lote):
-            idx = perm[s:s + lote]
-            c, o = emb_c(centros[idx]), emb_o(contextos[idx])
-            neg = emb_o(torch.randint(2, vocab, (len(idx), k_neg), device=device))
-            pos = torch.nn.functional.logsigmoid((c * o).sum(-1))
-            negs = torch.nn.functional.logsigmoid(-(neg @ c.unsqueeze(-1)).squeeze(-1)).sum(-1)
-            loss = -(pos + negs).mean()
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
-            total += loss.item() * len(idx)
-        if verbose:
-            print(f"  w2v epoch {ep}: loss {total / len(centros):.4f} "
-                  f"({len(centros):,} pares, vocab {vocab})")
-    return emb_c.weight.detach()
 
 
 def pretrain_mlm(model, split_train, cardinalities, epochs, batch_size, lr, device,
@@ -283,10 +241,8 @@ def resolve_device(arg):
 
 
 def run_name(args, seed):
-    base = args.formulation if args.arch == 'transformer' else args.arch
-    parts = [base, f"d{args.d_model}", f"h{args.n_head}", f"l{args.n_layer}", args.numeric_mode]
-    if args.text_tokens != 'chars':
-        parts.append('words' + ('w2v' if args.w2v_init else ''))
+    parts = [args.formulation, f"d{args.d_model}", f"h{args.n_head}", f"l{args.n_layer}",
+             args.numeric_mode]
     if args.cat_encoding != 'embedding':
         parts.append(f"cat{args.cat_encoding}"
                      + (str(args.hash_buckets) if args.cat_encoding == 'hashing' else ''))
@@ -302,16 +258,22 @@ def run_name(args, seed):
         parts.append(f"do{args.dropout:g}")
     if args.weight_decay != 1e-2:
         parts.append(f"wd{args.weight_decay:g}")
-    if args.strip_status:
-        parts.append('stripstatus')
+    if args.lr != 1e-3:
+        parts.append(f"lr{args.lr:g}")
+    if args.batch_size != 256:
+        parts.append(f"bs{args.batch_size}")
+    if args.text_emb:
+        parts.append('temb-' + Path(args.text_emb).stem.replace('_', ''))
+    if args.text_emb_finetune:
+        parts.append('tembft' + (f"-lr{args.text_emb_lr:g}" if args.text_emb_lr != 1e-5 else ''))
     if args.drop_features:
         parts.append('sin-' + args.drop_features.replace(',', '-').replace('_', ''))
     if args.pooling != 'cls':
         parts.append(args.pooling)
     if args.cls_position != 'first':
         parts.append('clslast')
-    if getattr(args, 'mlp_hidden', ''):
-        parts.append('mh' + args.mlp_hidden.replace(',', 'x'))
+    if args.ing_layer != 1:
+        parts.append(f"il{args.ing_layer}")
     for flag in ('positional', 'causal', 'pos_weight'):
         if getattr(args, flag):
             parts.append(flag.replace('_', ''))
@@ -397,35 +359,21 @@ def build_cat_tables(modo, prep, train_df, keep_cat, hash_buckets):
     return tablas or None
 
 
-def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight, cat_tables=None):
-    """Configura y construye la arquitectura pedida; devuelve (modelo, config para el ckpt)."""
-    common = dict(d_model=args.d_model, dropout=args.dropout,
-                  numeric_mode=args.numeric_mode, pos_weight=pos_weight)
-    encod = dict(cat_encoding=args.cat_encoding, hash_buckets=args.hash_buckets)
-    if args.arch == 'transformer':
-        config = dict(formulation=args.formulation, cat_cardinalities=cardinalities,
-                      n_numeric=n_numeric, char_vocab_size=prep.char_vocab_size,
-                      max_text_len=prep.max_text_len, n_head=args.n_head,
-                      n_layer=args.n_layer, causal=args.causal, pooling=args.pooling,
-                      use_positional=args.positional, cls_position=args.cls_position,
-                      ing_vocab_size=(prep.ing_vocab_size
-                                      if args.formulation in ING_FORMULATIONS else None),
-                      max_ingredients=(MAX_INGREDIENTS
-                                       if args.formulation in ING_FORMULATIONS else 0),
-                      **encod, **common)
-        model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
-    elif args.arch == 'mlp':
-        config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
-                      mlp_hidden=(args.mlp_hidden or None), **encod, **common)
-        model = MLPBaseline(**config, bin_edges=bin_edges, cat_tables=cat_tables)
-    elif args.arch == 'tower':
-        config = dict(cat_cardinalities=cardinalities, n_numeric=n_numeric,
-                      char_vocab_size=prep.char_vocab_size, max_text_len=prep.max_text_len,
-                      n_head=args.n_head, n_layer=args.n_layer, causal=args.causal,
-                      **encod, **common)
-        model = TextTowerModel(**config, bin_edges=bin_edges, cat_tables=cat_tables)
-    else:
-        raise SystemExit(f'arquitectura desconocida: {args.arch}')
+def build_model(args, prep, cardinalities, n_numeric, bin_edges, pos_weight, cat_tables=None,
+                text_emb_dim=0):
+    """Configura y construye el transformer pedido; devuelve (modelo, config para el ckpt)."""
+    usa_ing = args.formulation in ING_FORMULATIONS
+    config = dict(formulation=args.formulation, cat_cardinalities=cardinalities,
+                  n_numeric=n_numeric, d_model=args.d_model, n_head=args.n_head,
+                  n_layer=args.n_layer, dropout=args.dropout, causal=args.causal,
+                  pooling=args.pooling, use_positional=args.positional,
+                  numeric_mode=args.numeric_mode, pos_weight=pos_weight,
+                  cls_position=args.cls_position, cat_encoding=args.cat_encoding,
+                  hash_buckets=args.hash_buckets,
+                  ing_vocab_size=prep.ing_vocab_size if usa_ing else None,
+                  max_ingredients=MAX_INGREDIENTS if usa_ing else 0, ing_layer=args.ing_layer,
+                  text_emb_dim=text_emb_dim, hf_model=args.text_emb_finetune)
+    model = BTRTransformer(**config, bin_edges=bin_edges, cat_tables=cat_tables)
     return model, config
 
 
@@ -433,25 +381,24 @@ def run(csv_path, seed, args, device):
     """Una corrida completa: prepara datos, entrena, guarda resultados/pesos."""
     torch.manual_seed(seed if args.init_seed is None else args.init_seed)
     usa_ing = args.formulation in ING_FORMULATIONS
-    if args.pretrain_mlm and (args.arch != 'transformer' or args.formulation != 'features'
-                              or args.cls_position != 'first'):
-        raise SystemExit('--pretrain-mlm es solo para transformer features con CLS al inicio')
-    if args.cat_encoding == 'onehot' and args.arch != 'mlp':
-        raise SystemExit('cat-encoding onehot es solo para --arch mlp: para el transformer, '
-                         'one-hot + proyeccion lineal aprende la misma matriz que el '
-                         'embedding (propuesta 6.1) — no hay experimento que correr')
-    if args.w2v_init and args.text_tokens != 'words':
-        raise SystemExit('--w2v-init requiere --text-tokens words')
-    if usa_ing and args.w2v_init:
-        raise SystemExit('ingredientes: la lista ocupa el slot del texto; no se combina '
-                         'con --w2v-init')
-    prep, train_df, splits = prepare(csv_path, seed=seed, max_text_len=args.max_text_len,
-                                     strip_status=args.strip_status,
-                                     text_tokens=args.text_tokens, train_frac=args.train_frac,
-                                     cv_k=args.cv_k, cv_fold=args.cv_fold,
-                                     use_ingredients=usa_ing)
+    if args.pretrain_mlm and (args.formulation != 'features' or args.cls_position != 'first'):
+        raise SystemExit('--pretrain-mlm es solo para formulation features con CLS al inicio')
+    if args.text_emb and args.text_emb_finetune:
+        raise SystemExit('--text-emb y --text-emb-finetune: elegir UN regimen '
+                         '(feature extraction congelado o fine-tuning)')
+    if (args.text_emb or args.text_emb_finetune) and args.formulation != 'features':
+        raise SystemExit('el titulo preentrenado es solo para formulation features '
+                         '(las ing_* ya ocupan el slot del tercer tensor)')
+    prep, train_df, splits, indices = prepare(csv_path, seed=seed, train_frac=args.train_frac,
+                                              cv_k=args.cv_k, cv_fold=args.cv_fold,
+                                              use_ingredients=usa_ing, with_index=True)
 
     drop = {f.strip() for f in args.drop_features.split(',') if f.strip()}
+    if drop == {'all'}:
+        # sin features tabulares: el control "¿cuanto ve el titulo por si solo?"
+        if not (args.text_emb or args.text_emb_finetune):
+            raise SystemExit('--drop-features all requiere --text-emb/--text-emb-finetune')
+        drop = set(prep.cats) | set(prep.nums)
     splits, keep_cat, keep_num = drop_feature_columns(splits, drop, prep.cats, prep.nums)
     splits = {k: tuple(t.to(device) for t in v) for k, v in splits.items()}
 
@@ -467,20 +414,45 @@ def run(csv_path, seed, args, device):
     cat_tables = build_cat_tables(args.cat_encoding, prep, train_df, keep_cat,
                                   args.hash_buckets)
 
+    text_emb_dim = 0
+    if args.text_emb or args.text_emb_finetune:
+        # transfer learning desde un preentrenado EXTERNO: el TITULO del producto
+        # (sin el badge de estado) como un token mas. Los tensores de transform()
+        # preservan el orden del df, asi que los indices de fila de cada split
+        # alinean la tabla externa con los tensores.
+        nuevos = {}
+        if args.text_emb:
+            ruta = Path(args.text_emb)
+            E = np.load(ruta if ruta.is_absolute() else REPO_ROOT / ruta).astype(np.float32)
+            if E.shape[0] != len(load_dataset(csv_path)):
+                raise SystemExit(f'--text-emb: {E.shape[0]} filas vs las del CSV '
+                                 '(regenerar con eda/embed_titulos.py)')
+            for kk, (a_, b_, c_, y_) in splits.items():
+                e = torch.tensor(E[indices[kk]], device=a_.device)
+                nuevos[kk] = (a_, b_, e, y_)  # el embedding ocupa el slot del tercer tensor
+            text_emb_dim = E.shape[1]
+            if not args.quiet:
+                print(f"  text-emb: {ruta.name} ({E.shape[1]} dims congeladas)")
+        else:
+            from transformers import AutoTokenizer
+            tok = AutoTokenizer.from_pretrained(args.text_emb_finetune)
+            if tok.pad_token_id != 0:
+                raise SystemExit('--text-emb-finetune: el modelo debe usar pad_token_id=0 '
+                                 '(la mascara del grafo asume pad=0)')
+            df_all = load_dataset(csv_path)
+            titulos = [titulo_sin_estado(t) for t in df_all['title']]
+            for kk, (a_, b_, c_, y_) in splits.items():
+                enc = tok([titulos[i] for i in indices[kk]], padding=True, truncation=True,
+                          max_length=48, return_tensors='pt')
+                nuevos[kk] = (a_, b_, enc['input_ids'].to(a_.device), y_)
+            if not args.quiet:
+                print(f"  text-emb-finetune: {args.text_emb_finetune} "
+                      f"(lr encoder {args.text_emb_lr:g})")
+        splits = nuevos
+
     model, model_config = build_model(args, prep, cardinalities, len(keep_num), bin_edges,
-                                      pos_weight, cat_tables)
+                                      pos_weight, cat_tables, text_emb_dim=text_emb_dim)
     model = model.to(device)
-    if args.w2v_init:
-        tabla = None
-        if getattr(model, 'text_encoder', None) is not None:
-            tabla = model.text_encoder.char_embedding_table
-        elif getattr(model, 'char_embedding_table', None) is not None:
-            tabla = model.char_embedding_table
-        if tabla is None:
-            raise SystemExit('--w2v-init requiere una arquitectura que vea el texto')
-        pesos_w2v = pretrain_w2v(train_df, prep, args.d_model, device, verbose=not args.quiet)
-        with torch.no_grad():
-            tabla.weight.copy_(pesos_w2v)
 
     n_params = sum(p.numel() for p in model.parameters())
     name = run_name(args, seed)
@@ -493,7 +465,7 @@ def run(csv_path, seed, args, device):
 
     history = train_model(model, splits, epochs=args.epochs, batch_size=args.batch_size,
                           lr=args.lr, patience=args.patience, verbose=not args.quiet,
-                          weight_decay=args.weight_decay)
+                          weight_decay=args.weight_decay, text_emb_lr=args.text_emb_lr)
     val_m = evaluate(model, splits['val'])
     test_m = evaluate(model, splits['test'])
     print(f"{name} -> VAL: ROC-AUC {val_m['roc_auc']:.4f} PR-AUC {val_m['pr_auc']:.4f} | "
@@ -517,12 +489,14 @@ def run(csv_path, seed, args, device):
         }, indent=2))
         print(f"resultados -> {out.relative_to(REPO_ROOT)}")
 
-        if args.save_pesos:
+        if args.save_pesos and args.text_emb_finetune:
+            print('  (checkpoint NO guardado: incluye el encoder preentrenado, que no se entrega)')
+        elif args.save_pesos:
             pesos_dir = SALIDAS / 'pesos'
             pesos_dir.mkdir(parents=True, exist_ok=True)
             ckpt = pesos_dir / f'{out.stem}.pt'  # mismo nombre que el JSON de resultados
             torch.save({
-                'arch': args.arch,
+                'arch': 'transformer',
                 'model_config': model_config,
                 'bin_edges': bin_edges,
                 'cat_tables': cat_tables,
@@ -543,28 +517,28 @@ def build_parser():
     parser.add_argument('--seed-start', type=int, default=42, help='primera seed de la serie')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
     parser.add_argument('--tag', default='', help='prefijo para el nombre de la corrida')
-    parser.add_argument('--arch', choices=['transformer', 'mlp', 'tower'], default='transformer')
-    parser.add_argument('--formulation', choices=['features', 'text', 'hybrid', 'fusion',
-                                                  'ing', 'ing_fusion', 'ing_hybrid'],
-                        default='features',
-                        help='que es un token (solo aplica a --arch transformer)')
-    parser.add_argument('--max-text-len', type=int, default=MAX_TEXT_LEN)
-    parser.add_argument('--strip-status', action='store_true',
-                        help='texto sin sufijo/oracion de estado (variante "producto nuevo")')
+    parser.add_argument('--formulation', choices=['features', 'ing', 'ing_fusion', 'ing_hybrid'],
+                        default='features', help='que es un token (ver btr/model.py)')
+    parser.add_argument('--ing-layer', type=int, default=1,
+                        help='bloques del encoder de conjunto de ingredientes (ing_fusion)')
+    parser.add_argument('--text-emb', default='', metavar='NPY',
+                        help='transfer learning, feature extraction: matriz (N, E) del titulo '
+                             'precomputada por eda/embed_titulos.py; entra como UN token extra')
+    parser.add_argument('--text-emb-finetune', default='', metavar='HF_MODEL',
+                        help='transfer learning, fine-tuning: el encoder de Hugging Face '
+                             '(p. ej. sentence-transformers/all-MiniLM-L6-v2) entra al grafo')
+    parser.add_argument('--text-emb-lr', type=float, default=1e-5,
+                        help='lr del encoder preentrenado con --text-emb-finetune')
     parser.add_argument('--drop-features', default='',
-                        help='features a excluir, separados por coma (ej: listing_status)')
+                        help='features a excluir, separados por coma (ej: listing_status; '
+                             '"all" con --text-emb: solo el titulo)')
     parser.add_argument('--cat-encoding', default='embedding',
-                        choices=['embedding', 'onehot', 'target', 'freq', 'ordinal', 'hashing'],
-                        help='encoding de las categoricas (onehot: solo --arch mlp)')
+                        choices=['embedding', 'target', 'freq', 'ordinal', 'hashing'],
+                        help='encoding de las categoricas')
     parser.add_argument('--hash-buckets', type=int, default=8,
                         help='buckets del hashing trick (--cat-encoding hashing)')
     parser.add_argument('--cls-position', default='first', choices=['first', 'last'],
                         help='last: CLS al final (necesario para que --causal tenga sentido)')
-    parser.add_argument('--text-tokens', default='chars', choices=['chars', 'words'],
-                        help='tokenizacion del texto: caracteres (demo) o palabras')
-    parser.add_argument('--w2v-init', action='store_true',
-                        help='pre-entrenar los embeddings de palabras con skipgram sobre el '
-                             'corpus de train (requiere --text-tokens words)')
     parser.add_argument('--train-frac', type=float, default=1.0, metavar='F',
                         help='curva de aprendizaje: fraccion de las QUERIES de train (val/test intactos)')
     parser.add_argument('--init-seed', type=int, default=None, metavar='N',
@@ -580,9 +554,6 @@ def build_parser():
     parser.add_argument('--n-layer', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--weight-decay', type=float, default=1e-2, help='weight decay de AdamW')
-    parser.add_argument('--mlp-hidden', default='', metavar='N,N,...',
-                        help='--arch mlp: capas ocultas de la cabeza, p. ej. 256,128 '
-                             '(default: 8d,2d = 256,64)')
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--batch-size', type=int, default=256)
     parser.add_argument('--lr', type=float, default=1e-3)

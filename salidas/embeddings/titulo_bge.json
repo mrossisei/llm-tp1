@@ -1,0 +1,8 @@
+{
+ "modelo": "BAAI/bge-large-en-v1.5",
+ "filas": 10000,
+ "dims": 1024,
+ "parametros": 335141888,
+ "texto": "title sin el sufijo de estado",
+ "ejemplo": "Cedar House Steamable Pepperoni Pizza - 10 oz"
+}

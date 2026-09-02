@@ -6,9 +6,9 @@
 Cada figura se dibuja al tamano fisico con el que entra en la diapositiva, asi los
 puntos tipograficos son reales: un texto de 18 pt aca es 18 pt en la pantalla.
 Datos: leidos de salidas/resultados/*.json (media ± desvio poblacional sobre 6 seeds). Los
-graficos de decision usan PR-AUC de VALIDACION (la metrica con la que se decidio);
-SPLIT='test' los reproduce con test. importancia() y atencion() recalculan sobre los
-checkpoints de salidas/pesos/ del modelo final.
+barridos usan PR-AUC de VALIDACION (la metrica con la que se decidio); SPLIT='test' los
+reproduce con test. Las celdas que todavia no corrieron quedan en blanco. importancia() y
+atencion() recalculan sobre los checkpoints de salidas/pesos/ del modelo final.
 """
 import json
 import sys
@@ -57,114 +57,11 @@ def guardar(fig, nombre):
     print('  ->', nombre)
 
 
-# ---------- 1. un eje por experimento: punto +- desvio, la elegida en teal ----------
-def decision(nombre, filas, xlabel=None, figsize=(6.6, 4.2), xlim=None, valores='arriba'):
-    """filas: (etiqueta, grupo de resultados, rol) con rol e=elegido, a=alternativa, c=contexto.
-    valores='derecha': el numero en una columna a la derecha de las barras (para muchas filas)."""
-    xlabel = xlabel or f'PR-AUC {SPLIT_ES} (media ± desvío, 6 seeds)'
-    filas = [(et, *_stats(grupo), rol) for et, grupo, rol in filas]
-    n = len(filas)
-    fig, ax = plt.subplots(figsize=figsize)
-    x_num = max(m + s for _, m, s, _ in filas) + 0.006
-    for i, (et, m, s, rol) in enumerate(reversed(filas)):
-        c = COLOR_ROL[rol]
-        ax.errorbar(m, i, xerr=s, fmt='o', color=c, ecolor=c, elinewidth=3 if rol == 'e' else 2.2,
-                    capsize=5, capthick=2, markersize=13 if rol == 'e' else 10, zorder=3)
-        if valores == 'derecha':
-            ax.text(x_num, i, f'{m:.3f}', ha='left', va='center', fontsize=17,
-                    fontweight='bold' if rol == 'e' else 'normal', color=INK if rol == 'e' else INK2)
-        else:
-            ax.annotate(f'{m:.3f}', (m, i), xytext=(0, 12), textcoords='offset points', ha='center',
-                        fontsize=18, fontweight='bold' if rol == 'e' else 'normal',
-                        color=INK if rol == 'e' else INK2)
-    ax.set_yticks(range(n), [f[0] for f in reversed(filas)])
-    for lab, (et, m, s, rol) in zip(ax.get_yticklabels(), reversed(filas)):
-        lab.set_fontweight('bold' if rol == 'e' else 'normal')
-        lab.set_color(INK if rol != 'c' else MUTED)
-    ax.set_xlabel(xlabel)
-    ax.grid(axis='x', color='#E3E8EE', linewidth=1)
-    ax.set_axisbelow(True)
-    ax.set_ylim(-0.6, n - 0.4 + (0.35 if valores == 'arriba' else 0))
-    if xlim:
-        ax.set_xlim(*xlim)
-    elif valores == 'derecha':
-        ax.set_xlim(right=x_num + 0.03)
-    ax.tick_params(axis='y', length=0)
-    guardar(fig, nombre)
-
-
-def decisiones():
-    print('decisiones por eje')
-    decision('cabezas.png', [
-        ('4 cabezas · ordinal', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('1 cabeza · ordinal', 'camp_ordinal_h1_features_d32_h1_l2_linear_catordinal', 'a'),
-        ('1 cabeza · embeddings', 'pac20_feat_h1_features_d32_h1_l2_linear', 'c'),
-        ('2 cabezas · embeddings', 'pac20_feat_h2_features_d32_h2_l2_linear', 'c'),
-        ('4 cabezas · embeddings', 'pac20_feat_base_features_d32_h4_l2_linear', 'c'),
-    ])
-    decision('bloques.png', [
-        ('2 bloques · 26k params', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('4 bloques · 51k params', 'camp_ordinal_l4_features_d32_h4_l4_linear_catordinal', 'a'),
-        ('1 bloque · 14k params', 'min_l1_features_d32_h4_l1_linear_catordinal', 'a'),
-        ('4 bloques · embeddings', 'pac20_feat_l4_features_d32_h4_l4_linear', 'c'),
-        ('1 bloque · embeddings', 'pac20_feat_l1_features_d32_h4_l1_linear', 'c'),
-    ])
-    decision('dmodel.png', [
-        ('d = 32 · 26.177 params', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('d = 16 · 6.945', 'min_d16_features_d16_h4_l2_linear_catordinal', 'a'),
-        ('d = 8 · 1.937', 'min_d8_features_d8_h4_l2_linear_catordinal', 'a'),
-        ('d = 16, 1 bloque · 3.713', 'min_d16l1_features_d16_h4_l1_linear_catordinal', 'c'),
-        ('d = 64 · embeddings · 105k', 'pac20_feat_d64_features_d64_h4_l2_linear', 'c'),
-    ])
-    decision('encoding.png', [
-        ('ordinal (rango por BTR)', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('target (BTR suavizado)', 'feat_target_features_d32_h4_l2_linear_cattarget', 'a'),
-        ('embedding aprendido', 'pac20_feat_base_features_d32_h4_l2_linear', 'a'),
-        ('one-hot (MLP)', 'mlp_onehot_mlp_d32_h4_l2_linear_catonehot', 'c'),
-        ('hashing (8 buckets)', 'feat_hash8_features_d32_h4_l2_linear_cathashing8', 'a'),
-        ('frecuencia', 'feat_freq_features_d32_h4_l2_linear_catfreq', 'a'),
-    ], figsize=(6.6, 4.6), xlim=(0.1, 0.9))
-    decision('init.png', [
-        ('aleatoria · ordinal', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-        ('MLM 20 épocas · ordinal', 'feat_ordinal_mlm20_features_d32_h4_l2_linear_catordinal_mlm20', 'a'),
-        ('MLM 20 épocas · embeddings', 'feat_mlm20_features_d32_h4_l2_linear_mlm20', 'c'),
-        ('aleatoria · embeddings', 'feat_base_features_d32_h4_l2_linear', 'c'),
-        ('w2v-init · words (fusión)', 'fusion_words_w2v_fusion_d32_h4_l2_linear_wordsw2v', 'c'),
-    ])
-
-
-# ---------- 2. formulacion (texto) ----------
-def formulacion():
-    print('formulacion (texto)')
-    filas = [('features (referencia, embeddings)', 'pac20_feat_base_features_d32_h4_l2_linear', TEAL),
-             ('fusión: texto → 1 token', 'fusion_base_fusion_d32_h4_l2_linear', VIOLETA),
-             ('torre: texto → vector + MLP', 'pac20_tower_base_tower_d32_h4_l2_linear', VIOLETA),
-             ('híbrido sin regex', 'hybrid_sin_regex_hybrid_d32_h4_l2_linear_sin-listingstatus', VIOLETA),
-             ('híbrido: features + 256 chars', 'hybrid_full_hybrid_d32_h4_l2_linear', VIOLETA),
-             ('texto puro (chars)', 'text_base_text_d32_h4_l2_linear', VIOLETA),
-             ('techo sin señal de estado', 'pac20_feat_intrinseco_features_d32_h4_l2_linear_sin-listingstatus', ORO)]
-    filas = [(et, _stats(grupo)[0], c) for et, grupo, c in filas]
-    filas = [filas[0], *sorted(filas[1:-1], key=lambda f: -f[1]), filas[-1]]  # texto: de mayor a menor
-    fig, ax = plt.subplots(figsize=(12.0, 4.3))
-    y = np.arange(len(filas))[::-1]
-    ax.barh(y, [f[1] for f in filas], color=[f[2] for f in filas], height=0.62)
-    for yi, (et, v, c) in zip(y, filas):
-        ax.text(v + 0.008, yi, f'{v:.3f}', va='center', fontsize=18,
-                fontweight='bold' if c == TEAL else 'normal', color=INK)
-    ax.set_yticks(y, [f[0] for f in filas])
-    ax.get_yticklabels()[0].set_fontweight('bold')
-    ax.set_xlim(0, 0.9)
-    ax.set_xlabel(f'PR-AUC {SPLIT_ES} (media, 6 seeds)')
-    ax.grid(axis='x', color='#E3E8EE')
-    ax.set_axisbelow(True)
-    ax.tick_params(axis='y', length=0)
-    guardar(fig, 'formulacion.png')
-
-
 # ---------- 2b. grilla d_model x cabezas (dos heatmaps) y d_model x bloques (10ª y 11ª tandas) ----------
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import Rectangle
-from experimentos import D_GRILLA, H_GRILLA, L_GRILLA, GrillaIncompleta, celda_grilla, mejor_h
+from experimentos import (D_ENC, D_GRILLA, DROPOUTS, H_GRILLA, L_GRILLA, LRS, BATCHES, MLM_EPOCAS, WDS,
+                          GrillaIncompleta, celda_grilla, mejor_h)
 
 
 def _stats_o_nada(grupo, split):
@@ -214,6 +111,14 @@ def _heatmap(ax, datos, filas, cols, elegida, titulo, cmap, norm, xlabel, ylabel
 CMAP_TEAL = LinearSegmentedColormap.from_list('teal', ['#F3F9F7', '#9FD8C8', '#0E9B7E', '#0B5B4C'])
 
 
+def _norma(valores, rango=0.06):
+    """Escala de color: del maximo hacia abajo como mucho `rango`; lo que colapsa (hashing,
+    frecuencia, 1 cabeza a d128) queda en el color mas claro y su numero cuenta la verdad."""
+    hi = max(valores)
+    lo = max(np.floor(min(valores) * 100) / 100, hi - rango)
+    return Normalize(lo, hi)
+
+
 def _colorbar(fig, axes, cmap, norm, split_es):
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     cb = fig.colorbar(sm, ax=axes, fraction=0.025, pad=0.02)
@@ -245,7 +150,7 @@ def grilla(split=None, nombre='grilla.png'):
     faltan = sum(c is None for enc in datos for fila in datos[enc] for c in fila)
     if faltan:
         print(f'  (grilla incompleta: faltan {faltan} celdas, quedan en blanco)')
-    norm = Normalize(np.floor(min(todos) * 100) / 100, max(todos))
+    norm = _norma(todos)
     fig, axes = plt.subplots(1, 2, figsize=(11.9, 3.55 if len(D_) == 3 else 4.3), gridspec_kw={'wspace': 0.42})
     for ax, (enc, titulo) in zip(axes, paneles):
         _heatmap(ax, datos[enc], D_, H_, (D_.index(32), H_.index(4)) if enc == 'o' else None, titulo,
@@ -284,7 +189,7 @@ def grilla_bloques(split=None, nombre='grilla_bloques.png'):
     faltan = sum(c is None for fila in datos for c in fila)
     if faltan:
         print(f'  (grilla incompleta: faltan {faltan} celdas, quedan en blanco)')
-    norm = Normalize(np.floor(min(todos) * 100) / 100, max(todos))
+    norm = _norma(todos)
     fig, ax = plt.subplots(figsize=(7.0, 4.3))
     _heatmap(ax, datos, D_GRILLA, L_GRILLA, (0, L_GRILLA.index(2)), 'Encoding ordinal · cabezas: las mejores de cada d',
              CMAP_TEAL, norm, 'bloques (atención + FFN)',
@@ -297,47 +202,236 @@ def grilla_bloques_test():
     grilla_bloques('test', 'grilla_bloques_test.png')
 
 
-# ---------- 2c. 10ª tanda: el mejor MLP que pudimos, sobre el mismo encoding ----------
-def mlp():
-    print('mlp (10 variantes sobre ordinal)')
-    filas = [('Transformer d32 · 4 cabezas', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
-             ('MLP 256·64', 'mlp_ordinal_mlp_d32_h4_l2_linear_catordinal', 'a'),
-             ('MLP 256·64 · dropout 0.2', 'mlp_ord_do2_mlp_d32_h4_l2_linear_catordinal_do0.2', 'a'),
-             ('MLP 256·64 · dropout 0.3', 'mlp_ord_do3_mlp_d32_h4_l2_linear_catordinal_do0.3', 'a'),
-             ('MLP 512·256', 'mlp_ord_ancho_mlp_d32_h4_l2_linear_catordinal_mh512x256', 'a'),
-             ('MLP 256·128·64', 'mlp_ord_prof3_mlp_d32_h4_l2_linear_catordinal_mh256x128x64', 'a'),
-             ('MLP 256·128·64·32', 'mlp_ord_prof4_mlp_d32_h4_l2_linear_catordinal_mh256x128x64x32', 'a'),
-             ('MLP 1024·256 · dropout 0.2', 'mlp_ord_grande_mlp_d32_h4_l2_linear_catordinal_do0.2_mh1024x256', 'a'),
-             ('MLP 64·32', 'mlp_ord_mini_mlp_d32_h4_l2_linear_catordinal_mh64x32', 'a'),
-             ('MLP 256', 'mlp_ord_h256_mlp_d32_h4_l2_linear_catordinal_mh256', 'a'),
-             ('MLP 128', 'mlp_ord_h128_mlp_d32_h4_l2_linear_catordinal_mh128', 'a'),
-             ('MLP 256·64 · one-hot', 'mlp_onehot_mlp_d32_h4_l2_linear_catonehot', 'c'),
-             ('MLP 256·64 · embeddings', 'mlp_base_mlp_d32_h4_l2_linear', 'c')]
-    filas = [(f'{et} · {_params(grupo) / 1000:.0f}k', grupo, rol) for et, grupo, rol in filas]
-    # el transformer arriba; los MLP sobre ordinal de mayor a menor; los otros encodings al final
-    ord_ = sorted(filas[1:-2], key=lambda f: -_stats(f[1])[0])
-    decision('mlp.png', [filas[0], *ord_, *filas[-2:]], figsize=(7.3, 5.05), valores='derecha')
+# ---------- 2c. barridos de la 12ª tanda: encoding x d_model, MLM, regularizacion, optimizacion ----------
+def _grupo(stem_sin_seed):
+    """Alias legible: el prefijo de archivo de un grupo (sin _seedNN)."""
+    return stem_sin_seed
+
+
+def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel, split, figsize=(7.0, 4.3),
+                    negrita=True):
+    """celdas[(fila, col)] = prefijo de archivo; dibuja un heatmap tolerante a celdas faltantes."""
+    split_es = {'val': 'validación', 'test': 'test'}[split]
+    datos = [[_stats_o_nada(celdas[(f, c)], split) for c in cols] for f in filas]
+    todos = [c[0] for fila in datos for c in fila if c]
+    if not todos:
+        print(f'  {nombre}: todavia no corrio ninguna celda')
+        return
+    faltan = sum(c is None for fila in datos for c in fila)
+    if faltan:
+        print(f'  ({nombre}: faltan {faltan} celdas, quedan en blanco)')
+    norm = _norma(todos)
+    fig, ax = plt.subplots(figsize=figsize)
+    _heatmap(ax, datos, filas, cols, elegida, titulo, CMAP_TEAL, norm, xlabel, [str(f) for f in filas],
+             negrita=negrita)
+    ax.set_ylabel(ylabel)
+    _colorbar(fig, ax, CMAP_TEAL, norm, split_es)
+    guardar(fig, nombre)
+
+
+ENCODINGS = [('ordinal', 'ordinal'), ('embedding', 'embedding'), ('target', 'target'),
+             ('freq', 'frecuencia'), ('hash8', 'hashing (8)')]
+
+
+def celda_encoding(enc, d):
+    """Prefijo de archivo de la celda (encoding, d_model) del barrido encoding x d_model."""
+    fijas = {('ordinal', 16): 'min_d16_features_d16_h4_l2_linear_catordinal',
+             ('ordinal', 32): 'feat_ordinal_features_d32_h4_l2_linear_catordinal',
+             ('ordinal', 64): 'gc_o_d64h4_features_d64_h4_l2_linear_catordinal',
+             ('embedding', 16): 'pac20_feat_d16_features_d16_h4_l2_linear',
+             ('embedding', 32): 'pac20_feat_base_features_d32_h4_l2_linear',
+             ('embedding', 64): 'pac20_feat_d64_features_d64_h4_l2_linear',
+             ('target', 32): 'feat_target_features_d32_h4_l2_linear_cattarget',
+             ('freq', 32): 'feat_freq_features_d32_h4_l2_linear_catfreq',
+             ('hash8', 32): 'feat_hash8_features_d32_h4_l2_linear_cathashing8'}
+    if (enc, d) in fijas:
+        return fijas[(enc, d)]
+    suf = {'target': 'cattarget', 'freq': 'catfreq', 'hash8': 'cathashing8'}[enc]
+    return f'ge_{enc}_d{d}_features_d{d}_h4_l2_linear_{suf}'
+
+
+def encoding(split=None, nombre='encoding.png'):
+    split = split or SPLIT
+    print(f'encoding x d_model ({split})')
+    celdas = {(et, d): celda_encoding(enc, d) for enc, et in ENCODINGS for d in D_ENC}
+    _heatmap_simple(nombre, 'Encoding de las categóricas × d_model', celdas, [et for _, et in ENCODINGS],
+                    list(D_ENC), (0, D_ENC.index(32)), 'd_model', 'encoding de las categóricas', split,
+                    figsize=(7.2, 4.6))
+
+
+def encoding_test():
+    encoding('test', 'encoding_test.png')
+
+
+def celda_mlm(enc, epocas):
+    base = ('feat_ordinal_features_d32_h4_l2_linear_catordinal' if enc == 'o'
+            else 'pac20_feat_base_features_d32_h4_l2_linear')
+    if epocas == 0:
+        return base
+    if epocas == 20:
+        return ('feat_ordinal_mlm20_features_d32_h4_l2_linear_catordinal_mlm20' if enc == 'o'
+                else 'feat_mlm20_features_d32_h4_l2_linear_mlm20')
+    return (f'gm_o_mlm{epocas}_features_d32_h4_l2_linear_catordinal_mlm{epocas}' if enc == 'o'
+            else f'gm_e_mlm{epocas}_features_d32_h4_l2_linear_mlm{epocas}')
+
+
+def mlm(split=None, nombre='mlm.png'):
+    """Pre-entrenamiento MLM sobre features: PR-AUC vs epocas de MLM, una curva por encoding."""
+    split = split or SPLIT
+    split_es = {'val': 'validación', 'test': 'test'}[split]
+    print(f'mlm ({split})')
+    fig, ax = plt.subplots(figsize=(7.0, 4.3))
+    algo = False
+    for enc, et, color, dy in [('o', 'ordinal (el elegido)', TEAL, 14), ('e', 'embedding aprendido', VIOLETA, -22)]:
+        xs, ms, ss = [], [], []
+        for i, e in enumerate(MLM_EPOCAS):
+            st = _stats_o_nada(celda_mlm(enc, e), split)
+            if st:
+                xs.append(i); ms.append(st[0]); ss.append(st[1])
+        if xs:
+            algo = True
+            ax.errorbar(xs, ms, yerr=ss, color=color, linewidth=3, marker='o', markersize=10,
+                        capsize=5, capthick=2, elinewidth=2, label=et)
+            for x, m in zip(xs, ms):
+                ax.annotate(f'{m:.3f}', (x, m), xytext=(0, dy), textcoords='offset points',
+                            ha='center', fontsize=15, color=INK)
+    if not algo:
+        print('  mlm: todavia no corrio ninguna celda')
+        plt.close(fig)
+        return
+    ax.set_xticks(range(len(MLM_EPOCAS)), [str(e) for e in MLM_EPOCAS])
+    ax.set_xlim(-0.4, len(MLM_EPOCAS) - 0.6)
+    ax.set_xlabel('épocas de pre-entrenamiento MLM (0 = inicialización aleatoria)')
+    ax.set_ylabel(f'PR-AUC {split_es}')
+    ax.grid(color='#E3E8EE'); ax.set_axisbelow(True)
+    ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0.0, 1.02), ncol=2, fontsize=15)
+    guardar(fig, nombre)
+
+
+def mlm_test():
+    mlm('test', 'mlm_test.png')
+
+
+CAMPEON = 'feat_ordinal_features_d32_h4_l2_linear_catordinal'
+CANON = 'features_d32_h4_l2_linear_catordinal'   # la parte canonica del nombre, sin el tag
+
+
+def celda_reg(do, wd):
+    fijas = {('0.1', '0.01'): CAMPEON, ('0', '0.01'): f'reg_do0_{CANON}_do0',
+             ('0.3', '0.01'): f'reg_do03_{CANON}_do0.3', ('0.1', '0'): f'reg_wd0_{CANON}_wd0',
+             ('0.1', '0.001'): f'reg_wd1e3_{CANON}_wd0.001', ('0.1', '0.1'): f'reg_wd1e1_{CANON}_wd0.1',
+             ('0', '0'): f'reg_nada_{CANON}_do0_wd0'}
+    if (do, wd) in fijas:
+        return fijas[(do, wd)]
+    return f'gr_do{do}_wd{wd}_{CANON}_do{do}_wd{wd}'
+
+
+def regularizacion(split=None, nombre='regularizacion.png'):
+    split = split or SPLIT
+    print(f'regularizacion ({split})')
+    celdas = {(do, wd): celda_reg(do, wd) for do in DROPOUTS for wd in WDS}
+    _heatmap_simple(nombre, 'Regularización: dropout × weight decay', celdas, list(DROPOUTS), list(WDS),
+                    (DROPOUTS.index('0.1'), WDS.index('0.01')), 'weight decay (AdamW)', 'dropout', split)
+
+
+def regularizacion_test():
+    regularizacion('test', 'regularizacion_test.png')
+
+
+def celda_opt(lr, bs):
+    if (lr, bs) == ('0.001', '256'):
+        return CAMPEON
+    suf = (f'_lr{float(lr):g}' if lr != '0.001' else '') + (f'_bs{bs}' if bs != '256' else '')
+    return f'go_lr{lr}_bs{bs}_{CANON}{suf}'
+
+
+def optimizacion(split=None, nombre='optimizacion.png'):
+    split = split or SPLIT
+    print(f'optimizacion ({split})')
+    celdas = {(lr, bs): celda_opt(lr, bs) for lr in LRS for bs in BATCHES}
+    _heatmap_simple(nombre, 'Optimización: learning rate × batch', celdas,
+                    [f'{float(lr):g}' for lr in LRS], list(BATCHES),
+                    (LRS.index('0.001'), BATCHES.index('256')), 'batch', 'learning rate', split)
+
+
+def optimizacion_test():
+    optimizacion('test', 'optimizacion_test.png')
+
+
+# ---------- 2d. la alternativa (ingredientes) y el transfer learning: puntos ± desvio ----------
+def puntos(nombre, filas, xlabel, figsize=(7.3, 4.0), xlim=None):
+    """filas: (etiqueta, prefijo de archivo, rol) con rol e=elegido, a=alternativa, c=contexto."""
+    datos = [(et, _stats_o_nada(grupo, SPLIT), rol) for et, grupo, rol in filas]
+    if all(st is None for _, st, _ in datos):
+        print(f'  {nombre}: todavia no corrio ninguna fila')
+        return
+    fig, ax = plt.subplots(figsize=figsize)
+    n = len(datos)
+    for i, (et, st, rol) in enumerate(reversed(datos)):
+        c = COLOR_ROL[rol]
+        if st is None:
+            ax.text(0.5, i, 'pendiente', transform=ax.get_yaxis_transform(), ha='center', va='center',
+                    fontsize=14, color=MUTED)
+            continue
+        m, s_ = st
+        ax.errorbar(m, i, xerr=s_, fmt='o', color=c, ecolor=c, elinewidth=3 if rol == 'e' else 2.2,
+                    capsize=5, capthick=2, markersize=13 if rol == 'e' else 10, zorder=3)
+        ax.annotate(f'{m:.3f}', (m, i), xytext=(0, 12), textcoords='offset points', ha='center',
+                    fontsize=17, fontweight='bold' if rol == 'e' else 'normal',
+                    color=INK if rol == 'e' else INK2)
+    ax.set_yticks(range(n), [f[0] for f in reversed(datos)])
+    for lab, (et, st, rol) in zip(ax.get_yticklabels(), reversed(datos)):
+        lab.set_fontweight('bold' if rol == 'e' else 'normal')
+        lab.set_color(INK if rol != 'c' else MUTED)
+    ax.set_xlabel(xlabel)
+    ax.grid(axis='x', color='#E3E8EE'); ax.set_axisbelow(True)
+    ax.set_ylim(-0.6, n - 0.4 + 0.35)
+    if xlim:
+        ax.set_xlim(*xlim)
+    ax.tick_params(axis='y', length=0)
+    guardar(fig, nombre)
+
+
+def ingredientes():
+    print('ingredientes')
+    puntos('ingredientes.png', [
+        ('features (sin ingredientes)', 'feat_ordinal_features_d32_h4_l2_linear_catordinal', 'e'),
+        ('+ encoder de conjunto · 1 bloque', 'ing_fusion_ing_fusion_d32_h4_l2_linear_catordinal', 'a'),
+        ('+ encoder de conjunto · 2 bloques', 'ing_fusion_l2_ing_fusion_d32_h4_l2_linear_catordinal_il2', 'a'),
+        ('+ un token por ingrediente', 'ing_hybrid_ing_hybrid_d32_h4_l2_linear_catordinal', 'a'),
+        ('solo ingredientes', 'ing_solo_ing_d32_h4_l2_linear', 'c'),
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío, 6 seeds)', xlim=(0.1, 0.9))
+
+
+def transfer():
+    print('transfer learning (titulo preentrenado)')
+    puntos('transfer.png', [
+        ('sin título (el modelo final)', CAMPEON, 'e'),
+        ('+ MiniLM-L6 · 22M · congelado', f'tl_minilm_{CANON}_temb-titulominilm', 'a'),
+        ('+ mpnet-base · 110M · congelado', f'tl_mpnet_{CANON}_temb-titulompnet', 'a'),
+        ('+ bge-large · 335M · congelado', f'tl_bge_{CANON}_temb-titulobge', 'a'),
+        ('+ MiniLM-L6 · fine-tuning', f'tl_minilm_ft_{CANON}_tembft', 'a'),
+        ('solo el título (bge-large)', 'tl_bge_solo_features_d32_h4_l2_linear_temb-titulobge_sin-all', 'c'),
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío, 6 seeds)', figsize=(7.3, 4.3), xlim=(0.1, 0.9))
 
 
 # ---------- 3. curva de aprendizaje ----------
-def _prauc_test(tag_prefix):
+def _prauc(tag_prefix, split='test'):
     vals = []
     for f in RESULTADOS.glob(f'{tag_prefix}_*seed4[2-7].json'):
-        vals.append(json.loads(f.read_text())['test']['pr_auc'])
+        vals.append(json.loads(f.read_text())[split]['pr_auc'])
     return np.array(vals)
 
 
 def curva_aprendizaje():
-    print('curva de aprendizaje')
+    print('curva de aprendizaje (test)')
     tags = [('curva_frac25_features', 25), ('curva_frac50_features', 50),
             ('curva_frac75_features', 75), ('feat_ordinal_features', 100)]
     xs, ms, ss = [], [], []
     for t, p in tags:
-        v = _prauc_test(t)
+        v = _prauc(t)
         xs.append(p); ms.append(v.mean()); ss.append(v.std())
     fig, ax = plt.subplots(figsize=(6.6, 4.3))
-    ax.axhline(0.762, color=ROJO, linestyle='--', linewidth=2)
-    ax.text(101, 0.7655, 'GBM con el 100%: 0.762', color=ROJO, fontsize=16, ha='right')
     ax.errorbar(xs, ms, yerr=ss, color=TEAL, linewidth=3, marker='o', markersize=10, capsize=5,
                 capthick=2, elinewidth=2)
     for x, m in zip(xs, ms):
@@ -346,7 +440,7 @@ def curva_aprendizaje():
     ax.set_xticks(xs, [f'{x}%' for x in xs])
     ax.set_xlabel('fracción de las búsquedas de train (val y test fijos)')
     ax.set_ylabel('PR-AUC test')
-    ax.set_ylim(0.70, 0.87)
+    ax.set_ylim(0.72, 0.87)
     ax.grid(color='#E3E8EE')
     ax.set_axisbelow(True)
     guardar(fig, 'curva_aprendizaje.png')
@@ -456,8 +550,10 @@ def atencion():
 
 
 if __name__ == '__main__':
-    que = sys.argv[1:] or ['decisiones', 'formulacion', 'grilla', 'grilla_test', 'grilla_bloques',
-                           'grilla_bloques_test', 'mlp', 'curva_aprendizaje',
+    que = sys.argv[1:] or ['grilla', 'grilla_test', 'grilla_bloques', 'grilla_bloques_test',
+                           'encoding', 'encoding_test', 'mlm', 'mlm_test', 'regularizacion',
+                           'regularizacion_test', 'optimizacion', 'optimizacion_test',
+                           'ingredientes', 'transfer', 'curva_aprendizaje',
                            'curvas_entrenamiento', 'importancia', 'atencion']
     for q in que:
         globals()[q]()

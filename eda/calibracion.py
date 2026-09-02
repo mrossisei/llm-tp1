@@ -46,9 +46,7 @@ def logits_de(ckpt_path):
     data = json.loads((REPO / 'salidas' / 'resultados' / f'{ckpt_path.stem}.json').read_text())
     cfg = data['config']
     model, _ = load_checkpoint(ckpt_path)
-    _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=data['seed'],
-                           max_text_len=cfg.get('max_text_len', 256),
-                           strip_status=bool(cfg.get('strip_status')))
+    _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=data['seed'])
     drop = {f.strip() for f in cfg.get('drop_features', '').split(',') if f.strip()}
     splits, _, _ = drop_feature_columns(splits, drop)
     out = []

@@ -3,9 +3,12 @@
 > **Nota (02/09):** el repositorio se reorganizó para la entrega. Las rutas que este documento
 > menciona como `resultados/`, `pesos/` y `graficos/` viven ahora en `salidas/resultados/`,
 > `salidas/pesos/` y `salidas/graficos/`; el código de las variantes que no entraron a la
-> presentación (listwise, multi-task con cart, pesos por feature, regularización, transfer
-> learning, SOM/PCA/autoencoder, MiniLM, destilación) se retiró de `btr/` y `experimentos.py`,
-> pero sus corridas siguen en `salidas/resultados/` y el análisis queda acá tal como se hizo.
+> presentación (los baselines MLP y GBM, las formulaciones de texto crudo / híbrido / fusión /
+> torre, listwise, multi-task con cart, pesos por feature, transfer interno, destilación,
+> SOM/PCA/autoencoder) se retiró de `btr/` y `experimentos.py`, pero sus corridas siguen en
+> `salidas/resultados/` y el análisis queda acá tal como se hizo. Los experimentos vigentes son
+> los barridos de `experimentos.py` (capacidad, profundidad, encoding × d_model, MLM,
+> regularización, optimización, ingredientes y transfer learning con el título).
 
 Primera tanda corrida por Matias en la RTX 3070: las 24 configs de la suite con el protocolo
 original (paciencia 8, tope 60 épocas) **y** una variante `pac20_` (paciencia 20, tope 300) para
