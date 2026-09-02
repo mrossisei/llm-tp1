@@ -1,5 +1,12 @@
 # Análisis de las tandas GPU (16/08)
 
+> **Nota (02/09):** el repositorio se reorganizó para la entrega. Las rutas que este documento
+> menciona como `resultados/`, `pesos/` y `graficos/` viven ahora en `salidas/resultados/`,
+> `salidas/pesos/` y `salidas/graficos/`; el código de las variantes que no entraron a la
+> presentación (listwise, multi-task con cart, pesos por feature, regularización, transfer
+> learning, SOM/PCA/autoencoder, MiniLM, destilación) se retiró de `btr/` y `experimentos.py`,
+> pero sus corridas siguen en `salidas/resultados/` y el análisis queda acá tal como se hizo.
+
 Primera tanda corrida por Matias en la RTX 3070: las 24 configs de la suite con el protocolo
 original (paciencia 8, tope 60 épocas) **y** una variante `pac20_` (paciencia 20, tope 300) para
 cada una, seeds 42–47. Total: **288 corridas, 48 grupos × 6 seeds**. Las métricas finales de las
@@ -951,3 +958,99 @@ El resultado negativo es el bueno para la defensa: muestra que "agregarle un tra
 campo no crea información, y que la ablación del EDA (descartar `ingredients` por Δ≈0 en
 cantidad) también valía para la identidad. El modelo final sigue siendo `feat_ordinal`
 (0.824 / ensemble 0.834).
+
+## 17. 10ª tanda: grilla d_model × cabezas por encoding + el mejor MLP (corrida 01/09)
+
+Dos preguntas de la defensa, no de selección (sigue cerrada en la 4ª tanda). (a) Los ejes
+"cabezas" y "d_model" se mostraban sueltos y con celdas de tandas distintas (ordinal solo
+tenía h1 y h4); acá está **la grilla completa d_model {32,64,128} × cabezas {1,2,4,8}, n_layer 2,
+protocolo PAC 300/20, para cada encoding** — 24 celdas, 7 reutilizadas de tandas previas con
+la misma clave canónica (`feat_ordinal`, `camp_ordinal_h1`, `pac20_feat_h1/h2/base/d64`,
+`camp_d64h1`), 17 nuevas. (b) El Exp. 1 comparaba contra un MLP de arquitectura fija: ahora
+**10 variantes del MLP sobre encoding ordinal** (ancho, profundidad, dropout; 30k–690k
+parámetros), elegidas por validación como cualquier otra cosa. 27 configs × 6 seeds = 162
+corridas (1.030 totales, 172 grupos). Las figuras: `entrega/presentacion/nueva/graficos/
+grilla.png` (val), `grilla_test.png` y `mlp.png` (val).
+
+**Grilla, PR-AUC de validación (media ± desvío de 6 seeds; test entre paréntesis):**
+
+| ordinal | h = 1 | h = 2 | h = 4 | h = 8 |
+|---|---|---|---|---|
+| d 32 · 26k | 0.823 ± 0.030 (0.800) | 0.827 ± 0.023 (0.801) | **0.835 ± 0.037 (0.824)** ← elegida | 0.831 ± 0.032 (0.815) |
+| d 64 · 102k | 0.810 ± 0.026 (0.780) | 0.818 ± 0.028 (0.781) | 0.819 ± 0.027 (0.824) | 0.838 ± 0.032 (0.822) |
+| d 128 · 400k | 0.752 ± 0.049 (0.719) | 0.800 ± 0.054 (0.776) | 0.814 ± 0.024 (0.795) | 0.825 ± 0.039 (0.821) |
+
+| embedding | h = 1 | h = 2 | h = 4 | h = 8 |
+|---|---|---|---|---|
+| d 32 · 28k | 0.836 ± 0.032 (0.816) | 0.815 ± 0.042 (0.795) | 0.827 ± 0.032 (0.798) | 0.833 ± 0.029 (0.796) |
+| d 64 · 106k | 0.832 ± 0.029 (0.800) | 0.830 ± 0.031 (0.808) | 0.832 ± 0.025 (0.815) | 0.820 ± 0.027 (0.796) |
+| d 128 · 408k | 0.834 ± 0.030 (0.813) | 0.834 ± 0.029 (0.815) | 0.832 ± 0.031 (0.811) | 0.818 ± 0.034 (0.798) |
+
+**Lectura de la grilla:**
+
+1. **Meseta, no escalera.** d 32 ya está en el máximo de cada encoding; d 128 (15× los
+   parámetros) no lo supera en ninguno (ordinal: mejor celda d128 0.825 < 0.838; embedding:
+   0.834 ≈ 0.836). Cierra §10.1 y §11: la capacidad no era el límite.
+2. **Ordinal pide cabezas chicas.** A d fijo, más cabezas = mejor, y el efecto crece con d
+   (d 128: h1 0.752 → h8 0.825). Sus mejores celdas comparten `d/h = 8`: 32·4 (0.835) y 64·8
+   (0.838); con una sola cabeza de 128 dims se derrumba (0.752 val / 0.719 test, y termina en
+   42 épocas: el early stopping corta un modelo que no converge). Lectura: el ordinal mete cada
+   categórica como un escalar proyectado (rango 1 en el espacio de tokens) y explotarlo
+   requiere varias miradas chicas, no una grande. **Embedding es indiferente**: 0.815–0.836
+   en val, sin estructura. El "interactúa con la codificación" del Exp. 2 viejo era esto.
+3. **Ordinal vs embedding, celda por celda (pareado por seed): NO "gana en toda la grilla".**
+   En val ordinal gana 4/12 celdas (32·2, 32·4, 64·8, 128·8 — justo las de cabezas chicas)
+   y pierde 8, incluso en media de grilla (0.816 vs 0.829); en test gana 6/12. Lo que sí es
+   robusto es el **techo**: las dos mejores celdas de test son ordinal (32·4 y 64·4, 0.824)
+   contra 0.816 de la mejor de embedding, y en val el mejor de cada uno empata (0.838 vs
+   0.836). Corrige el resumen del commit de la tanda; la lección del Exp. 5 se mantiene
+   (a igual capacidad y con la config elegida, ordinal +0.007 val / +0.026 test, 4/6 y 5/6)
+   pero hay que decirla con esa precisión.
+4. **La elegida sigue en pie.** `gc_o_d64h8` es la mejor celda en val (0.838) pero el Δ
+   pareado contra `feat_ordinal` es +0.004 (4/6): empate, con 4× los parámetros; en test
+   0.822 vs 0.824. Y `gc_o_d64h4` (0.824 en test, igual que la elegida) da **0.819 en val,
+   −0.015 pareado (2/6)**: no era elegible mirando validación. Es el ejemplo vivo de por qué
+   la decisión no se toma con test — si preguntan "¿y d64·4?", la respuesta es esa.
+
+**El mejor MLP que pudimos (encoding ordinal, elegido por validación):**
+
+| config | hidden · dropout | params | val PR-AUC | test PR-AUC | Δtest vs `feat_ordinal` (pareado) |
+|---|---|---|---|---|---|
+| `feat_ordinal` (ref) | transformer d32·h4·l2 | 26k | 0.835 ± 0.037 | **0.824 ± 0.018** | — |
+| `mlp_ord_do2` | 256·64 · 0.2 | 124k | **0.843 ± 0.026** ← mejor val | 0.810 ± 0.037 | −0.014 (transformer gana 5/6) |
+| `mlp_ord_ancho` | 512·256 | 346k | 0.840 ± 0.024 | 0.809 ± 0.033 | |
+| `mlp_ordinal` | 256·64 (Exp. 1) | 124k | 0.840 ± 0.028 | 0.809 ± 0.035 | −0.015 (5/6) |
+| `mlp_ord_prof4` | 256·128·64·32 | 151k | 0.840 ± 0.030 | 0.815 ± 0.033 | −0.009 (3/6) |
+| `mlp_ord_prof3` | 256·128·64 | 149k | 0.840 ± 0.027 | 0.803 ± 0.043 | |
+| `mlp_ord_grande` | 1024·256 · 0.2 | 690k | 0.838 ± 0.024 | 0.810 ± 0.035 | |
+| `mlp_ord_do3` | 256·64 · 0.3 | 124k | 0.832 ± 0.032 | 0.803 ± 0.031 | |
+| `mlp_ord_mini` | 64·32 | 30k | 0.830 ± 0.028 | 0.813 ± 0.031 | −0.011 (5/6) |
+| `mlp_ord_h256` | 256 | 108k | 0.813 ± 0.029 | 0.794 ± 0.028 | |
+| `mlp_ord_h128` | 128 | 54k | 0.805 ± 0.030 | 0.795 ± 0.033 | |
+| `mlp_onehot` (§8) | 256·64, one-hot | 87k | 0.815 ± 0.036 | 0.797 ± 0.032 | |
+| `mlp_base` (§8) | 256·64, embeddings | 126k | 0.788 ± 0.030 | 0.746 ± 0.036 | |
+
+**Lectura del MLP:**
+
+5. **En validación empatan; en test la atención gana.** El MLP elegido por val (`do2`, 0.843)
+   queda una centésima arriba del transformer (0.835), adentro del desvío y 4/6 seeds a su
+   favor; en test, que ninguno de los dos vio, el transformer gana **+0.014, 5/6 seeds**
+   (0.824 vs 0.810), con 26k parámetros contra 124k. Ninguna de las 10 variantes lo alcanza
+   en test (mejor: `prof4` 0.815, 3/6); el más grande (690k) tampoco. Es la versión honesta
+   del Exp. 1: la ventaja de la atención es de ~0.01–0.015, chica pero real y no de tamaño.
+   El "+0.048 / +0.027" viejo era contra MLPs con peor encoding (embeddings 0.746, one-hot
+   0.797 en test); la brecha justa es la de igual encoding.
+6. **La brecha val→test es mayor en los MLP** (0.025–0.037 en los de dos capas o más, vs
+   0.011 en `feat_ordinal`), pero no es exclusiva de ellos: en la grilla del transformer la brecha media es 0.020
+   (ordinal) y 0.024 (embedding). `feat_ordinal` tiene una brecha chica y test σ 0.018, el
+   más estable de todo lo corrido — coherente con el GroupKFold 0.821 ± 0.012 (§10.5), que es
+   el número que lo respalda cuando alguien pregunte si 0.824 es suerte del split.
+7. **El encoding vale más que la arquitectura, también para el MLP**: 256·64 con embeddings
+   0.788 → one-hot 0.815 → ordinal 0.840 en val (+0.05), más que cualquier cambio de ancho,
+   profundidad o dropout sobre ordinal (rango 0.805–0.843, y solo los MLP de una capa quedan
+   abajo). Los 12 MLP reproducen el Exp. 5 desde la otra familia.
+
+**Qué cambia en la defensa**: el Exp. 1 pasa a ser "transformer vs el mejor MLP que pudimos"
+(empate en val, +0.014 en test 5/6, 26k vs 124k), los Exp. 2 y 4 viejos se funden en la
+grilla (dos heatmaps, val), y la vara "mejor MLP" del cierre pasa de 0.797 (one-hot) a 0.810
+(ordinal). El modelo final no cambia: `feat_ordinal` 0.824 / ensemble 0.834.

@@ -6,7 +6,7 @@ Implementa las decisiones de propuesta.md (secciones 2 y 6):
   del rango filtrado (efecto no lineal en U invertida).
 - `cart` NO es feature (leakage: bought => cart). `query_id` solo se usa para
   particionar. timestamp / package_size / dimensions / filtros duplicados quedan
-  afuera de la v1 (redundantes o sin senal; reintroducibles via ablacion).
+  afuera (redundantes o sin senal, ver EDA en propuesta.md).
 - Split por query_id (group split): filas de la misma busqueda no se reparten
   entre train/val/test.
 - Vocabularios y estadisticos (medias/desvios/cuantiles) se calculan SOLO con
@@ -35,23 +35,8 @@ NUM_FEATURES = [
     'price', 'price_rel', 'filter_price_min', 'filter_price_max',
     'net_weight_oz', 'nutrition_score',
 ]
-# columnas descartadas en la v1 por redundancia (propuesta 2.6), reintroducibles
-# via --extra-features para verificar empiricamente que no aportan:
-EXTRA_FEATURES = {          # nombre -> tipo ('num'|'cat'); derivadas en load_dataset
-    'volume_in3': 'num',    # producto de dimensions_in (L x W x H)
-    'pkg_qty': 'num',       # numero de package_size ("24 oz" -> 24)
-    'pkg_unit': 'cat',      # unidad de package_size (oz / ct / ...)
-    'n_ingredients': 'num', # cantidad de items en ingredients
-    'hour': 'num',          # hora del timestamp (EDA: ruido; verificable con feat_tiempo)
-    'dow': 'cat',           # dia de la semana del timestamp
-}
-# '--extra-features all' significa ESTOS cuatro, congelado: las corridas ya hechas
-# guardaron el literal 'all' en su config y su clave canonica no debe cambiar
-# aunque EXTRA_FEATURES crezca. Los extras nuevos se piden por nombre.
-EXTRA_ALL = ('n_ingredients', 'pkg_qty', 'pkg_unit', 'volume_in3')
-LOG_FEATURES = ['price', 'net_weight_oz', 'volume_in3', 'pkg_qty']  # sesgadas -> log1p antes del z-score
+LOG_FEATURES = ['price', 'net_weight_oz']  # sesgadas -> log1p antes del z-score
 TARGET = 'bought'
-TARGET_AUX = 'cart'  # target auxiliar para multi-task (--cart-aux); NUNCA es input
 PAD_IDX, UNK_IDX = 0, 1  # reservados del vocabulario de caracteres
 MAX_TEXT_LEN = 256       # p95 de title+description = 243 chars
 MAX_INGREDIENTS = 5      # largo maximo de la lista de ingredientes (maximo global del CSV)
@@ -84,16 +69,6 @@ def load_dataset(csv_path):
     df['allergens'] = df['allergens'].fillna('None')  # "sin alergenos declarados"
     span = df['filter_price_max'] - df['filter_price_min']
     df['price_rel'] = (df['price'] - df['filter_price_min']) / span
-    # derivados de las columnas descartadas (solo entran con --extra-features):
-    dims = df['dimensions_in'].str.extract(r'([\d.]+)\s*x\s*([\d.]+)\s*x\s*([\d.]+)')
-    df['volume_in3'] = dims.astype(float).prod(axis=1)
-    pkg = df['package_size'].str.extract(r'([\d.]+)\s*(\w+)')
-    df['pkg_qty'] = pkg[0].astype(float)
-    df['pkg_unit'] = pkg[1].fillna('None')
-    df['n_ingredients'] = df['ingredients'].str.count(',') + 1
-    ts = pd.to_datetime(df['timestamp'], errors='coerce', format='mixed')
-    df['hour'] = ts.dt.hour.fillna(0).astype(float)
-    df['dow'] = ts.dt.dayofweek.fillna(0).astype(int).astype(str)
     return df
 
 
@@ -142,7 +117,6 @@ class Preprocessor:
     text_tokens: str = 'chars'  # 'chars' (la demo) | 'words' (tokenización word-level)
     cat_features: list = None   # None -> CAT_FEATURES (instancias viejas)
     num_features: list = None   # None -> NUM_FEATURES
-    include_cart: bool = False  # True -> y de shape (N, 2): [bought, cart] (--cart-aux)
     ing_vocab: dict = None      # ingrediente -> indice (0=PAD, 1=UNK); formulaciones ing_*
     use_ingredients: bool = False  # True -> el 3er tensor es la lista de ingredientes, no texto
 
@@ -156,14 +130,8 @@ class Preprocessor:
 
     @classmethod
     def fit(cls, train_df, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False, text_tokens='chars',
-            use_ingredients=False):
-        desconocidos = set(extra_features) - set(EXTRA_FEATURES)
-        if desconocidos:
-            raise ValueError(f'extra_features desconocidos: {sorted(desconocidos)} '
-                             f'(validos: {sorted(EXTRA_FEATURES)})')
-        cats = CAT_FEATURES + [f for f in extra_features if EXTRA_FEATURES[f] == 'cat']
-        nums = NUM_FEATURES + [f for f in extra_features if EXTRA_FEATURES[f] == 'num']
+            text_tokens='chars', use_ingredients=False):
+        cats, nums = list(CAT_FEATURES), list(NUM_FEATURES)
         vocabs = {
             f: {v: i + 1 for i, v in enumerate(sorted(train_df[f].unique()))}
             for f in cats
@@ -187,7 +155,7 @@ class Preprocessor:
             ing_vocab = {v: i + 2 for i, v in enumerate(items)}  # 0=PAD, 1=UNK
         return cls(vocabs=vocabs, num_mean=num.mean(axis=0), num_std=num.std(axis=0) + 1e-8,
                    char_vocab=char_vocab, max_text_len=max_text_len, strip_status=strip_status,
-                   cat_features=cats, num_features=nums, include_cart=include_cart,
+                   cat_features=cats, num_features=nums,
                    text_tokens=text_tokens, ing_vocab=ing_vocab, use_ingredients=use_ingredients)
 
     @property
@@ -215,11 +183,7 @@ class Preprocessor:
         return [len(self.vocabs[f]) + 1 for f in self.cats]  # +1 por UNK
 
     def transform(self, df):
-        """df -> (x_cat long, x_num float32, x_text long, y float32) listos para el modelo.
-
-        Con include_cart, y es (N, 2): columna 0 = bought (target real), columna 1 =
-        cart (solo etiqueta auxiliar de entrenamiento, jamas input).
-        """
+        """df -> (x_cat long, x_num float32, x_text long, y float32) listos para el modelo."""
         x_cat = np.stack(
             [df[f].map(lambda v, f=f: self.vocabs[f].get(v, 0)).to_numpy() for f in self.cats],
             axis=1,
@@ -232,10 +196,7 @@ class Preprocessor:
             x_text = np.stack([
                 self._encode_text(t, d) for t, d in zip(df['title'], df['description'])
             ])
-        if getattr(self, 'include_cart', False):
-            y = df[[TARGET, TARGET_AUX]].to_numpy()
-        else:
-            y = df[TARGET].to_numpy()
+        y = df[TARGET].to_numpy()
         return (
             torch.tensor(x_cat, dtype=torch.long),
             torch.tensor(x_num, dtype=torch.float32),
@@ -274,8 +235,7 @@ class Preprocessor:
 
 
 def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
-            extra_features=(), include_cart=False, text_tokens='chars',
-            train_frac=1.0, cv_k=0, cv_fold=0, use_ingredients=False):
+            text_tokens='chars', train_frac=1.0, cv_k=0, cv_fold=0, use_ingredients=False):
     """Pipeline completo: carga -> split por query -> fit en train -> tensores.
 
     train_frac < 1 submuestrea las QUERIES de train (curva de aprendizaje; val y
@@ -289,7 +249,6 @@ def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
         np.random.default_rng(seed + 1000).shuffle(qs)
         train_df = train_df[train_df['query_id'].isin(set(qs[:int(len(qs) * train_frac)]))]
     prep = Preprocessor.fit(train_df, max_text_len=max_text_len, strip_status=strip_status,
-                            extra_features=extra_features, include_cart=include_cart,
                             text_tokens=text_tokens, use_ingredients=use_ingredients)
     return prep, train_df, {
         'train': prep.transform(train_df),
@@ -297,53 +256,3 @@ def prepare(csv_path, seed=42, max_text_len=MAX_TEXT_LEN, strip_status=False,
         'test': prep.transform(test_df),
     }
 
-
-def make_query_tensors(df, prep, max_products=None, with_text=False):
-    """Agrupa las filas por query para la formulación listwise (propuesta.md 4B).
-
-    Devuelve tensores (Q, P, ...) con P = máximo de productos por página (8 en el
-    dataset), padded con ceros y una máscara (Q, P) que marca los productos reales
-    (el padding no recibe atención ni entra en la loss). El orden de los productos
-    es el del CSV: no hay columna de posición/rank, así que no se asume orden.
-
-    Con with_text (--listwise-texto) el tercer tensor es x_text (Q, P, L) en lugar
-    de la máscara: los slots de padding quedan todo-PAD, así que la máscara se
-    reconstruye como (x_text != PAD).any(-1) — todo título real tiene caracteres.
-    """
-    x_cat, x_num, x_text, y = prep.transform(df)
-    sizes = df.groupby('query_id', sort=False).size()
-    if max_products is None:
-        max_products = int(sizes.max())
-    n_queries = len(sizes)
-
-    out_cat = torch.zeros(n_queries, max_products, x_cat.shape[1], dtype=torch.long)
-    out_num = torch.zeros(n_queries, max_products, x_num.shape[1], dtype=torch.float32)
-    out_y = torch.zeros(n_queries, max_products, dtype=torch.float32)
-    out_mask = torch.zeros(n_queries, max_products, dtype=torch.bool)
-    out_text = torch.zeros(n_queries, max_products, x_text.shape[1], dtype=torch.long)
-
-    start = 0
-    for q, size in enumerate(sizes):
-        size = min(int(size), max_products)
-        rows = slice(start, start + size)
-        out_cat[q, :size] = x_cat[rows]
-        out_num[q, :size] = x_num[rows]
-        out_y[q, :size] = y[rows]
-        out_mask[q, :size] = True
-        out_text[q, :size] = x_text[rows]
-        start += int(sizes.iloc[q])
-    return out_cat, out_num, (out_text if with_text else out_mask), out_y
-
-
-def prepare_listwise(csv_path, seed=42, with_text=False, max_text_len=MAX_TEXT_LEN,
-                     strip_status=False):
-    """Como prepare(), pero con tensores agrupados por query (para --arch listwise)."""
-    df = load_dataset(csv_path)
-    train_df, val_df, test_df = split_by_query(df, seed=seed)
-    prep = Preprocessor.fit(train_df, max_text_len=max_text_len, strip_status=strip_status)
-    max_products = int(df.groupby('query_id').size().max())
-    return prep, max_products, {
-        'train': make_query_tensors(train_df, prep, max_products, with_text),
-        'val': make_query_tensors(val_df, prep, max_products, with_text),
-        'test': make_query_tensors(test_df, prep, max_products, with_text),
-    }

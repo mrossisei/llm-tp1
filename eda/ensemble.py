@@ -12,7 +12,6 @@ VALIDACION; test solo se reporta para la composicion elegida.
     .venv/bin/python eda/ensemble.py
 """
 
-import json
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -34,7 +33,7 @@ MEJOR_SOLO = 'feat_ordinal'
 
 
 def probs_de(tag, seed, splits):
-    ckpt = next((REPO / 'pesos').glob(f'{tag}_features_*seed{seed}.pt'))
+    ckpt = next((REPO / 'salidas' / 'pesos').glob(f'{tag}_features_*seed{seed}.pt'))
     model, _ = load_checkpoint(ckpt)
     out = {}
     with torch.no_grad():

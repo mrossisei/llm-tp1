@@ -8,7 +8,7 @@ atiende a los limites del filtro (la senal relacional)?
     .venv/bin/python eda/atencion.py [pesos/<ckpt>.pt ...]
     # default: el mejor por val de pac20_feat_h1 (1 cabeza -> un mapa por capa)
 
-Salida: graficos/atencion_<nombre>.png (promedio sobre todo el test) + top-5
+Salida: salidas/graficos/atencion_<nombre>.png (promedio sobre todo el test) + top-5
 de la fila CLS por consola. Requiere checkpoints de formulation='features'.
 """
 
@@ -44,7 +44,7 @@ ETIQUETAS_CORTAS = {'listing_status': 'status', 'category': 'categ', 'brand': 'm
 
 def mapas_de(ckpt_path):
     """Matrices de atencion (capa, cabeza, T, T) promediadas sobre el test."""
-    data = json.loads((REPO / 'resultados' / f'{ckpt_path.stem}.json').read_text())
+    data = json.loads((REPO / 'salidas' / 'resultados' / f'{ckpt_path.stem}.json').read_text())
     cfg = data['config']
     if cfg['arch'] != 'transformer' or cfg.get('formulation') != 'features':
         raise SystemExit(f'{ckpt_path.stem}: los mapas legibles son de formulation=features')
@@ -52,7 +52,7 @@ def mapas_de(ckpt_path):
     model, _ = load_checkpoint(ckpt_path)
     _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=data['seed'])
     drop = {f.strip() for f in cfg.get('drop_features', '').split(',') if f.strip()}
-    splits, _, _ = drop_feature_columns(splits, drop, False)
+    splits, _, _ = drop_feature_columns(splits, drop)
     x_cat, x_num, x_text, _ = splits['test']
 
     heads = [h for blk in model.blocks for h in blk.sa.heads]
@@ -93,7 +93,7 @@ def graficar(ckpt_path):
     fig.colorbar(im, ax=axes, shrink=0.75, label='peso de atención promedio (test)')
     # sin titulo: la presentacion ya lo pone en el encabezado de la slide
     fig.suptitle('fila = token que consulta · columna = token atendido', fontsize=10)
-    out = REPO / 'graficos' / f'atencion_{ckpt_path.stem}.png'
+    out = REPO / 'salidas' / 'graficos' / f'atencion_{ckpt_path.stem}.png'
     out.parent.mkdir(exist_ok=True)
     fig.savefig(out, dpi=130, bbox_inches='tight')
     print(f'grafico -> {out.relative_to(REPO)}')
@@ -109,9 +109,9 @@ def main():
     if len(sys.argv) > 1:
         ckpts = [Path(p) for p in sys.argv[1:]]
     else:
-        candidatos = sorted((REPO / 'pesos').glob('pac20_feat_h1_*.pt'))
+        candidatos = sorted((REPO / 'salidas' / 'pesos').glob('pac20_feat_h1_*.pt'))
         mejor = max(candidatos, key=lambda p: json.loads(
-            (REPO / 'resultados' / f'{p.stem}.json').read_text())['val']['pr_auc'])
+            (REPO / 'salidas' / 'resultados' / f'{p.stem}.json').read_text())['val']['pr_auc'])
         ckpts = [mejor]
     for c in ckpts:
         graficar(c)

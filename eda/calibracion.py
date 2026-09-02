@@ -17,7 +17,7 @@ Uso:
     .venv/bin/python eda/calibracion.py pesos/<checkpoint>.pt [...]
     .venv/bin/python eda/calibracion.py            # default: el mejor por val de
                                                    # pac20_feat_h1 + feat_base seed42
-Salida: graficos/calibracion_<nombre>.png + tabla por consola.
+Salida: salidas/graficos/calibracion_<nombre>.png + tabla por consola.
 """
 
 import json
@@ -34,7 +34,7 @@ import matplotlib  # noqa: E402
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from btr.data import prepare, prepare_listwise  # noqa: E402
+from btr.data import prepare  # noqa: E402
 from btr.model import load_checkpoint  # noqa: E402
 from btr.train import drop_feature_columns  # noqa: E402
 
@@ -43,18 +43,14 @@ N_BINS = 10
 
 def logits_de(ckpt_path):
     """(logits_val, y_val, logits_test, y_test) del checkpoint, con su split exacto."""
-    data = json.loads((REPO / 'resultados' / f'{ckpt_path.stem}.json').read_text())
+    data = json.loads((REPO / 'salidas' / 'resultados' / f'{ckpt_path.stem}.json').read_text())
     cfg = data['config']
     model, _ = load_checkpoint(ckpt_path)
-    listwise = cfg['arch'] == 'listwise'
-    if listwise:
-        _, _, splits = prepare_listwise(REPO / 'supermarket_products.csv', seed=data['seed'])
-    else:
-        _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=data['seed'],
-                               max_text_len=cfg.get('max_text_len', 256),
-                               strip_status=bool(cfg.get('strip_status')))
+    _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=data['seed'],
+                           max_text_len=cfg.get('max_text_len', 256),
+                           strip_status=bool(cfg.get('strip_status')))
     drop = {f.strip() for f in cfg.get('drop_features', '').split(',') if f.strip()}
-    splits, _, _ = drop_feature_columns(splits, drop, listwise)
+    splits, _, _ = drop_feature_columns(splits, drop)
     out = []
     with torch.no_grad():
         for split in ('val', 'test'):
@@ -128,17 +124,17 @@ def main():
         ckpts = [Path(p) for p in sys.argv[1:]]
     else:
         # mejor seed por val PR de pac20_feat_h1 (el campeon) + feat_base seed 42
-        candidatos = sorted((REPO / 'pesos').glob('pac20_feat_h1_*.pt'))
+        candidatos = sorted((REPO / 'salidas' / 'pesos').glob('pac20_feat_h1_*.pt'))
         mejor = max(candidatos, key=lambda p: json.loads(
-            (REPO / 'resultados' / f'{p.stem}.json').read_text())['val']['pr_auc'])
-        ckpts = [mejor, REPO / 'pesos' / 'feat_base_features_d32_h4_l2_linear_seed42.pt']
+            (REPO / 'salidas' / 'resultados' / f'{p.stem}.json').read_text())['val']['pr_auc'])
+        ckpts = [mejor, REPO / 'salidas' / 'pesos' / 'feat_base_features_d32_h4_l2_linear_seed42.pt']
 
-    (REPO / 'graficos').mkdir(exist_ok=True)
+    (REPO / 'salidas' / 'graficos').mkdir(exist_ok=True)
     fig, axes = plt.subplots(1, len(ckpts), figsize=(5.4 * len(ckpts), 4.6), squeeze=False)
     filas = [calibrar(c, axes[0][i]) for i, c in enumerate(ckpts)]
     fig.suptitle('Reliability diagram (test) — deciles de probabilidad predicha', fontsize=11)
     fig.tight_layout()
-    out = REPO / 'graficos' / 'calibracion.png'
+    out = REPO / 'salidas' / 'graficos' / 'calibracion.png'
     fig.savefig(out, dpi=130)
     print(f'grafico -> {out.relative_to(REPO)}\n')
 

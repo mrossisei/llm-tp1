@@ -1,7 +1,5 @@
-# torch se instala aparte con el index de CPU (ver README)
+# torch se instala aparte (ver README: CPU con el index de CPU, GPU sin el index)
 pandas
 numpy
 scikit-learn
 matplotlib
-transformers  # 8va tanda: encoder preentrenado externo (MiniLM)
-python-pptx  # entrega/presentacion/exportar_pptx.py: presentacion.html -> .pptx (solo local, usa google-chrome)

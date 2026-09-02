@@ -9,7 +9,6 @@ deduplicando cuando coinciden) y se compara apareado contra el modelo solo.
     .venv/bin/python eda/deep_ensemble.py
 """
 
-import json
 import sys
 from pathlib import Path
 
@@ -33,10 +32,10 @@ def main():
         _, _, splits = prepare(REPO / 'supermarket_products.csv', seed=seed)
         x_cat, x_num, x_text, y = splits['test']
         y = y.numpy()
-        ckpts = {seed: next((REPO / 'pesos').glob(f'feat_ordinal_features_*seed{seed}.pt'))}
+        ckpts = {seed: next((REPO / 'salidas' / 'pesos').glob(f'feat_ordinal_features_*seed{seed}.pt'))}
         for i in INITS:
             if i != seed:  # robu_init{seed} seria duplicado exacto de la original
-                ckpts[i] = next((REPO / 'pesos').glob(f'robu_init{i}_*seed{seed}.pt'))
+                ckpts[i] = next((REPO / 'salidas' / 'pesos').glob(f'robu_init{i}_*seed{seed}.pt'))
         probs = []
         with torch.no_grad():
             for ck in ckpts.values():
