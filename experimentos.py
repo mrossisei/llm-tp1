@@ -1,7 +1,7 @@
 """Suite curada de experimentos del TP (propuesta.md 7.4).
 
 USO EN LA MAQUINA CON GPU (dos lineas):
-    .venv/bin/python experimentos.py              # corre TODA la suite (148 configs x 6 seeds)
+    .venv/bin/python experimentos.py              # corre TODA la suite (176 configs x 6 seeds)
     .venv/bin/python experimentos.py --resumen    # tabla comparativa: media +- desvio por config
 
 Garantias de la suite:
@@ -393,6 +393,86 @@ EXPERIMENTOS |= {
     'mlp_ord_mini':   (['--arch', 'mlp', *ORD, '--mlp-hidden', '64,32'], 'tabular'),
 }
 
+# ---- 11ra tanda (02/09): la grilla de cabezas crece (h16, d256) + grilla d_model x bloques ----
+# (a) Una columna mas (16 cabezas) y una fila mas (d_model 256) en la grilla d_model x cabezas
+#     de la 10ma tanda, para los dos encodings: queda 4 x 5 por encoding (8 celdas nuevas c/u).
+# (b) Grilla d_model {32,64,128,256} x n_layer {1,2,4,8}, encoding ordinal (el elegido), donde
+#     cada d_model usa LA CANTIDAD DE CABEZAS QUE MEJOR LE DIO en (a) — la que mas da en PR-AUC
+#     de validacion medio (6 seeds), no la que veniamos usando. Como eso se sabe recien cuando
+#     (a) termino, --n-head lleva el centinela MEJOR_H y se resuelve AL LANZAR cada corrida
+#     leyendo resultados/ (resolver_extra); la fila n_layer=2 ES la celda ganadora de (a) y no
+#     se vuelve a correr. Protocolo PAC 300/20 en todo. 28 configs nuevas x 6 seeds = 168 corridas.
+# Correr en la GPU (los gc_* van primero, la suite respeta el orden; lo ya hecho se saltea):
+#     .venv/bin/python experimentos.py --only 'gc_*,gl_*'
+# Hipotesis registradas ANTES de correr (10ma tanda: ordinal rinde con cabezas de ~8 dims,
+# embedding es indiferente, d128 no supera a d32): (1) con ordinal, h16 mejora a d128 (cabeza
+# de 8 dims) y empeora a d32 (cabezas de 2 dims); con embedding no mueve nada. (2) d256 no
+# supera a d32/d64 en ningun encoding: la meseta sigue, con mas varianza. (3) En bloques,
+# meseta o caida: l8 es peor que l2 en todos los d (10k filas, 13 tokens: no hay que aprender
+# tan hondo) y ningun (d, l) supera a la elegida 32·4·2 por mas del desvio. Con 6 seeds y
+# desvio ~0.03, "supera" quiere decir delta pareado > 0.02 en 5/6 seeds o mas.
+H_GRILLA = (1, 2, 4, 8, 16)       # cabezas (columnas del heatmap)
+D_GRILLA = (32, 64, 128, 256)     # d_model (filas)
+L_GRILLA = (1, 2, 4, 8)           # bloques (columnas del heatmap de bloques)
+MEJOR_H = 'MEJOR'                 # centinela de --n-head: se resuelve al lanzar (resolver_extra)
+# celdas de la grilla de cabezas que ya corrieron con otro tag (misma clave canonica):
+# prefijo de archivo en resultados/ (sin _seedNN), por encoding ('o' ordinal, 'e' embedding)
+CELDAS_REUSADAS = {
+    'o': {(32, 4): 'feat_ordinal_features_d32_h4_l2_linear_catordinal',
+          (32, 1): 'camp_ordinal_h1_features_d32_h1_l2_linear_catordinal'},
+    'e': {(32, 1): 'pac20_feat_h1_features_d32_h1_l2_linear', (32, 2): 'pac20_feat_h2_features_d32_h2_l2_linear',
+          (32, 4): 'pac20_feat_base_features_d32_h4_l2_linear', (64, 1): 'camp_d64h1_features_d64_h1_l2_linear',
+          (64, 4): 'pac20_feat_d64_features_d64_h4_l2_linear'},
+}
+_CELDAS_10MA = {(d, h) for d in (32, 64, 128) for h in (1, 2, 4, 8)}   # ya definidas arriba o reusadas
+EXPERIMENTOS |= {
+    **{f'gc_o_d{d}h{h}': ([*ORD, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+       for d in D_GRILLA for h in H_GRILLA if (d, h) not in _CELDAS_10MA},
+    **{f'gc_e_d{d}h{h}': ([*PAC, '--d-model', str(d), '--n-head', str(h)], 'tabular')
+       for d in D_GRILLA for h in H_GRILLA if (d, h) not in _CELDAS_10MA},
+    **{f'gl_o_d{d}l{l}': ([*ORD, '--d-model', str(d), '--n-layer', str(l), '--n-head', MEJOR_H], 'tabular')
+       for d in D_GRILLA for l in L_GRILLA if l != 2},
+}
+
+
+class GrillaIncompleta(RuntimeError):
+    """Falta correr celdas de la grilla de cabezas (gc_*) para resolver el centinela MEJOR_H."""
+
+
+def celda_grilla(enc, d, h):
+    """Prefijo de archivo (sin _seedNN) de la celda (encoding, d_model, cabezas) de la grilla de cabezas."""
+    fijo = CELDAS_REUSADAS[enc].get((d, h))
+    if fijo:
+        return fijo
+    return f'gc_{enc}_d{d}h{h}_features_d{d}_h{h}_l2_linear' + ('_catordinal' if enc == 'o' else '')
+
+
+def mejor_h(enc, d, seeds=6):
+    """La cantidad de cabezas con mejor PR-AUC de validacion medio en la fila d_model de la grilla."""
+    medias = {}
+    for h in H_GRILLA:
+        celda = celda_grilla(enc, d, h)
+        vals = [json.loads(f.read_text())['val']['pr_auc']
+                for f in (REPO_ROOT / 'resultados').glob(f'{celda}_seed4[2-7].json')]
+        if len(vals) < seeds:
+            raise GrillaIncompleta(f'{celda}: {len(vals)}/{seeds} corridas — correr primero gc_*')
+        medias[h] = sum(vals) / len(vals)
+    return max(medias, key=medias.get)
+
+
+def resolver_extra(nombre, extra=None):
+    """Los args del experimento con el centinela MEJOR_H reemplazado por la cantidad de cabezas
+    que mejor dio en la grilla (para su encoding y d_model). Lee resultados/ en el momento."""
+    extra = list(EXPERIMENTOS[nombre][0] if extra is None else extra)
+    if MEJOR_H not in extra:
+        return extra
+    i = extra.index(MEJOR_H)
+    assert extra[i - 1] == '--n-head', f'{nombre}: el centinela solo va en --n-head'
+    d = int(extra[extra.index('--d-model') + 1])
+    enc = 'o' if 'ordinal' in extra else 'e'
+    extra[i] = str(mejor_h(enc, d))
+    return extra
+
 
 def resolver_device(arg):
     if arg != 'auto':
@@ -428,21 +508,37 @@ def nombre_esperado(nombre_exp, extra, seed):
     return run_name(args, seed)
 
 
-def correr(nombres, seeds, device, save_pesos, epochs):
-    chequear_gpu(device, nombres)
+def armar_plan(nombres, seeds):
+    """(corridas pendientes, ya hechas). Las que llevan el centinela MEJOR_H entran siempre:
+    su nombre de archivo depende de la grilla, asi que se resuelven (y se saltean) al lanzar."""
     resultados_dir = REPO_ROOT / 'resultados'
     plan, salteados = [], 0
     for nombre in nombres:
         extra, _ = EXPERIMENTOS[nombre]
         for seed in range(42, 42 + seeds):
-            if (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
+            if MEJOR_H not in extra and (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
                 salteados += 1
             else:
                 plan.append((nombre, extra, seed))
+    return plan, salteados
+
+
+def correr(nombres, seeds, device, save_pesos, epochs):
+    chequear_gpu(device, nombres)
+    resultados_dir = REPO_ROOT / 'resultados'
+    plan, salteados = armar_plan(nombres, seeds)
     print(f"Plan: {len(plan)} corridas ({salteados} ya hechas, salteadas)")
 
     fallidos = []
     for i, (nombre, extra, seed) in enumerate(plan, 1):
+        if MEJOR_H in extra:
+            try:
+                extra = resolver_extra(nombre, extra)
+            except GrillaIncompleta as e:
+                raise SystemExit(f'\n{nombre}: no se puede resolver --n-head MEJOR: {e}')
+            if (resultados_dir / f"{nombre_esperado(nombre, extra, seed)}.json").exists():
+                print(f"\n[{i}/{len(plan)}] {nombre} seed {seed}: ya hecha (n_head resuelto = {extra[extra.index('--n-head') + 1]})")
+                continue
         cmd = [sys.executable, '-m', 'btr.train', '--tag', nombre, '--seeds', '1',
                '--seed-start', str(seed), '--device', device, '--quiet', *extra]
         if save_pesos:
@@ -494,7 +590,8 @@ def main():
     parser = argparse.ArgumentParser(description='Suite de experimentos del TP')
     parser.add_argument('--list', action='store_true', help='listar experimentos y salir')
     parser.add_argument('--resumen', action='store_true', help='tabla comparativa de resultados/')
-    parser.add_argument('--only', default='', help='correr solo estos (separados por coma)')
+    parser.add_argument('--only', default='', help="correr solo estos (separados por coma; admite comodines: 'gc_*,gl_*')")
+    parser.add_argument('--plan', action='store_true', help='mostrar que corridas faltan y salir')
     parser.add_argument('--familia', choices=['tabular', 'texto'], help='correr solo una familia')
     parser.add_argument('--seeds', type=int, default=6)
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'])
@@ -509,12 +606,27 @@ def main():
     if args.resumen:
         resumen()
         return
-    nombres = [n.strip() for n in args.only.split(',') if n.strip()] or list(EXPERIMENTOS)
+    import fnmatch
+    pedidos = [n.strip() for n in args.only.split(',') if n.strip()]
+    nombres = []
+    for n in pedidos:
+        con_comodin = [m for m in EXPERIMENTOS if fnmatch.fnmatch(m, n)] if '*' in n else [n]
+        nombres += [m for m in con_comodin if m not in nombres]
+    nombres = nombres or list(EXPERIMENTOS)
     desconocidos = [n for n in nombres if n not in EXPERIMENTOS]
     if desconocidos:
         raise SystemExit(f'experimentos desconocidos: {desconocidos} (ver --list)')
     if args.familia:
         nombres = [n for n in nombres if EXPERIMENTOS[n][1] == args.familia]
+    if args.plan:
+        plan, salteados = armar_plan(nombres, args.seeds)
+        por_exp = defaultdict(int)
+        for nombre, _, _ in plan:
+            por_exp[nombre] += 1
+        for nombre, k in por_exp.items():
+            print(f"{nombre:<20} {k} corridas   {' '.join(EXPERIMENTOS[nombre][0])}")
+        print(f"Plan: {len(plan)} corridas ({salteados} ya hechas, salteadas)")
+        return
     correr(nombres, args.seeds, args.device, not args.no_pesos, args.epochs)
 
 

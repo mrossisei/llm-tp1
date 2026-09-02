@@ -28,7 +28,7 @@ from pathlib import Path
 from btr.data import (CAT_FEATURES, EXTRA_ALL, EXTRA_FEATURES, NUM_FEATURES, Preprocessor,
                       load_dataset, split_by_query)
 from btr.train import build_parser
-from experimentos import EXPERIMENTOS
+from experimentos import EXPERIMENTOS, GrillaIncompleta, resolver_extra
 
 REPO = Path(__file__).resolve().parent
 
@@ -226,7 +226,13 @@ def cargar_datos():
 
     # suite curada, con su clave canonica y su config completa
     suite = {}
+    sin_resolver = []
     for nombre, (extra, familia) in EXPERIMENTOS.items():
+        try:
+            extra = resolver_extra(nombre, extra)   # --n-head MEJOR (11ra tanda) se resuelve con resultados/
+        except GrillaIncompleta:
+            sin_resolver.append(nombre)             # todavia no corrio la grilla: la config no entra al panel
+            continue
         cfg = vars(build_parser().parse_args(extra))
         suite[nombre] = {'key': canon(cfg), 'cfg': cfg_dict(cfg),
                          'familia': familia, 'args': ' '.join(extra) or '(defaults)'}
@@ -260,6 +266,8 @@ def cargar_datos():
     en_suite = sum(1 for k in grupos if k in suite_keys)
     print(f'suite: {len(suite)} configs | resultados: {len(grupos)} grupos '
           f'({sum(len(g["runs"]) for g in grupos.values())} corridas), {en_suite} matchean la suite')
+    if sin_resolver:
+        print(f'  {len(sin_resolver)} configs con --n-head MEJOR sin resolver (falta correr gc_*): fuera del panel')
     for k, g in grupos.items():
         if g['nombre'].startswith(tuple(suite)) and k not in suite_keys:
             raise SystemExit(f'BUG canon(): {g["nombre"]} no matchea ninguna clave de la suite')
