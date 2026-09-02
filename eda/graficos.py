@@ -273,9 +273,14 @@ def _heatmap_simple(nombre, titulo, celdas, filas, cols, elegida, xlabel, ylabel
     guardar(fig, nombre)
 
 
-def _canon(**cambios):
-    """Nombre canonico de la ganadora con cambios: d=..., enc='embedding'|'target'|'ordinal', sufijo='_mlm5'."""
-    canon = canon_mejor()                      # p. ej. features_d32_h16_l4_linear_catordinal
+VIEJA = 'features_d32_h4_l2_linear_catordinal'   # la arquitectura anterior (32·4·2): MLM, optimizacion y
+                                                  # transfer se corrieron sobre ella (3 seeds) y no se repiten
+
+
+def _canon(base=None, **cambios):
+    """Nombre canonico de la ganadora (o de `base`) con cambios: d=..., enc='embedding'|'target'|'ordinal',
+    sufijo='_mlm5', form='ing_fusion'."""
+    canon = base or canon_mejor()              # p. ej. features_d32_h16_l4_linear_catordinal
     if 'd' in cambios:
         canon = re.sub(r'_d\d+_', f'_d{cambios["d"]}_', canon, count=1)
     if 'enc' in cambios:
@@ -291,6 +296,15 @@ def _grupo(**cambios):
     """El grupo ya corrido con ese nombre canonico (cualquier tag), o un prefijo que no existe."""
     canon = _canon(**cambios)
     return grupo_canonico(canon) or f'(falta)_{canon}'
+
+
+def _grupo_viejo(**cambios):
+    """Idem, sobre la arquitectura anterior (32·4·2)."""
+    canon = _canon(base=VIEJA, **cambios)
+    return grupo_canonico(canon) or f'(falta)_{canon}'
+
+
+NOTA_VIEJA = ' — sobre la arquitectura anterior (32·4·2), no repetido'
 
 
 ENCODINGS = [('ordinal', 'ordinal (el elegido)'), ('embedding', 'embedding'), ('target', 'target')]
@@ -311,7 +325,7 @@ def encoding_test():
 
 
 def celda_mlm(enc, epocas):
-    return _grupo(enc='ordinal' if enc == 'o' else 'embedding', sufijo=f'_mlm{epocas}' if epocas else '')
+    return _grupo_viejo(enc='ordinal' if enc == 'o' else 'embedding', sufijo=f'_mlm{epocas}' if epocas else '')
 
 
 def mlm(split=None, nombre='mlm.png'):
@@ -344,6 +358,7 @@ def mlm(split=None, nombre='mlm.png'):
     ax.set_xlim(-0.4, len(MLM_EPOCAS) - 0.6)
     ax.set_xlabel('épocas de pre-entrenamiento MLM (0 = inicialización aleatoria)' + _nota_seeds(comunes))
     ax.set_ylabel(f'PR-AUC {split_es}')
+    ax.set_title('Pre-entrenamiento MLM' + NOTA_VIEJA, loc='left', color=INK, fontsize=15)
     ax.grid(color='#E3E8EE'); ax.set_axisbelow(True)
     ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0.0, 1.02), ncol=2, fontsize=15)
     guardar(fig, nombre)
@@ -355,14 +370,14 @@ def mlm_test():
 
 def celda_opt(lr, bs):
     suf = (f'_lr{float(lr):g}' if lr != '0.001' else '') + (f'_bs{bs}' if bs != '256' else '')
-    return _grupo(sufijo=suf)
+    return _grupo_viejo(sufijo=suf)
 
 
 def optimizacion(split=None, nombre='optimizacion.png'):
     split = split or SPLIT
     print(f'optimizacion ({split})')
     celdas = {(lr, bs): celda_opt(lr, bs) for lr in LRS for bs in BATCHES}
-    _heatmap_simple(nombre, 'Optimización: learning rate × batch (sobre la ganadora)', celdas,
+    _heatmap_simple(nombre, 'Optimización: learning rate × batch' + NOTA_VIEJA, celdas,
                     [f'{float(lr):g}' for lr in LRS], list(BATCHES),
                     (LRS.index('0.001'), BATCHES.index('256')), 'batch', 'learning rate', split, figsize=(6.4, 4.3))
 
@@ -423,15 +438,15 @@ def ingredientes():
 
 def transfer():
     print('transfer learning (titulo preentrenado) sobre la ganadora')
+    # todo sobre la arquitectura anterior (32·4·2, 3 seeds): no se repitio sobre la ganadora
     puntos('transfer.png', [
-        ('sin título (la ganadora)', _grupo(), 'e'),
-        ('+ MiniLM-L6 · 22M · congelado', _grupo(sufijo='_temb-titulominilm'), 'a'),
-        ('+ mpnet-base · 110M · congelado', _grupo(sufijo='_temb-titulompnet'), 'a'),
-        ('+ bge-large · 335M · congelado', _grupo(sufijo='_temb-titulobge'), 'a'),
-        # el fine-tuning no se repitio sobre la ganadora (caro): son las 3 seeds corridas sobre 32·4·2
-        ('+ MiniLM-L6 · fine-tuning (sobre 32·4·2)', 'tl_minilm_ft_features_d32_h4_l2_linear_catordinal_tembft-titulo', 'c'),
-        ('solo el título (bge-large)', _grupo(enc='embedding', sufijo='_temb-titulobge_sin-all'), 'c'),
-    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)', figsize=(7.3, 4.3), xlim=(0.1, 0.9))
+        ('sin título (32·4·2)', _grupo_viejo(), 'e'),
+        ('+ MiniLM-L6 · 22M · congelado', _grupo_viejo(sufijo='_temb-titulominilm'), 'a'),
+        ('+ mpnet-base · 110M · congelado', _grupo_viejo(sufijo='_temb-titulompnet'), 'a'),
+        ('+ bge-large · 335M · congelado', _grupo_viejo(sufijo='_temb-titulobge'), 'a'),
+        ('+ MiniLM-L6 · fine-tuning', _grupo_viejo(sufijo='_tembft-titulo'), 'a'),
+        ('solo el título (bge-large)', _grupo_viejo(enc='embedding', sufijo='_temb-titulobge_sin-all'), 'c'),
+    ], f'PR-AUC {SPLIT_ES} (media ± desvío entre seeds)' + NOTA_VIEJA, figsize=(7.3, 4.3), xlim=(0.1, 0.9))
 
 
 def tiempo():

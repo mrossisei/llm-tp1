@@ -102,10 +102,10 @@ en la máquina local).
 | Capacidad | d_model {32, 64, 128, 256} × cabezas {1, 2, 4, 8, 16}, por encoding (ordinal / embedding) | `gc_o_*`, `gc_e_*` + celdas previas | `grilla.png` |
 | Profundidad | d_model {32, 64, 128, 256} × bloques {1, 2, 4, 8}, con las cabezas que mejor dieron | `gl_o_*` | `grilla_bloques.png` |
 | Encoding de las categóricas | {ordinal, embedding, target} × d_model {32, 64, 128}, con las cabezas y bloques de la ganadora | `enc_*` | `encoding.png` |
-| Pre-entrenamiento MLM | épocas {0, 5, 10, 20, 40} × encoding, sobre la ganadora | `mlm_*` | `mlm.png` |
-| Optimización | learning rate {1e-4, 3e-4, 1e-3} × batch {64, 128, 256}, sobre la ganadora | `opt_*` | `optimizacion.png` |
+| Pre-entrenamiento MLM | épocas {0, 5, 10, 20, 40} × encoding — medido sobre 32·4·2 (3 seeds), no repetido | `feat_*_mlm20`, `gm_*` (fuera de la suite) | `mlm.png` |
+| Optimización | learning rate {1e-4, 3e-4, 1e-3} × batch {64, 128, 256} — medido sobre 32·4·2 (3 seeds), no repetido | `go_*` (fuera de la suite) | `optimizacion.png` |
 | Ingredientes (la alternativa) | encoder de conjunto chico / base / grande vs sin ingredientes, sobre la ganadora; control solo ingredientes | `ing_*` | `ingredientes.png` |
-| Transfer learning | título sin badge embebido por MiniLM-L6 / mpnet-base / bge-large (congelados), MiniLM fine-tuneado, solo el título; sobre la ganadora | `tl_*` | `transfer.png` |
+| Transfer learning | título sin badge embebido por MiniLM-L6 / mpnet-base / bge-large (congelados), MiniLM fine-tuneado, solo el título — medido sobre 32·4·2 (3 seeds), no repetido | `tl_*` (fuera de la suite) | `transfer.png` |
 | Tiempo | hora y día de la semana como (sin, cos) o como categóricas, vs sin tiempo; sobre la ganadora | `tiempo_*` | `tiempo.png` |
 | Robustez del modelo final | curva de aprendizaje, 6 splits × 6 inits, GroupKFold 5×6, calibración, ensembles | `curva_*`, `robu_*`, `cv5_*` | `curva_aprendizaje.png` |
 | Hipótesis refutadas | causal (y causal con CLS al final), bins, positional, mean pooling, pos_weight | `pac20_feat_*`, `feat_causal_last` | — |

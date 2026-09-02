@@ -133,25 +133,17 @@ EXPERIMENTOS |= {
     for enc in ENC_ARGS for d in D_ENC
 }
 
-# ---- Exp. 4 PRE-ENTRENAMIENTO MLM: epocas {0, 5, 10, 20, 40} x encoding, sobre la ganadora.
-# Hipotesis: nada fuera del ruido a ninguna cantidad de epocas (sobre 32·4·2 dio eso). ----
+# ---- Exp. 4 PRE-ENTRENAMIENTO MLM, Exp. 5 OPTIMIZACION y Exp. 7 TRANSFER LEARNING: NO se repiten
+# sobre la ganadora (decision de Fer, 02/09: demasiadas corridas). La presentacion usa lo que ya corrio
+# sobre 32·4·2, con 3 seeds (42-44), y lo dice: MLM = feat_ordinal_mlm20 / feat_mlm20 + gm_{o,e}_mlm{5,10,40};
+# optimizacion = go_lr{1e-4,3e-4,1e-3}_bs{64,128,256}; transfer = tl_{minilm,mpnet,bge}, tl_bge_solo y
+# tl_minilm_ft (fine-tuning). Sus grupos estan en salidas/resultados/ y eda/graficos.py los lee por nombre;
+# no estan en la suite para que nadie los relance por accidente. ----
 MLM_EPOCAS = (0, 5, 10, 20, 40)
-EXPERIMENTOS |= {
-    **{f'mlm_o_{e}': ([*MEJOR_ARQ, '--pretrain-mlm', str(e)], 'tabular') for e in MLM_EPOCAS if e},
-    **{f'mlm_e_{e}': ([*MEJOR_SIN_ENC, '--pretrain-mlm', str(e)], 'tabular') for e in MLM_EPOCAS if e},
-}
-
-# ---- Exp. 5 OPTIMIZACION: learning rate {1e-4, 3e-4, 1e-3} x batch {64, 128, 256}, sobre la
-# ganadora (1e-3 x 256 es la ganadora misma). Hipotesis: meseta; lr 1e-4 con batch 256 es el mas
-# lento (pocos pasos por epoca) y el unico que podria no llegar dentro de la paciencia. ----
 LRS = ('0.0001', '0.0003', '0.001')
 BATCHES = ('64', '128', '256')
-EXPERIMENTOS |= {
-    f'opt_lr{lr}_bs{bs}': ([*MEJOR_ARQ, '--lr', lr, '--batch-size', bs], 'tabular')
-    for lr in LRS for bs in BATCHES if (lr, bs) != ('0.001', '256')
-}
 
-# ---- Exp. 6 INGREDIENTES sobre la ganadora: el encoder de conjunto ([ING] + un token por
+# ---- Exp. 5 INGREDIENTES sobre la ganadora: el encoder de conjunto ([ING] + un token por
 # ingrediente, SIN positional encoding y SIN mascara causal) en tres tamanos. Hipotesis: delta ~ 0
 # (los ingredientes son la categoria disfrazada; ing_solo ~ azar); el grande empeora por varianza. ----
 EXPERIMENTOS |= {
@@ -162,20 +154,7 @@ EXPERIMENTOS |= {
                     '--ing-layer', '2'], 'tabular'),
 }
 
-# ---- Exp. 7 TRANSFER LEARNING sobre la ganadora: el TITULO sin badge embebido por un preentrenado
-# (eda/embed_titulos.py -> salidas/embeddings/, congelado), en tres tamanos, y el control
-# solo-titulo. El fine-tuning (--text-emb-finetune, el encoder de 22M en el grafo) es caro y NO se
-# repite: la presentacion usa las 3 seeds que corrieron sobre 32·4·2 (grupo tl_minilm_ft_*_tembft-titulo).
-# Hipotesis: sobre 32·4·2 el titulo RESTO (-0.02/-0.04); se espera lo mismo. ----
-EMB_TITULO = 'salidas/embeddings/titulo_{}.npy'
-EXPERIMENTOS |= {
-    'tl_minilm':    ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('minilm')], 'tabular'),
-    'tl_mpnet':     ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('mpnet')], 'tabular'),
-    'tl_bge':       ([*MEJOR_ARQ, '--text-emb', EMB_TITULO.format('bge')], 'tabular'),
-    'tl_bge_solo':  ([*MEJOR_SIN_ENC, '--text-emb', EMB_TITULO.format('bge'), '--drop-features', 'all'], 'tabular'),
-}
-
-# ---- Exp. 8 TIEMPO sobre la ganadora: hora del dia y dia de la semana, ciclicas (btr/data.py):
+# ---- Exp. 7 TIEMPO sobre la ganadora: hora del dia y dia de la semana, ciclicas (btr/data.py):
 # 'ciclico' = (sin, cos) del angulo, un token por variable; 'categorico' = 24 + 7 niveles con el
 # encoding de las demas. Hipotesis: delta ~ 0 con las dos (el EDA mostro que el timestamp es ruido);
 # si hubiera diferencia, la ciclica es la mas estable. ----
